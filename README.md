@@ -1,13 +1,37 @@
-# osmgeojson-python
+# OSMGeoJSON API
 
-Python SDK for the **MapLark** OSM GeoJSON API with auto-pagination, bounding box chunking, retry/backoff, pandas/geopandas output, async support, and convenience methods to get common OSM data such as buildings, amenities, bike roads, etc.
+This API keeps OpenStreetMap semantics intact and returns GeoJSON FeatureCollections you can feed straight into Leaflet, MapLibre, OpenLayers, or any geospatial toolchain. All you need to do is specify a bounding box and geometry types. The translation layer is very simple:
+
+- `node` - GeoJSON Point
+- `way` - LineString or Polygon
+- `relation` - MultiPolygon or grouped geometries
+
+You filter with the same tags mappers already use (`amenity=cafe`, `building=yes`, and so on). Knowledge from OSM, Overpass, and tagging docs transfers immediately.
+
+To narrow down between "open ways" and "closed ways", use the `shape` parameter:
+
+- `shape=line` - open ways (roads, paths, rivers) or line-shaped relations (routes, boundaries)
+- `shape=polygon` - closed ways (buildings, parks) or multipolygon relations.
+- `shape=all` - both shapes (default when shape is omitted).
+
+For example, to get all buildings in an area:
+
+`type=way & tags=building`
+
+This is the equivalent of the Overpass query `way[building]`.
+
+Read the full API reference here [https://maplark.com/developer](https://maplark.com/developer).
+
+## Python SDK
+
+This client library comes with auto-pagination, bounding box chunking, retry/backoff, pandas/geopandas output, async support, and convenience methods to get common OSM data such as buildings, amenities, bike roads, etc. 
 
 ```
 pip install osmgeojson
 pip install "osmgeojson[geo]"   # pandas / geopandas / shapely support
 ```
 
-The SDK talks to the MapLark API at `https://api.maplark.com`.
+The SDK talks to `api.maplark.com` by default.
 
 ## Quick start
 
@@ -19,7 +43,11 @@ with OSMGeoJSONClient(api_key="sk-...") as client:
     print(len(fc.features), "buildings found")
 ```
 
+
+
 ## Basic API usage
+
+
 
 ### 1) Create a client
 
@@ -38,6 +66,8 @@ with OSMGeoJSONClient(api_key="sk-...") as client:
     ...
 ```
 
+
+
 ### 2) Query OSM elements
 
 `query()` fetches a single page:
@@ -55,32 +85,6 @@ for feature in fc.features:
     print(feature["id"], feature["geometry"]["type"], feature.tags)
 ```
 
-Geometry size and zoom filters:
-
-```python
-# Large buildings at a low zoom (simplified geometry)
-large_buildings = client.query(
-    bbox="18.070,59.323,18.075,59.327",
-    type="way,relation",
-    shape="polygon",
-    tags="building",
-    zoom=11,
-    min_area_m2=3000,
-    limit=300,
-)
-
-# Long roads only
-long_roads = client.query(
-    bbox="18.020,59.310,18.180,59.365",
-    type="way",
-    shape="line",
-    tags="highway",
-    min_length_m=1200,
-    max_length_m=20000,
-    limit=300,
-)
-```
-
 Common filters:
 
 - `bbox="min_lon,min_lat,max_lon,max_lat"`
@@ -90,10 +94,9 @@ Common filters:
 - `not_tags=["access=private"]` (exclude)
 - `type="node" | "way" | "relation"`
 - `shape="polygon" | "line" | "all"` (omit = both shapes; `all` also means both)
-- `zoom=11` (simplify geometry at lower zooms)
-- `min_length_m` / `max_length_m` (line length in metres)
-- `min_area_m2` / `max_area_m2` (polygon area in square metres)
 - `cursor` (pagination; use `meta.next_cursor` from previous page)
+
+
 
 ### 3) Auto-pagination
 
@@ -108,6 +111,8 @@ all_restaurants = client.query_all(
 
 print(all_restaurants.meta.returned)
 ```
+
+
 
 ### 4) Async client
 
@@ -130,6 +135,8 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+
+
 ### 5) Convenience helpers
 
 For common datasets, use convenience methods built on top of `query_all()`:
@@ -143,6 +150,8 @@ with OSMGeoJSONClient(api_key="sk-...") as client:
     print(len(buildings.features), len(restaurants.features))
 ```
 
+
+
 ### 6) Cost and usage
 
 ```python
@@ -153,8 +162,10 @@ estimate = client.estimate_cost(
 print("estimated credits:", estimate.estimated_credits)
 
 usage = client.usage()
-print("remaining this month:", usage.get("remaining_this_month"))
+print("Usage:", usage)
 ```
+
+
 
 ### 7) CLI usage
 
@@ -162,26 +173,10 @@ If the package is installed, the CLI is available as `osmgeojson`:
 
 ```bash
 export MAPLARK_API_KEY="sk-..."
-osmgeojson query --bbox "18.063,59.322,18.082,59.332" --tags building
-
-# Large buildings at low zoom
-osmgeojson query \
-  --bbox "18.070,59.323,18.075,59.327" \
-  --type way,relation \
-  --shape polygon \
-  --tags building \
-  --zoom 11 \
-  --min-area-m2 3000
-
-# Long roads only
-osmgeojson query \
-  --bbox "18.020,59.310,18.180,59.365" \
-  --type way \
-  --shape line \
-  --tags highway \
-  --min-length-m 1200 \
-  --max-length-m 20000
+osmgeojson query --bbox "18.063,59.322,18.082,59.332" --tags building --type way
 ```
+
+
 
 ## Example apps
 
@@ -210,13 +205,3 @@ Run one example app:
 pytest tests/example_apps/test_restaurant_guide.py -v
 ```
 
-## Release notes
-
-### 0.1.0 (2026-06-01)
-
-- First PyPI release of `osmgeojson`.
-- Includes sync and async clients with query, auto-pagination, and large-area chunked querying.
-- Adds CLI commands and convenience helpers for common OSM datasets.
-- Ships typed models and optional geospatial extras (`pandas`, `geopandas`, `shapely`).
-
-See [https://maplark.com/developer](https://maplark.com/developer) for full API docs.
