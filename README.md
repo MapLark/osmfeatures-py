@@ -1,4 +1,4 @@
-# OSMGeoJSON API
+# OSM GeoJSON API
 
 This API keeps OpenStreetMap semantics intact and returns GeoJSON FeatureCollections you can feed straight into Leaflet, MapLibre, OpenLayers, or any geospatial toolchain. All you need to do is specify a bounding box and geometry types. The translation layer is very simple:
 
