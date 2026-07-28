@@ -16,10 +16,12 @@ from tests.conftest import make_test_feature, make_feature_collection
 def make_fc(
     feature_dicts: list[dict] | None = None,
     has_more: bool = False,
-    next_offset: int | None = None,
+    next_cursor: str | None = None,
 ) -> OSMFeatureCollection:
     feature_dicts = feature_dicts or [make_test_feature("way/1")]
-    return OSMFeatureCollection.from_dict(make_feature_collection(feature_dicts, has_more=has_more, next_offset=next_offset))
+    return OSMFeatureCollection.from_dict(
+        make_feature_collection(feature_dicts, has_more=has_more, next_cursor=next_cursor)
+    )
 
 
 # ---------------------------------------------------------------------------

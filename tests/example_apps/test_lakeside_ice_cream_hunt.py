@@ -16,7 +16,7 @@ vertex spacing.
 
 API calls:
   - ``type=way,relation&shape=polygon&tags=natural=water``
-  - ``tags=amenity=ice_cream``
+  - ``type=node,way&tags=amenity=ice_cream``
 """
 
 import pytest
@@ -81,9 +81,10 @@ def test_lakeside_ice_cream_hunt(client: OSMGeoJSONClient):
     )
     assert isinstance(water, OSMFeatureCollection)
 
-    # Step 2: ice cream shops (nodes + possible small area cafés)
+    # Step 2: ice cream shops (nodes + possible small area cafés; exclude relations)
     ice_cream = client.query(
         bbox=CENTRAL_EAST_BBOX,
+        type="node,way",
         tags="amenity=ice_cream",
         limit=50,
         disable_budget_warning=True,

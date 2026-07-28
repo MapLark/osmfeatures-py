@@ -25,7 +25,7 @@ def test_query_all_two_pages(client):
     page1 = [make_test_feature(f"way/{i}") for i in range(3)]
     page2 = [make_test_feature(f"way/{i}") for i in range(3, 6)]
 
-    rsps.add(rsps.GET, ELEMENTS_URL, json=make_feature_collection(page1, has_more=True, next_offset=3))
+    rsps.add(rsps.GET, ELEMENTS_URL, json=make_feature_collection(page1, has_more=True, next_cursor="cursor-1"))
     rsps.add(rsps.GET, ELEMENTS_URL, json=make_feature_collection(page2, has_more=False))
 
     result = client.query_all(bbox="18.06,59.32,18.09,59.34")
@@ -42,7 +42,7 @@ def test_query_all_deduplicates_across_pages(client):
     page1 = [make_test_feature("way/1"), f_shared]
     page2 = [f_shared, make_test_feature("way/2")]
 
-    rsps.add(rsps.GET, ELEMENTS_URL, json=make_feature_collection(page1, has_more=True, next_offset=2))
+    rsps.add(rsps.GET, ELEMENTS_URL, json=make_feature_collection(page1, has_more=True, next_cursor="cursor-1"))
     rsps.add(rsps.GET, ELEMENTS_URL, json=make_feature_collection(page2, has_more=False))
 
     result = client.query_all(bbox="18.06,59.32,18.09,59.34")
@@ -51,10 +51,11 @@ def test_query_all_deduplicates_across_pages(client):
 
 
 @rsps.activate
-def test_query_all_raises_on_offset_not_advancing(client):
-    """API returning has_more=true but stale next_offset should raise RuntimeError."""
+def test_query_all_raises_on_cursor_not_advancing(client):
+    """API returning has_more=true but stale next_cursor should raise RuntimeError."""
     page1 = [make_test_feature("way/1")]
-    rsps.add(rsps.GET, ELEMENTS_URL, json=make_feature_collection(page1, has_more=True, next_offset=0))
+    rsps.add(rsps.GET, ELEMENTS_URL, json=make_feature_collection(page1, has_more=True, next_cursor="cursor-1"))
+    rsps.add(rsps.GET, ELEMENTS_URL, json=make_feature_collection(page1, has_more=True, next_cursor="cursor-1"))
 
     with pytest.raises(RuntimeError, match="did not advance"):
         client.query_all(bbox="18.06,59.32,18.09,59.34")
@@ -66,7 +67,7 @@ def test_query_all_raises_on_empty_page_with_has_more_true(client):
     rsps.add(
         rsps.GET,
         ELEMENTS_URL,
-        json=make_feature_collection([], has_more=True, next_offset=1000),
+        json=make_feature_collection([], has_more=True, next_cursor="cursor-1"),
     )
 
     with pytest.raises(RuntimeError, match="empty features page"):

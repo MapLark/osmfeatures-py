@@ -33,6 +33,7 @@ def test_park_explorer(client: OSMGeoJSONClient):
         shape="polygon",
         tags="leisure=park",
         limit=50,
+        centroid=True,
     )
     assert isinstance(data, OSMFeatureCollection)
     assert len(data["features"]) > 0, "Expected park polygons in central Stockholm"

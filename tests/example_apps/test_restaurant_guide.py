@@ -3,9 +3,9 @@ App idea: restaurant discovery card list with name, cuisine, and a map pin.
 
 Gamla Stan is Stockholm's old town and a popular tourist dining destination.
 Restaurants can be mapped as nodes (a single point) or as building footprints
-(ways/relations); the centroid is used as the display coordinate for polygons.
+(ways); the centroid is used as the display coordinate for polygons.
 
-API call: ``tags=amenity=restaurant``
+API call: ``type=node,way&tags=amenity=restaurant``
 """
 
 from collections import defaultdict
@@ -16,7 +16,12 @@ GAMLA_STAN_BBOX = "18.063,59.322,18.082,59.332"
 
 
 def test_restaurant_guide(client: OSMGeoJSONClient):
-    data = client.query(bbox=GAMLA_STAN_BBOX, tags="amenity=restaurant", limit=50)
+    data = client.query(
+        bbox=GAMLA_STAN_BBOX,
+        type="node,way",
+        tags="amenity=restaurant",
+        limit=50,
+    )
     assert isinstance(data, OSMFeatureCollection)
     assert len(data["features"]) > 0, "Expected restaurants in Gamla Stan"
 

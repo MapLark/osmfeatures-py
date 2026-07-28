@@ -34,11 +34,11 @@ def make_test_feature(fid: str = "way/1", tags: dict[str, str] | None = None) ->
 def make_feature_collection(
     features: list[dict[str, Any]],
     has_more: bool = False,
-    next_offset: int | None = None,
+    next_cursor: str | None = None,
 ) -> dict[str, Any]:
     return OSMFeatureCollection(
         features=[OSMFeature.from_dict(f) for f in features],
-        meta=ResponseMeta(returned=len(features), has_more=has_more, next_offset=next_offset),
+        meta=ResponseMeta(returned=len(features), has_more=has_more, next_cursor=next_cursor),
     ).to_dict()
 
 

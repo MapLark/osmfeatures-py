@@ -102,9 +102,10 @@ class OSMGeoJSONClient:
         or_tags: list[str] | str | None = None,
         not_tags: list[str] | str | None = None,
         limit: int = 1000,
-        offset: int = 0,
+        cursor: str | None = None,
         disable_budget_warning: bool = False,
         geometry: Any = None,
+        centroid: bool = False,
     ) -> OSMFeatureCollection:
         """Fetch a single page of OSM elements.
 
@@ -131,15 +132,18 @@ class OSMGeoJSONClient:
             Exclusion tag filters.  Requires a spatial anchor.
         limit:
             Maximum features per page.  Defaults to 1000.
-        offset:
-            Pagination offset; use ``meta.next_offset`` from the previous
-            response.
+        cursor:
+            Pagination cursor; use ``meta.next_cursor`` from the previous
+            response. Omit to start from the first page.
         disable_budget_warning:
             Bypass the per-request unit cap.  The query runs and credits are
             still charged.
         geometry:
             Shapely geometry object.  Converted to ``bbox`` automatically
             (requires ``pip install osmgeojson[geo]``).
+        centroid:
+            When True, request ``properties.centroid`` on non-point features.
+            Default False.
         """
         if geometry is not None:
             bbox = shapely_to_bbox(geometry)
@@ -162,10 +166,12 @@ class OSMGeoJSONClient:
         if not_tags is not None:
             params["not_tags"] = not_tags
         params["limit"] = limit
-        if offset:
-            params["offset"] = offset
+        if cursor is not None:
+            params["cursor"] = cursor
         if disable_budget_warning:
             params["disable_budget_warning"] = disable_budget_warning
+        if centroid:
+            params["centroid"] = True
 
         data = self._raw_query(params)
         return OSMFeatureCollection.from_dict(data)

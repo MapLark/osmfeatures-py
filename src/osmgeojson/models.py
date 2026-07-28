@@ -41,7 +41,7 @@ class OSMFeature(_geojson.Feature):
 
     @property
     def centroid(self) -> dict[str, Any] | None:
-        """GeoJSON Point centroid from properties, present on non-point features."""
+        """GeoJSON Point centroid from properties when requested via ``centroid=true``."""
         return self.get("properties", {}).get("centroid")
 
     @classmethod
@@ -57,14 +57,14 @@ class OSMFeature(_geojson.Feature):
 class ResponseMeta:
     returned: int
     has_more: bool
-    next_offset: int | None = None
+    next_cursor: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "ResponseMeta":
         return cls(
             returned=d.get("returned", 0),
             has_more=d.get("has_more", False),
-            next_offset=d.get("next_offset"),
+            next_cursor=d.get("next_cursor"),
         )
 
 
@@ -101,7 +101,7 @@ class OSMFeatureCollection(_geojson.FeatureCollection):
             "meta": {
                 "returned": self._meta.returned,
                 "has_more": self._meta.has_more,
-                "next_offset": self._meta.next_offset,
+                "next_cursor": self._meta.next_cursor,
             },
         }
 

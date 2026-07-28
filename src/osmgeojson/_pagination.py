@@ -23,7 +23,7 @@ def paginate_all(
         Synchronous callable that accepts a params dict and returns a raw
         GeoJSON FeatureCollection dict (with ``meta`` envelope).
     params:
-        Base query parameters.  Any ``limit`` and ``offset`` keys are managed
+        Base query parameters. Any ``limit`` and ``cursor`` keys are managed
         internally and will be overwritten.
     page_size:
         Number of features to request per page.
@@ -33,12 +33,15 @@ def paginate_all(
     list[dict]
         The ``features`` list from each page response.
     """
-    base = {k: v for k, v in params.items() if k not in ("limit", "offset")}
+    base = {k: v for k, v in params.items() if k not in ("limit", "cursor")}
     base["limit"] = page_size
-    offset = 0
+    cursor: str | None = None
 
     for page in range(_MAX_PAGES):
-        data = fetch_fn({**base, "offset": offset})
+        page_params = dict(base)
+        if cursor is not None:
+            page_params["cursor"] = cursor
+        data = fetch_fn(page_params)
         features: list[dict[str, Any]] = data.get("features", [])
         yield features
 
@@ -48,17 +51,17 @@ def paginate_all(
 
         if not features:
             raise RuntimeError(
-                f"API returned has_more=true but an empty features page at offset {offset} "
+                f"API returned has_more=true but an empty features page at cursor {cursor!r} "
                 f"on page {page}."
             )
 
-        next_offset = meta.get("next_offset")
-        if next_offset is None or next_offset <= offset:
+        next_cursor = meta.get("next_cursor")
+        if not isinstance(next_cursor, str) or not next_cursor or next_cursor == cursor:
             raise RuntimeError(
-                f"API returned has_more=true but next_offset ({next_offset!r}) "
-                f"did not advance beyond current offset ({offset}) on page {page}."
+                f"API returned has_more=true but next_cursor ({next_cursor!r}) "
+                f"did not advance beyond current cursor ({cursor!r}) on page {page}."
             )
-        offset = next_offset
+        cursor = next_cursor
 
     raise RuntimeError(
         f"paginate_all exceeded {_MAX_PAGES} pages without has_more=false - "
@@ -77,13 +80,16 @@ async def paginate_all_async(
     Returns all features as a flat list (async generators are less ergonomic
     in Python, so we collect eagerly).
     """
-    base = {k: v for k, v in params.items() if k not in ("limit", "offset")}
+    base = {k: v for k, v in params.items() if k not in ("limit", "cursor")}
     base["limit"] = page_size
-    offset = 0
+    cursor: str | None = None
     all_features: list[dict[str, Any]] = []
 
     for page in range(_MAX_PAGES):
-        data = await fetch_fn({**base, "offset": offset})
+        page_params = dict(base)
+        if cursor is not None:
+            page_params["cursor"] = cursor
+        data = await fetch_fn(page_params)
         features: list[dict[str, Any]] = data.get("features", [])
         all_features.extend(features)
 
@@ -93,17 +99,17 @@ async def paginate_all_async(
 
         if not features:
             raise RuntimeError(
-                f"API returned has_more=true but an empty features page at offset {offset} "
+                f"API returned has_more=true but an empty features page at cursor {cursor!r} "
                 f"on page {page}."
             )
 
-        next_offset = meta.get("next_offset")
-        if next_offset is None or next_offset <= offset:
+        next_cursor = meta.get("next_cursor")
+        if not isinstance(next_cursor, str) or not next_cursor or next_cursor == cursor:
             raise RuntimeError(
-                f"API returned has_more=true but next_offset ({next_offset!r}) "
-                f"did not advance beyond current offset ({offset}) on page {page}."
+                f"API returned has_more=true but next_cursor ({next_cursor!r}) "
+                f"did not advance beyond current cursor ({cursor!r}) on page {page}."
             )
-        offset = next_offset
+        cursor = next_cursor
 
     raise RuntimeError(
         f"paginate_all_async exceeded {_MAX_PAGES} pages without has_more=false - "

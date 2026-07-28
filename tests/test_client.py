@@ -110,12 +110,16 @@ def test_query_raises_api_error_on_500(client):
 
 @rsps.activate
 def test_query_meta_populated(client):
-    rsps.add(rsps.GET, ELEMENTS_URL, json=make_feature_collection([make_test_feature()], has_more=True, next_offset=1))
+    rsps.add(
+        rsps.GET,
+        ELEMENTS_URL,
+        json=make_feature_collection([make_test_feature()], has_more=True, next_cursor="cursor-1"),
+    )
 
     result = client.query(bbox="18.06,59.32,18.09,59.34")
 
     assert result.meta.has_more is True
-    assert result.meta.next_offset == 1
+    assert result.meta.next_cursor == "cursor-1"
 
 
 # ---------------------------------------------------------------------------

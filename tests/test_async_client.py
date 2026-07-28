@@ -139,7 +139,7 @@ async def test_async_query_raises_api_error_on_500():
 
 async def test_async_query_meta_populated():
     transport = _MockTransport(
-        [(200, make_feature_collection([make_test_feature()], has_more=True, next_offset=1))]
+        [(200, make_feature_collection([make_test_feature()], has_more=True, next_cursor="cursor-1"))]
     )
     client = _make_client(transport)
 
@@ -147,7 +147,7 @@ async def test_async_query_meta_populated():
         result = await client.query_async(bbox="18.06,59.32,18.09,59.34")
 
     assert result.meta.has_more is True
-    assert result.meta.next_offset == 1
+    assert result.meta.next_cursor == "cursor-1"
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +172,7 @@ async def test_async_query_all_two_pages():
     page2 = [make_test_feature(f"way/{i}") for i in range(3, 6)]
     transport = _MockTransport(
         [
-            (200, make_feature_collection(page1, has_more=True, next_offset=3)),
+            (200, make_feature_collection(page1, has_more=True, next_cursor="cursor-1")),
             (200, make_feature_collection(page2, has_more=False)),
         ]
     )
@@ -192,7 +192,7 @@ async def test_async_query_all_deduplicates_across_pages():
     page2 = [f_shared, make_test_feature("way/2")]
     transport = _MockTransport(
         [
-            (200, make_feature_collection(page1, has_more=True, next_offset=2)),
+            (200, make_feature_collection(page1, has_more=True, next_cursor="cursor-1")),
             (200, make_feature_collection(page2, has_more=False)),
         ]
     )
@@ -208,7 +208,7 @@ async def test_async_query_all_deduplicates_across_pages():
 async def test_async_query_all_raises_on_empty_page_with_has_more_true():
     transport = _MockTransport(
         [
-            (200, make_feature_collection([], has_more=True, next_offset=1000)),
+            (200, make_feature_collection([], has_more=True, next_cursor="cursor-1")),
             # Must never be reached if paginator fails fast.
             (200, make_feature_collection([], has_more=False)),
         ]

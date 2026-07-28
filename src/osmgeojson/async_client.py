@@ -103,9 +103,10 @@ class AsyncOSMGeoJSONClient:
         or_tags: list[str] | str | None = None,
         not_tags: list[str] | str | None = None,
         limit: int = 1000,
-        offset: int = 0,
+        cursor: str | None = None,
         disable_budget_warning: bool = False,
         geometry: Any = None,
+        centroid: bool = False,
     ) -> OSMFeatureCollection:
         """Fetch a single page of OSM elements asynchronously.
 
@@ -132,10 +133,12 @@ class AsyncOSMGeoJSONClient:
         if not_tags is not None:
             params["not_tags"] = not_tags
         params["limit"] = limit
-        if offset:
-            params["offset"] = offset
+        if cursor is not None:
+            params["cursor"] = cursor
         if disable_budget_warning:
             params["disable_budget_warning"] = disable_budget_warning
+        if centroid:
+            params["centroid"] = True
 
         data = await self._raw_query(params)
         return OSMFeatureCollection.from_dict(data)
