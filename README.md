@@ -55,6 +55,32 @@ for feature in fc.features:
     print(feature["id"], feature["geometry"]["type"], feature.tags)
 ```
 
+Geometry size and zoom filters:
+
+```python
+# Large buildings at a low zoom (simplified geometry)
+large_buildings = client.query(
+    bbox="18.070,59.323,18.075,59.327",
+    type="way,relation",
+    shape="polygon",
+    tags="building",
+    zoom=11,
+    min_area_m2=3000,
+    limit=300,
+)
+
+# Long roads only
+long_roads = client.query(
+    bbox="18.020,59.310,18.180,59.365",
+    type="way",
+    shape="line",
+    tags="highway",
+    min_length_m=1200,
+    max_length_m=20000,
+    limit=300,
+)
+```
+
 Common filters:
 
 - `bbox="min_lon,min_lat,max_lon,max_lat"`
@@ -63,7 +89,11 @@ Common filters:
 - `or_tags=["bicycle=yes", "bicycle=designated"]` (OR)
 - `not_tags=["access=private"]` (exclude)
 - `type="node" | "way" | "relation"`
-- `shape="polygon" | "line" | "all"`
+- `shape="polygon" | "line" | "all"` (omit = both shapes; `all` also means both)
+- `zoom=11` (simplify geometry at lower zooms)
+- `min_length_m` / `max_length_m` (line length in metres)
+- `min_area_m2` / `max_area_m2` (polygon area in square metres)
+- `cursor` (pagination; use `meta.next_cursor` from previous page)
 
 ### 3) Auto-pagination
 
@@ -133,6 +163,24 @@ If the package is installed, the CLI is available as `osmgeojson`:
 ```bash
 export MAPLARK_API_KEY="sk-..."
 osmgeojson query --bbox "18.063,59.322,18.082,59.332" --tags building
+
+# Large buildings at low zoom
+osmgeojson query \
+  --bbox "18.070,59.323,18.075,59.327" \
+  --type way,relation \
+  --shape polygon \
+  --tags building \
+  --zoom 11 \
+  --min-area-m2 3000
+
+# Long roads only
+osmgeojson query \
+  --bbox "18.020,59.310,18.180,59.365" \
+  --type way \
+  --shape line \
+  --tags highway \
+  --min-length-m 1200 \
+  --max-length-m 20000
 ```
 
 ## Example apps
@@ -148,6 +196,7 @@ The repository includes runnable example-app tests in `tests/example_apps/` show
 - `test_pedestrian_shortest_path.py`: shortest walking route via graph + Dijkstra.
 - `test_pedestrian_wavefront_bfs.py`: hop-based accessibility rings via BFS.
 - `test_bike_path_dijkstra_liljeholmen_to_djurgarden.py`: tiled corridor bike routing from Liljeholmen to Djurgarden.
+- `test_geometry_filters.py`: zoom + area/length filters for large buildings and long roads.
 
 Run all example apps:
 

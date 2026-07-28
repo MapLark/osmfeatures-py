@@ -63,6 +63,11 @@ _SPATIAL_OPTIONS = [
     click.option("--not-tags", "not_tags", multiple=True, help="Exclusion tag filter (repeatable)"),
     click.option("--type", "element_type", default=None, help="Comma-separated element types: node,way,relation"),
     click.option("--shape", default=None, type=click.Choice(["line", "polygon", "all"]), help="Geometry shape filter"),
+    click.option("--zoom", default=None, type=float, help="Map zoom level for geometry simplification"),
+    click.option("--min-length-m", "min_length_m", default=None, type=float, help="Minimum line length in metres"),
+    click.option("--max-length-m", "max_length_m", default=None, type=float, help="Maximum line length in metres"),
+    click.option("--min-area-m2", "min_area_m2", default=None, type=float, help="Minimum polygon area in square metres"),
+    click.option("--max-area-m2", "max_area_m2", default=None, type=float, help="Maximum polygon area in square metres"),
 ]
 
 
@@ -124,6 +129,11 @@ def query_cmd(
     not_tags: tuple[str, ...],
     element_type: str | None,
     shape: str | None,
+    zoom: float | None,
+    min_length_m: float | None,
+    max_length_m: float | None,
+    min_area_m2: float | None,
+    max_area_m2: float | None,
     limit: int | None,
     all_pages: bool,
     large_area: float | None,
@@ -158,6 +168,16 @@ def query_cmd(
         params["type"] = [t.strip() for t in element_type.split(",")]
     if shape:
         params["shape"] = shape
+    if zoom is not None:
+        params["zoom"] = zoom
+    if min_length_m is not None:
+        params["min_length_m"] = min_length_m
+    if max_length_m is not None:
+        params["max_length_m"] = max_length_m
+    if min_area_m2 is not None:
+        params["min_area_m2"] = min_area_m2
+    if max_area_m2 is not None:
+        params["max_area_m2"] = max_area_m2
     if limit is not None:
         params["limit"] = limit
     if disable_budget_warning:
@@ -212,6 +232,11 @@ def cost_cmd(
     not_tags: tuple[str, ...],
     element_type: str | None,
     shape: str | None,
+    zoom: float | None,
+    min_length_m: float | None,
+    max_length_m: float | None,
+    min_area_m2: float | None,
+    max_area_m2: float | None,
     limit: int | None,
     api_key: str | None,
     base_url: str | None,
@@ -241,6 +266,16 @@ def cost_cmd(
         params["type"] = [t.strip() for t in element_type.split(",")]
     if shape:
         params["shape"] = shape
+    if zoom is not None:
+        params["zoom"] = zoom
+    if min_length_m is not None:
+        params["min_length_m"] = min_length_m
+    if max_length_m is not None:
+        params["max_length_m"] = max_length_m
+    if min_area_m2 is not None:
+        params["min_area_m2"] = min_area_m2
+    if max_area_m2 is not None:
+        params["max_area_m2"] = max_area_m2
     if limit:
         params["limit"] = limit
 

@@ -104,6 +104,11 @@ class AsyncOSMGeoJSONClient:
         not_tags: list[str] | str | None = None,
         limit: int = 1000,
         cursor: str | None = None,
+        zoom: float | None = None,
+        min_length_m: float | None = None,
+        max_length_m: float | None = None,
+        min_area_m2: float | None = None,
+        max_area_m2: float | None = None,
         disable_budget_warning: bool = False,
         geometry: Any = None,
         centroid: bool = False,
@@ -135,6 +140,16 @@ class AsyncOSMGeoJSONClient:
         params["limit"] = limit
         if cursor is not None:
             params["cursor"] = cursor
+        if zoom is not None:
+            params["zoom"] = zoom
+        if min_length_m is not None:
+            params["min_length_m"] = min_length_m
+        if max_length_m is not None:
+            params["max_length_m"] = max_length_m
+        if min_area_m2 is not None:
+            params["min_area_m2"] = min_area_m2
+        if max_area_m2 is not None:
+            params["max_area_m2"] = max_area_m2
         if disable_budget_warning:
             params["disable_budget_warning"] = disable_budget_warning
         if centroid:

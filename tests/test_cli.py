@@ -116,6 +116,37 @@ def test_query_limit_is_forwarded_to_single_page_query():
     )
 
 
+def test_query_forwards_zoom_length_and_area_filters():
+    fc = make_fc()
+    runner = CliRunner()
+    with patch("osmgeojson.cli.OSMGeoJSONClient") as MockClient:
+        MockClient.return_value.query.return_value = fc
+        result = runner.invoke(cli, [
+            "query",
+            "--api-key", "sk-test",
+            "--bbox", "18.06,59.32,18.09,59.34",
+            "--type", "way",
+            "--shape", "polygon",
+            "--zoom", "10",
+            "--min-length-m", "100",
+            "--max-length-m", "1000",
+            "--min-area-m2", "250",
+            "--max-area-m2", "2500",
+        ])
+
+    assert result.exit_code == 0, result.output
+    MockClient.return_value.query.assert_called_once_with(
+        bbox="18.06,59.32,18.09,59.34",
+        type=["way"],
+        shape="polygon",
+        zoom=10.0,
+        min_length_m=100.0,
+        max_length_m=1000.0,
+        min_area_m2=250.0,
+        max_area_m2=2500.0,
+    )
+
+
 def test_query_limit_is_forwarded_as_page_size_for_all_pages():
     fc = make_fc()
     runner = CliRunner()
@@ -157,4 +188,38 @@ def test_query_limit_is_forwarded_as_page_size_for_large_area():
         concurrency=4,
         limit=25,
         page_size=25,
+    )
+
+
+def test_cost_forwards_zoom_length_and_area_filters():
+    runner = CliRunner()
+    with patch("osmgeojson.cli.OSMGeoJSONClient") as MockClient:
+        MockClient.return_value.estimate_cost.return_value = type(
+            "Estimate",
+            (),
+            {"estimated_credits": 1, "hints": [], "tier_limits": {}},
+        )()
+        result = runner.invoke(cli, [
+            "cost",
+            "--api-key", "sk-test",
+            "--bbox", "18.06,59.32,18.09,59.34",
+            "--type", "way",
+            "--shape", "line",
+            "--zoom", "9",
+            "--min-length-m", "200",
+            "--max-length-m", "2000",
+            "--min-area-m2", "500",
+            "--max-area-m2", "5000",
+        ])
+
+    assert result.exit_code == 0, result.output
+    MockClient.return_value.estimate_cost.assert_called_once_with(
+        bbox="18.06,59.32,18.09,59.34",
+        type=["way"],
+        shape="line",
+        zoom=9.0,
+        min_length_m=200.0,
+        max_length_m=2000.0,
+        min_area_m2=500.0,
+        max_area_m2=5000.0,
     )

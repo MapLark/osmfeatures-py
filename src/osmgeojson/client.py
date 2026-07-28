@@ -103,6 +103,11 @@ class OSMGeoJSONClient:
         not_tags: list[str] | str | None = None,
         limit: int = 1000,
         cursor: str | None = None,
+        zoom: float | None = None,
+        min_length_m: float | None = None,
+        max_length_m: float | None = None,
+        min_area_m2: float | None = None,
+        max_area_m2: float | None = None,
         disable_budget_warning: bool = False,
         geometry: Any = None,
         centroid: bool = False,
@@ -119,7 +124,8 @@ class OSMGeoJSONClient:
             Element type(s) to return: ``"node"``, ``"way"``, or
             ``"relation"``.  Pass a list to request multiple types.
         shape:
-            Geometry shape filter: ``"polygon"``, ``"line"``, or ``"all"``.
+            Geometry shape filter: ``"polygon"`` or ``"line"``.
+            Omit for both shapes; ``"all"`` also means both.
         osm_ids:
             Comma-separated OSM IDs for direct lookup.  Mutually exclusive
             with spatial / tag filters.
@@ -135,6 +141,16 @@ class OSMGeoJSONClient:
         cursor:
             Pagination cursor; use ``meta.next_cursor`` from the previous
             response. Omit to start from the first page.
+        zoom:
+            Map zoom level used to simplify geometry at lower zooms.
+        min_length_m:
+            Minimum line length in metres (inclusive). Applies to line geometry.
+        max_length_m:
+            Maximum line length in metres (inclusive). Applies to line geometry.
+        min_area_m2:
+            Minimum polygon area in square metres (inclusive). Applies to polygon geometry.
+        max_area_m2:
+            Maximum polygon area in square metres (inclusive). Applies to polygon geometry.
         disable_budget_warning:
             Bypass the per-request unit cap.  The query runs and credits are
             still charged.
@@ -168,6 +184,16 @@ class OSMGeoJSONClient:
         params["limit"] = limit
         if cursor is not None:
             params["cursor"] = cursor
+        if zoom is not None:
+            params["zoom"] = zoom
+        if min_length_m is not None:
+            params["min_length_m"] = min_length_m
+        if max_length_m is not None:
+            params["max_length_m"] = max_length_m
+        if min_area_m2 is not None:
+            params["min_area_m2"] = min_area_m2
+        if max_area_m2 is not None:
+            params["max_area_m2"] = max_area_m2
         if disable_budget_warning:
             params["disable_budget_warning"] = disable_budget_warning
         if centroid:

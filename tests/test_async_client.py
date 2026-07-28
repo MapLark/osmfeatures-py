@@ -150,6 +150,30 @@ async def test_async_query_meta_populated():
     assert result.meta.next_cursor == "cursor-1"
 
 
+async def test_async_query_forwards_zoom_length_and_area_filters():
+    transport = _MockTransport([(200, make_feature_collection([]))])
+    client = _make_client(transport)
+
+    async with client:
+        await client.query_async(
+            bbox="18.06,59.32,18.09,59.34",
+            type="way",
+            shape="line",
+            zoom=11,
+            min_length_m=150,
+            max_length_m=1500,
+            min_area_m2=400,
+            max_area_m2=4000,
+        )
+
+    params = dict(transport.requests[0].url.params)
+    assert params["zoom"] == "11"
+    assert params["min_length_m"] == "150"
+    assert params["max_length_m"] == "1500"
+    assert params["min_area_m2"] == "400"
+    assert params["max_area_m2"] == "4000"
+
+
 # ---------------------------------------------------------------------------
 # query_all() — pagination
 # ---------------------------------------------------------------------------
@@ -242,6 +266,30 @@ async def test_async_estimate_cost_returns_cost_estimate():
     assert isinstance(result, CostEstimate)
     assert result.estimated_credits == 42
     assert result.hints == ["Consider narrowing your bbox."]
+
+
+async def test_async_estimate_cost_forwards_zoom_length_and_area_filters():
+    transport = _MockTransport([(200, {"estimated_credits": 1, "tier_limits": {}, "hints": []})])
+    client = _make_client(transport)
+
+    async with client:
+        await client.estimate_cost_async(
+            bbox="18.06,59.32,18.09,59.34",
+            type="way",
+            shape="polygon",
+            zoom=8,
+            min_length_m=250,
+            max_length_m=2500,
+            min_area_m2=500,
+            max_area_m2=5000,
+        )
+
+    params = dict(transport.requests[0].url.params)
+    assert params["zoom"] == "8"
+    assert params["min_length_m"] == "250"
+    assert params["max_length_m"] == "2500"
+    assert params["min_area_m2"] == "500"
+    assert params["max_area_m2"] == "5000"
 
 
 async def test_async_estimate_cost_raises_auth_error_on_401():

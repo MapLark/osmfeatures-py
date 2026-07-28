@@ -91,6 +91,39 @@ def test_query_type_list_uses_single_comma_separated_query_value(client):
 
 
 @rsps.activate
+def test_query_forwards_shape_all(client):
+    rsps.add(rsps.GET, ELEMENTS_URL, json=make_feature_collection([]))
+
+    client.query(bbox="18.06,59.32,18.09,59.34", type="way", shape="all")
+
+    parsed = parse_qs(urlsplit(rsps.calls[0].request.url).query)
+    assert parsed["shape"] == ["all"]
+
+
+@rsps.activate
+def test_query_forwards_zoom_length_and_area_filters(client):
+    rsps.add(rsps.GET, ELEMENTS_URL, json=make_feature_collection([]))
+
+    client.query(
+        bbox="18.06,59.32,18.09,59.34",
+        type="way",
+        shape="polygon",
+        zoom=10,
+        min_length_m=100,
+        max_length_m=500,
+        min_area_m2=250,
+        max_area_m2=5000,
+    )
+
+    parsed = parse_qs(urlsplit(rsps.calls[0].request.url).query)
+    assert parsed["zoom"] == ["10"]
+    assert parsed["min_length_m"] == ["100"]
+    assert parsed["max_length_m"] == ["500"]
+    assert parsed["min_area_m2"] == ["250"]
+    assert parsed["max_area_m2"] == ["5000"]
+
+
+@rsps.activate
 def test_query_raises_auth_error_on_401(client):
     rsps.add(rsps.GET, ELEMENTS_URL, status=401, body="Unauthorized")
 
@@ -141,6 +174,29 @@ def test_estimate_cost_returns_cost_estimate(client):
     assert isinstance(result, CostEstimate)
     assert result.estimated_credits == 42
     assert result.hints == ["Consider narrowing your bbox."]
+
+
+@rsps.activate
+def test_estimate_cost_forwards_zoom_length_and_area_filters(client):
+    rsps.add(rsps.GET, COST_URL, json={"estimated_credits": 1, "tier_limits": {}, "hints": []})
+
+    client.estimate_cost(
+        bbox="18.06,59.32,18.09,59.34",
+        type="way",
+        shape="line",
+        zoom=9,
+        min_length_m=200,
+        max_length_m=2000,
+        min_area_m2=300,
+        max_area_m2=3000,
+    )
+
+    parsed = parse_qs(urlsplit(rsps.calls[0].request.url).query)
+    assert parsed["zoom"] == ["9"]
+    assert parsed["min_length_m"] == ["200"]
+    assert parsed["max_length_m"] == ["2000"]
+    assert parsed["min_area_m2"] == ["300"]
+    assert parsed["max_area_m2"] == ["3000"]
 
 
 @rsps.activate
