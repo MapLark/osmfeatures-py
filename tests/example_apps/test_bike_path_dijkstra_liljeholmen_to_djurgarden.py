@@ -51,7 +51,7 @@ def test_bike_path_dijkstra_liljeholmen_to_djurgarden(client: OSMGeoJSONClient):
 
     for tile_bbox in CORRIDOR_TILES:
         tile_data = client.query_all(
-            page_size=500,
+            limit_per_page=500,
             bbox=tile_bbox,
             type="way",
             shape="line",

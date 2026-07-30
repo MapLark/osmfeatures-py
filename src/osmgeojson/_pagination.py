@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from typing import Any, Callable
 
 
@@ -13,7 +13,7 @@ def paginate_all(
     fetch_fn: Callable[[dict[str, Any]], dict[str, Any]],
     params: dict[str, Any],
     *,
-    page_size: int = 1000,
+    limit_per_page: int = 1000,
 ) -> Iterator[list[dict[str, Any]]]:
     """Yield pages of raw feature dicts until ``meta.has_more`` is False.
 
@@ -25,8 +25,8 @@ def paginate_all(
     params:
         Base query parameters. Any ``limit`` and ``cursor`` keys are managed
         internally and will be overwritten.
-    page_size:
-        Number of features to request per page.
+    limit_per_page:
+        Upstream ``limit`` per HTTP request (page size).
 
     Yields
     ------
@@ -34,7 +34,7 @@ def paginate_all(
         The ``features`` list from each page response.
     """
     base = {k: v for k, v in params.items() if k not in ("limit", "cursor")}
-    base["limit"] = page_size
+    base["limit"] = limit_per_page
     cursor: str | None = None
 
     for page in range(_MAX_PAGES):
@@ -73,17 +73,12 @@ async def paginate_all_async(
     fetch_fn: Callable[[dict[str, Any]], Any],
     params: dict[str, Any],
     *,
-    page_size: int = 1000,
-) -> list[dict[str, Any]]:
-    """Async counterpart to :func:`paginate_all`.
-
-    Returns all features as a flat list (async generators are less ergonomic
-    in Python, so we collect eagerly).
-    """
+    limit_per_page: int = 1000,
+) -> AsyncIterator[list[dict[str, Any]]]:
+    """Async counterpart to :func:`paginate_all` (yields pages)."""
     base = {k: v for k, v in params.items() if k not in ("limit", "cursor")}
-    base["limit"] = page_size
+    base["limit"] = limit_per_page
     cursor: str | None = None
-    all_features: list[dict[str, Any]] = []
 
     for page in range(_MAX_PAGES):
         page_params = dict(base)
@@ -91,11 +86,11 @@ async def paginate_all_async(
             page_params["cursor"] = cursor
         data = await fetch_fn(page_params)
         features: list[dict[str, Any]] = data.get("features", [])
-        all_features.extend(features)
+        yield features
 
         meta = data.get("meta", {})
         if not meta.get("has_more", False):
-            return all_features
+            return
 
         if not features:
             raise RuntimeError(

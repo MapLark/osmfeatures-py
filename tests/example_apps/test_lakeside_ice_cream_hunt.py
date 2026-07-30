@@ -72,21 +72,21 @@ def _dist_point_to_segment(
 
 def test_lakeside_ice_cream_hunt(client: OSMGeoJSONClient):
     # Step 1: water bodies
-    water = client.query(
+    water = client.query_all(
         bbox=CENTRAL_EAST_BBOX,
         type="way,relation",
         shape="polygon",
         tags="natural=water",
-        limit=50,
+        max_features=50,
     )
     assert isinstance(water, OSMFeatureCollection)
 
     # Step 2: ice cream shops (nodes + possible small area cafés; exclude relations)
-    ice_cream = client.query(
+    ice_cream = client.query_all(
         bbox=CENTRAL_EAST_BBOX,
         type="node,way",
         tags="amenity=ice_cream",
-        limit=50,
+        max_features=50,
         disable_budget_warning=True,
     )
     assert isinstance(ice_cream, OSMFeatureCollection)

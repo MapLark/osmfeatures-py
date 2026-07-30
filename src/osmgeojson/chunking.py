@@ -1,4 +1,4 @@
-"""Bounding-box utilities: splitting large bboxes into chunks and merging results."""
+"""Bounding-box utilities: tiling bboxes and merging results."""
 
 from __future__ import annotations
 
@@ -27,44 +27,43 @@ def bbox_area_deg2(bbox: str) -> float:
     return (max_lon - min_lon) * (max_lat - min_lat)
 
 
-def split_bbox(bbox: str, max_area_deg2: float) -> list[str]:
-    """Split *bbox* into a grid of chunks each with area <= *max_area_deg2*.
+def _is_power_of_two(n: int) -> bool:
+    return isinstance(n, int) and not isinstance(n, bool) and n >= 1 and (n & (n - 1)) == 0
 
-    Returns a list of ``"min_lon,min_lat,max_lon,max_lat"`` strings.  If the
-    input bbox already fits within the limit, it is returned as-is (single
-    element list).
+
+def split_bbox_tiles(bbox: str, tile_count: int) -> list[str]:
+    """Split *bbox* into *tile_count* tiles by repeated longest-side bisection.
+
+    *tile_count* must be a power of 2 (``1, 2, 4, 8, …``). Returns a list of
+    ``"min_lon,min_lat,max_lon,max_lat"`` strings. Shared edges are intentional;
+    callers should dedupe features across tiles.
     """
-    if max_area_deg2 <= 0:
-        raise ValueError("max_area_deg2 must be positive.")
+    if not _is_power_of_two(tile_count):
+        raise ValueError(
+            f"tile_count must be a power of 2 (1, 2, 4, 8, …); got {tile_count!r}."
+        )
 
     min_lon, min_lat, max_lon, max_lat = parse_bbox(bbox)
-    lon_span = max_lon - min_lon
-    lat_span = max_lat - min_lat
-    total_area = lon_span * lat_span
+    tiles: list[tuple[float, float, float, float]] = [
+        (min_lon, min_lat, max_lon, max_lat)
+    ]
 
-    if total_area <= max_area_deg2:
-        return [bbox]
+    while len(tiles) < tile_count:
+        next_tiles: list[tuple[float, float, float, float]] = []
+        for t_min_lon, t_min_lat, t_max_lon, t_max_lat in tiles:
+            lon_span = t_max_lon - t_min_lon
+            lat_span = t_max_lat - t_min_lat
+            if lon_span >= lat_span:
+                mid_lon = t_min_lon + lon_span / 2
+                next_tiles.append((t_min_lon, t_min_lat, mid_lon, t_max_lat))
+                next_tiles.append((mid_lon, t_min_lat, t_max_lon, t_max_lat))
+            else:
+                mid_lat = t_min_lat + lat_span / 2
+                next_tiles.append((t_min_lon, t_min_lat, t_max_lon, mid_lat))
+                next_tiles.append((t_min_lon, mid_lat, t_max_lon, t_max_lat))
+        tiles = next_tiles
 
-    # Choose the number of columns and rows so each cell <= max_area_deg2.
-    # We split both axes proportionally.
-    n = math.ceil(total_area / max_area_deg2)
-    # Distribute n across rows and cols proportionally to span
-    n_cols = max(1, round(math.sqrt(n * lon_span / lat_span)))
-    n_rows = max(1, math.ceil(n / n_cols))
-
-    chunks: list[str] = []
-    col_width = lon_span / n_cols
-    row_height = lat_span / n_rows
-
-    for row in range(n_rows):
-        for col in range(n_cols):
-            c_min_lon = min_lon + col * col_width
-            c_max_lon = min_lon + (col + 1) * col_width
-            c_min_lat = min_lat + row * row_height
-            c_max_lat = min_lat + (row + 1) * row_height
-            chunks.append(f"{c_min_lon},{c_min_lat},{c_max_lon},{c_max_lat}")
-
-    return chunks
+    return [f"{a},{b},{c},{d}" for a, b, c, d in tiles]
 
 
 def merge_features(feature_lists: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
@@ -83,7 +82,7 @@ def merge_features(feature_lists: list[list[dict[str, Any]]]) -> list[dict[str, 
 def around_to_bbox(lon: float, lat: float, radius_m: float) -> str:
     """Convert a radius search to a bounding-box string (approximation).
 
-    Useful when you want to use bbox-chunking logic on an ``around`` query
+    Useful when you want to use bbox-tiling logic on an ``around`` query
     area.  The result is a square bbox that fully contains the circle.
     """
     delta_lat = radius_m * _DEG_PER_METRE_LAT

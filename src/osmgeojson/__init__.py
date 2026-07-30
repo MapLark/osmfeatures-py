@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from .async_client import AsyncOSMGeoJSONClient
-from .chunking import around_to_bbox, bbox_area_deg2, merge_features, parse_bbox, shapely_to_bbox, split_bbox
+from .chunking import around_to_bbox, bbox_area_deg2, merge_features, parse_bbox, shapely_to_bbox, split_bbox_tiles
 from .client import OSMGeoJSONClient
 from .convenience import (
     get_amenities,
@@ -63,7 +63,7 @@ __all__ = [
     "to_dataframe",
     "to_geodataframe",
     # Chunking utilities
-    "split_bbox",
+    "split_bbox_tiles",
     "merge_features",
     "parse_bbox",
     "bbox_area_deg2",

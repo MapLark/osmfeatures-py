@@ -147,7 +147,7 @@ def test_query_forwards_zoom_length_and_area_filters():
     )
 
 
-def test_query_limit_is_forwarded_as_page_size_for_all_pages():
+def test_query_limit_is_forwarded_as_limit_per_page_for_all_pages():
     fc = make_fc()
     runner = CliRunner()
     with patch("osmgeojson.cli.OSMGeoJSONClient") as MockClient:
@@ -163,31 +163,30 @@ def test_query_limit_is_forwarded_as_page_size_for_all_pages():
     assert result.exit_code == 0, result.output
     MockClient.return_value.query_all.assert_called_once_with(
         bbox="18.06,59.32,18.09,59.34",
-        limit=25,
-        page_size=25,
+        limit_per_page=25,
+        bbox_tiles=2,
     )
 
 
-def test_query_limit_is_forwarded_as_page_size_for_large_area():
+def test_query_all_pages_forwards_bbox_tiles():
     fc = make_fc()
     runner = CliRunner()
     with patch("osmgeojson.cli.OSMGeoJSONClient") as MockClient:
-        MockClient.return_value.query_large_area.return_value = fc
+        MockClient.return_value.query_all.return_value = fc
         result = runner.invoke(cli, [
             "query",
             "--api-key", "sk-test",
             "--bbox", "18.06,59.32,18.09,59.34",
-            "--large-area", "0.25",
+            "--all-pages",
+            "--bbox-tiles", "4",
             "--limit", "25",
         ])
 
     assert result.exit_code == 0, result.output
-    MockClient.return_value.query_large_area.assert_called_once_with(
-        "18.06,59.32,18.09,59.34",
-        max_chunk_area_deg2=0.25,
-        concurrency=4,
-        limit=25,
-        page_size=25,
+    MockClient.return_value.query_all.assert_called_once_with(
+        bbox="18.06,59.32,18.09,59.34",
+        limit_per_page=25,
+        bbox_tiles=4,
     )
 
 

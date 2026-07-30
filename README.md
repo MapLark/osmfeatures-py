@@ -24,7 +24,7 @@ Read the full API reference here [https://maplark.com/developer](https://maplark
 
 ## Python SDK
 
-This client library comes with auto-pagination, bounding box chunking, retry/backoff, pandas/geopandas output, async support, and convenience methods to get common OSM data such as buildings, amenities, bike roads, etc. 
+This client library comes with auto-pagination, bbox tiling (enables larger bbox queries), retry/backoff, pandas/geopandas output, async support, and convenience methods to get common OSM data such as buildings, amenities, bike roads, etc. 
 
 ```
 pip install osmgeojson
@@ -98,15 +98,17 @@ Common filters:
 
 
 
-### 3) Auto-pagination
+### 3) Auto-pagination and bbox tiling
 
-Use `query_all()` to fetch all pages and deduplicate by OSM feature id:
+Use `query_all()` to fetch all pages and deduplicate by OSM feature id. By default it splits the bbox into 2 tiles (power of 2) so large areas use more requests; pass `bbox_tiles=1` to disable, or raise it (`4`, `8`, …) for bigger areas:
 
 ```python
 all_restaurants = client.query_all(
     bbox="18.063,59.322,18.082,59.332",
     tags="amenity=restaurant",
-    page_size=1000,
+    limit_per_page=1000,  # page size per HTTP request
+    max_features=55_000,  # total cap; pass None for no cap
+    bbox_tiles=2,  # default
 )
 
 print(all_restaurants.meta.returned)
@@ -116,7 +118,7 @@ print(all_restaurants.meta.returned)
 
 ### 4) Async client
 
-Async methods mirror the sync API (`query_async`, `query_all_async`, `query_large_area_async`):
+Async methods mirror the sync API (`query_async`, `query_all_async`):
 
 ```python
 import asyncio
@@ -174,6 +176,7 @@ If the package is installed, the CLI is available as `osmgeojson`:
 ```bash
 export MAPLARK_API_KEY="sk-..."
 osmgeojson query --bbox "18.063,59.322,18.082,59.332" --tags building --type way
+osmgeojson query --bbox "18.063,59.322,18.082,59.332" --tags building --all-pages --bbox-tiles 4
 ```
 
 

@@ -71,37 +71,37 @@ def test_zoomed_out_large_buildings_only(client: OSMGeoJSONClient):
 
 
 def test_only_long_roads(client: OSMGeoJSONClient):
-    baseline = client.query(
+    baseline = client.query_all(
         bbox=CENTRAL_EAST_BBOX,
         type="way",
         shape="line",
         tags="highway",
-        limit=300,
+        max_features=300,
     )
     assert isinstance(baseline, OSMFeatureCollection)
     assert len(baseline["features"]) > 0, "Expected roads in central Stockholm"
 
-    long_roads = client.query(
+    long_roads = client.query_all(
         bbox=CENTRAL_EAST_BBOX,
         type="way",
         shape="line",
         tags="highway",
         min_length_m=1200,
-        limit=300,
+        max_features=300,
     )
     assert isinstance(long_roads, OSMFeatureCollection)
     assert len(long_roads["features"]) > 0, "Expected at least one long road"
     assert len(long_roads["features"]) < len(baseline["features"]), "Length filter should exclude shorter roads"
 
     long_ids = _feature_ids(long_roads)
-    medium_roads = client.query(
+    medium_roads = client.query_all(
         bbox=CENTRAL_EAST_BBOX,
         type="way",
         shape="line",
         tags="highway",
         min_length_m=200,
         max_length_m=1199,
-        limit=300,
+        max_features=300,
     )
     assert isinstance(medium_roads, OSMFeatureCollection)
     assert len(medium_roads["features"]) > 0, "Expected medium roads in central Stockholm"

@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 import httpx
 
-from .chunking import merge_features, shapely_to_bbox, split_bbox
+from .chunking import merge_features, shapely_to_bbox, split_bbox_tiles
 from ._http import DEFAULT_BASE_URL, ElementType, ShapeType, build_params, build_rate_limit_error, is_429_retryable, raise_for_response
 from .models import (
     CostEstimate,
@@ -158,51 +157,77 @@ class AsyncOSMGeoJSONClient:
         data = await self._raw_query(params)
         return OSMFeatureCollection.from_dict(data)
 
-    async def query_all_async(self, *, page_size: int = 1000, **params: Any) -> OSMFeatureCollection:
-        """Fetch *all* pages of OSM elements asynchronously, auto-paginating."""
+    async def query_all_async(
+        self,
+        *,
+        limit_per_page: int = 1000,
+        bbox_tiles: int = 2,
+        max_features: int | None = 55_000,
+        **params: Any,
+    ) -> OSMFeatureCollection:
+        """Fetch *all* pages of OSM elements asynchronously, auto-paginating.
+
+        When ``bbox`` is present, splits it into *bbox_tiles* sub-bboxes
+        (power of 2; default 2), paginates each tile sequentially, then
+        merges and deduplicates by feature ``id``. Use ``bbox_tiles=1`` to
+        disable tiling.
+
+        ``max_features`` defaults to 55_000; pass ``None`` for no upper limit.
+        Do not pass ``limit`` or ``cursor`` (use ``limit_per_page`` / managed
+        pagination).
+        """
+        if "limit" in params:
+            raise ValueError(
+                "query_all_async does not take limit; use limit_per_page (page size) "
+                "and max_features (total cap)"
+            )
+        if "cursor" in params:
+            raise ValueError("query_all_async manages cursors; do not pass cursor")
+
         if "geometry" in params:
             geom = params.pop("geometry")
             params["bbox"] = shapely_to_bbox(geom)
 
-        all_raw = await paginate_all_async(self._raw_query, params, page_size=page_size)
-
-        seen: set[str] = set()
-        deduped: list[dict[str, Any]] = []
-        for feat in all_raw:
-            fid = feat.get("id", "")
-            if fid not in seen:
-                seen.add(fid)
-                deduped.append(feat)
-
-        return OSMFeatureCollection(
-            features=[OSMFeature.from_dict(f) for f in deduped],
-            meta=ResponseMeta(returned=len(deduped), has_more=False),
+        bbox = params.get("bbox")
+        tile_bboxes = (
+            split_bbox_tiles(bbox, bbox_tiles) if isinstance(bbox, str) else [None]
         )
 
-    async def query_large_area_async(
-        self,
-        bbox: str,
-        *,
-        max_chunk_area_deg2: float = 0.25,
-        concurrency: int = 4,
-        page_size: int = 1000,
-        **params: Any,
-    ) -> OSMFeatureCollection:
-        """Query a large bounding box by splitting into chunks fetched concurrently."""
-        chunks = split_bbox(bbox, max_chunk_area_deg2)
+        feature_lists: list[list[dict[str, Any]]] = []
+        count = 0
+        truncated = False
+        for tile_bbox in tile_bboxes:
+            if max_features is not None and count >= max_features:
+                truncated = True
+                break
+            tile_params = dict(params)
+            if tile_bbox is not None:
+                tile_params["bbox"] = tile_bbox
+            tile_features: list[dict[str, Any]] = []
+            async for page_features in paginate_all_async(
+                self._raw_query, tile_params, limit_per_page=limit_per_page
+            ):
+                if max_features is not None:
+                    room = max_features - count
+                    if room <= 0:
+                        truncated = True
+                        break
+                    if len(page_features) > room:
+                        tile_features.extend(page_features[:room])
+                        count += room
+                        truncated = True
+                        break
+                tile_features.extend(page_features)
+                count += len(page_features)
+            feature_lists.append(tile_features)
 
-        semaphore = asyncio.Semaphore(concurrency)
-
-        async def _fetch_chunk(chunk_bbox: str) -> list[dict[str, Any]]:
-            async with semaphore:
-                fc = await self.query_all_async(bbox=chunk_bbox, page_size=page_size, **params)
-                return [dict(f) for f in fc.features]
-
-        chunk_results = await asyncio.gather(*[_fetch_chunk(c) for c in chunks])
-        merged = merge_features(list(chunk_results))
+        deduped = merge_features(feature_lists)
+        if max_features is not None and len(deduped) > max_features:
+            deduped = deduped[:max_features]
+            truncated = True
         return OSMFeatureCollection(
-            features=[OSMFeature.from_dict(f) for f in merged],
-            meta=ResponseMeta(returned=len(merged), has_more=False),
+            features=[OSMFeature.from_dict(f) for f in deduped],
+            meta=ResponseMeta(returned=len(deduped), has_more=truncated),
         )
 
     async def estimate_cost_async(self, **params: Any) -> CostEstimate:

@@ -86,21 +86,15 @@ def cli() -> None:
 
 @cli.command("query")
 @_add_options(_SPATIAL_OPTIONS)
-@click.option("--limit", default=None, type=int, help="Max features per page (default: 1000)")
+@click.option("--limit", default=None, type=int, help="Max features per page (default: 1000); with --all-pages this is limit_per_page")
 @click.option("--all-pages", is_flag=True, default=False, help="Paginate all pages automatically")
 @click.option(
-    "--large-area",
-    "large_area",
-    default=None,
-    type=float,
-    help="Split bbox into chunks <= N square degrees each and merge (e.g. 0.25)",
-)
-@click.option(
-    "--concurrency",
-    default=4,
+    "--bbox-tiles",
+    "bbox_tiles",
+    default=2,
     type=int,
     show_default=True,
-    help="Parallel workers for --large-area",
+    help="Split bbox into N tiles (power of 2) when using --all-pages",
 )
 @click.option(
     "--output",
@@ -136,8 +130,7 @@ def query_cmd(
     max_area_m2: float | None,
     limit: int | None,
     all_pages: bool,
-    large_area: float | None,
-    concurrency: int,
+    bbox_tiles: int,
     output_format: str,
     disable_budget_warning: bool,
     api_key: str | None,
@@ -178,29 +171,19 @@ def query_cmd(
         params["min_area_m2"] = min_area_m2
     if max_area_m2 is not None:
         params["max_area_m2"] = max_area_m2
-    if limit is not None:
-        params["limit"] = limit
     if disable_budget_warning:
         params["disable_budget_warning"] = True
 
-    pagination_kwargs: dict[str, Any] = {}
-    if limit is not None:
-        pagination_kwargs["page_size"] = limit
+    pagination_kwargs: dict[str, Any] = {"bbox_tiles": bbox_tiles}
+    if all_pages:
+        if limit is not None:
+            pagination_kwargs["limit_per_page"] = limit
+    elif limit is not None:
+        params["limit"] = limit
 
     try:
         with client:
-            if large_area is not None:
-                if not bbox:
-                    click.echo("Error: --large-area requires --bbox", err=True)
-                    sys.exit(1)
-                fc = client.query_large_area(
-                    bbox,
-                    max_chunk_area_deg2=large_area,
-                    concurrency=concurrency,
-                    **pagination_kwargs,
-                    **{k: v for k, v in params.items() if k != "bbox"},
-                )
-            elif all_pages:
+            if all_pages:
                 fc = client.query_all(**pagination_kwargs, **params)
             else:
                 fc = client.query(**params)
@@ -212,6 +195,9 @@ def query_cmd(
         sys.exit(1)
     except OSMGeoJSONAPIError as exc:
         click.echo(f"API error (HTTP {exc.status_code}): {exc}", err=True)
+        sys.exit(1)
+    except ValueError as exc:
+        click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
 
     _apply_output(fc.features, output_format, fc.to_dict())

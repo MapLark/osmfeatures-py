@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 import requests
 
-from .async_client import AsyncOSMGeoJSONClient
-from .chunking import shapely_to_bbox
+from .chunking import merge_features, shapely_to_bbox, split_bbox_tiles
 from ._http import (
     DEFAULT_BASE_URL,
     ElementType,
@@ -56,7 +54,6 @@ class OSMGeoJSONClient:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
         self._retry = retry_config or RetryConfig()
-        self._api_key = api_key
         self._session = requests.Session()
         self._session.headers.update({"Authorization": f"Bearer {api_key}"})
 
@@ -202,89 +199,87 @@ class OSMGeoJSONClient:
         data = self._raw_query(params)
         return OSMFeatureCollection.from_dict(data)
 
-    def query_all(self, *, page_size: int = 1000, **params: Any) -> OSMFeatureCollection:
+    def query_all(
+        self,
+        *,
+        limit_per_page: int = 1000,
+        bbox_tiles: int = 2,
+        max_features: int | None = 55_000,
+        **params: Any,
+    ) -> OSMFeatureCollection:
         """Fetch *all* pages of OSM elements, auto-paginating until complete.
 
-        Deduplicates features by their ``id`` field across pages.
+        When ``bbox`` is present, splits it into *bbox_tiles* sub-bboxes
+        (power of 2; default 2), paginates each tile sequentially, then
+        merges and deduplicates by feature ``id``. Use ``bbox_tiles=1`` to
+        disable tiling.
 
         Parameters
         ----------
-        page_size:
-            Number of features to request per page.  Defaults to 1000.
+        limit_per_page:
+            Upstream ``limit`` per HTTP request (page size). Defaults to 1000.
+        bbox_tiles:
+            Number of bbox tiles (power of 2). Defaults to 2. Ignored when
+            there is no ``bbox``.
+        max_features:
+            Cap on merged features. Defaults to 55_000. Pass ``None`` for no
+            upper limit (API rate limits still apply).
         **params:
-            Same as :meth:`query`.
+            Same as :meth:`query`, except ``limit`` and ``cursor`` (managed
+            internally).
         """
+        if "limit" in params:
+            raise ValueError(
+                "query_all does not take limit; use limit_per_page (page size) "
+                "and max_features (total cap)"
+            )
+        if "cursor" in params:
+            raise ValueError("query_all manages cursors; do not pass cursor")
+
         if "geometry" in params:
             geom = params.pop("geometry")
             params["bbox"] = shapely_to_bbox(geom)
 
-        all_features: list[dict[str, Any]] = []
-        seen: set[str] = set()
-
-        for page_features in paginate_all(self._raw_query, params, page_size=page_size):
-            for feat in page_features:
-                fid = feat.get("id", "")
-                if fid not in seen:
-                    seen.add(fid)
-                    all_features.append(feat)
-
-        return OSMFeatureCollection(
-            features=[OSMFeature.from_dict(f) for f in all_features],
-            meta=ResponseMeta(returned=len(all_features), has_more=False),
+        bbox = params.get("bbox")
+        tile_bboxes = (
+            split_bbox_tiles(bbox, bbox_tiles) if isinstance(bbox, str) else [None]
         )
 
-    def query_large_area(
-        self,
-        bbox: str,
-        *,
-        max_chunk_area_deg2: float = 0.25,
-        concurrency: int = 4,
-        page_size: int = 1000,
-        **params: Any,
-    ) -> OSMFeatureCollection:
-        """Query a large bounding box by splitting it into smaller chunks.
+        feature_lists: list[list[dict[str, Any]]] = []
+        count = 0
+        truncated = False
+        for tile_bbox in tile_bboxes:
+            if max_features is not None and count >= max_features:
+                truncated = True
+                break
+            tile_params = dict(params)
+            if tile_bbox is not None:
+                tile_params["bbox"] = tile_bbox
+            tile_features: list[dict[str, Any]] = []
+            for page_features in paginate_all(
+                self._raw_query, tile_params, limit_per_page=limit_per_page
+            ):
+                if max_features is not None:
+                    room = max_features - count
+                    if room <= 0:
+                        truncated = True
+                        break
+                    if len(page_features) > room:
+                        tile_features.extend(page_features[:room])
+                        count += room
+                        truncated = True
+                        break
+                tile_features.extend(page_features)
+                count += len(page_features)
+            feature_lists.append(tile_features)
 
-        The bbox is divided into a grid of cells each <= *max_chunk_area_deg2*
-        square degrees.  Chunks are fetched in parallel (up to *concurrency*
-        workers) and the results are merged and deduplicated.
-
-        Parameters
-        ----------
-        bbox:
-            ``"min_lon,min_lat,max_lon,max_lat"`` string.
-        max_chunk_area_deg2:
-            Maximum area per chunk in square degrees.  Tune this to stay
-            within your tier's bbox area limit.
-        concurrency:
-            Number of parallel HTTP workers.
-        page_size:
-            Features per page within each chunk.
-        **params:
-            Extra query parameters passed to each chunk request.
-        """
-        async def _run() -> OSMFeatureCollection:
-            async with AsyncOSMGeoJSONClient(
-                api_key=self._api_key,
-                base_url=self._base_url,
-                retry_config=self._retry,
-                timeout=self._timeout,
-            ) as aclient:
-                return await aclient.query_large_area_async(
-                    bbox,
-                    max_chunk_area_deg2=max_chunk_area_deg2,
-                    concurrency=concurrency,
-                    page_size=page_size,
-                    **params,
-                )
-
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(_run())
-
-        raise RuntimeError(
-            "query_large_area() cannot be called when an event loop is already running. "
-            "Use AsyncOSMGeoJSONClient.query_large_area_async() instead."
+        all_features = merge_features(feature_lists)
+        if max_features is not None and len(all_features) > max_features:
+            all_features = all_features[:max_features]
+            truncated = True
+        return OSMFeatureCollection(
+            features=[OSMFeature.from_dict(f) for f in all_features],
+            meta=ResponseMeta(returned=len(all_features), has_more=truncated),
         )
 
     def usage(self) -> dict[str, Any]:

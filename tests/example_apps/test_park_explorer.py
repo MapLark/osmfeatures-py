@@ -27,12 +27,12 @@ def _bbox_area_ha(coords_list: list) -> float:
 
 
 def test_park_explorer(client: OSMGeoJSONClient):
-    data = client.query(
+    data = client.query_all(
         bbox=CENTRAL_EAST_BBOX,
         type="way,relation",
         shape="polygon",
         tags="leisure=park",
-        limit=50,
+        max_features=50,
         centroid=True,
     )
     assert isinstance(data, OSMFeatureCollection)

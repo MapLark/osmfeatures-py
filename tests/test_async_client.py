@@ -185,7 +185,7 @@ async def test_async_query_all_single_page():
     client = _make_client(transport)
 
     async with client:
-        result = await client.query_all_async(bbox="18.06,59.32,18.09,59.34")
+        result = await client.query_all_async(bbox="18.06,59.32,18.09,59.34", bbox_tiles=1)
 
     assert len(result.features) == 3
     assert transport.call_count == 1
@@ -203,7 +203,7 @@ async def test_async_query_all_two_pages():
     client = _make_client(transport)
 
     async with client:
-        result = await client.query_all_async(bbox="18.06,59.32,18.09,59.34")
+        result = await client.query_all_async(bbox="18.06,59.32,18.09,59.34", bbox_tiles=1)
 
     assert len(result.features) == 6
     assert {f.id for f in result.features} == {f"way/{i}" for i in range(6)}
@@ -223,7 +223,7 @@ async def test_async_query_all_deduplicates_across_pages():
     client = _make_client(transport)
 
     async with client:
-        result = await client.query_all_async(bbox="18.06,59.32,18.09,59.34")
+        result = await client.query_all_async(bbox="18.06,59.32,18.09,59.34", bbox_tiles=1)
 
     ids = [f.id for f in result.features]
     assert len(ids) == len(set(ids))
@@ -241,9 +241,25 @@ async def test_async_query_all_raises_on_empty_page_with_has_more_true():
 
     async with client:
         with pytest.raises(RuntimeError, match="empty features page"):
-            await client.query_all_async(bbox="18.06,59.32,18.09,59.34")
+            await client.query_all_async(bbox="18.06,59.32,18.09,59.34", bbox_tiles=1)
 
     assert transport.call_count == 1
+
+
+async def test_async_query_all_default_tiles_two_requests():
+    transport = _MockTransport(
+        [
+            (200, make_feature_collection([make_test_feature("way/1")], has_more=False)),
+            (200, make_feature_collection([make_test_feature("way/2")], has_more=False)),
+        ]
+    )
+    client = _make_client(transport)
+
+    async with client:
+        result = await client.query_all_async(bbox="18.06,59.32,18.09,59.34")
+
+    assert transport.call_count == 2
+    assert {f.id for f in result.features} == {"way/1", "way/2"}
 
 
 # ---------------------------------------------------------------------------

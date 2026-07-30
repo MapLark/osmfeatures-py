@@ -35,7 +35,7 @@ python3 -m pytest tests/test_client.py::test_query_returns_feature_collection -v
 
 | File | What it covers |
 |------|----------------|
-| `test_chunking.py` | `split_bbox`, `merge_features`, `around_to_bbox`, `parse_bbox` |
+| `test_chunking.py` | `split_bbox_tiles`, `merge_features`, `around_to_bbox`, `parse_bbox` |
 | `test_client.py` | `OSMGeoJSONClient` - happy paths, auth header, error responses, cost estimate |
 | `test_cli.py` | CLI `query` command - `--output geojson/csv/table`, missing API key error |
 | `test_retry.py` | Retry + backoff: 429->200, exhausted retries, monthly limit, `Retry-After` header |

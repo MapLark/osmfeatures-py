@@ -1,10 +1,10 @@
-"""Tests for _chunking.py."""
+"""Tests for chunking.py."""
 
 from __future__ import annotations
 
 import pytest
 
-from osmgeojson import parse_bbox, split_bbox, bbox_area_deg2, merge_features, around_to_bbox
+from osmgeojson import parse_bbox, split_bbox_tiles, bbox_area_deg2, merge_features, around_to_bbox
 
 
 class TestParseBbox:
@@ -25,36 +25,28 @@ class TestBboxAreaDeg2:
         assert bbox_area_deg2("18.0,59.0,18.0,59.0") == 0.0
 
 
-class TestSplitBbox:
-    def test_no_split_needed(self) -> None:
+class TestSplitBboxTiles:
+    def test_one_tile_unchanged(self) -> None:
         bbox = "18.0,59.0,18.1,59.1"
-        chunks = split_bbox(bbox, max_area_deg2=1.0)
-        assert chunks == [bbox]
+        assert split_bbox_tiles(bbox, 1) == [bbox]
 
-    def test_splits_into_multiple_chunks(self) -> None:
-        # 1x1 deg bbox -> split into chunks <= 0.1 deg^2
-        chunks = split_bbox("0.0,0.0,1.0,1.0", max_area_deg2=0.1)
-        assert len(chunks) > 1
+    def test_two_tiles_longest_side(self) -> None:
+        assert split_bbox_tiles("0,0,2,1", 2) == ["0.0,0.0,1.0,1.0", "1.0,0.0,2.0,1.0"]
 
-    def test_each_chunk_within_limit(self) -> None:
-        max_area = 0.05
-        chunks = split_bbox("0.0,0.0,1.0,1.0", max_area_deg2=max_area)
-        for c in chunks:
-            assert bbox_area_deg2(c) <= max_area + 1e-9, f"Chunk {c} exceeds limit"
+    def test_four_tiles(self) -> None:
+        tiles = split_bbox_tiles("0,0,2,2", 4)
+        assert len(tiles) == 4
+        total = sum(bbox_area_deg2(t) for t in tiles)
+        assert abs(total - 4.0) < 1e-9
 
-    def test_chunks_cover_full_area(self) -> None:
-        # Total area of all chunks should equal original area (no gaps, no overlap in sum)
-        original = bbox_area_deg2("0.0,0.0,1.0,1.0")
-        chunks = split_bbox("0.0,0.0,1.0,1.0", max_area_deg2=0.1)
-        total = sum(bbox_area_deg2(c) for c in chunks)
-        assert abs(total - original) < 1e-9
-
-    def test_invalid_max_area(self) -> None:
-        with pytest.raises(ValueError):
-            split_bbox("0.0,0.0,1.0,1.0", max_area_deg2=0)
+    def test_rejects_non_power_of_two(self) -> None:
+        with pytest.raises(ValueError, match="power of 2"):
+            split_bbox_tiles("0,0,1,1", 3)
+        with pytest.raises(ValueError, match="power of 2"):
+            split_bbox_tiles("0,0,1,1", 6)
 
     def test_returns_valid_bbox_strings(self) -> None:
-        for chunk in split_bbox("0.0,0.0,1.0,1.0", max_area_deg2=0.25):
+        for chunk in split_bbox_tiles("0.0,0.0,1.0,1.0", 4):
             min_lon, min_lat, max_lon, max_lat = parse_bbox(chunk)
             assert min_lon < max_lon
             assert min_lat < max_lat
