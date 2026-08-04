@@ -71,7 +71,7 @@ class AsyncOSMGeoJSONClient:
 
         async def _do() -> httpx.Response:
             return await client.get(
-                f"{self._base_url}/v2/osm_elements",
+                f"{self._base_url}/v2/osm_features",
                 params=param_list,
             )
 
@@ -231,7 +231,7 @@ class AsyncOSMGeoJSONClient:
         )
 
     async def estimate_cost_async(self, **params: Any) -> CostEstimate:
-        """Call ``/v2/osm_elements/cost`` to preflight the credit cost."""
+        """Call ``/v2/osm_features/cost`` to preflight the credit cost."""
         if "geometry" in params:
             geom = params.pop("geometry")
             params["bbox"] = shapely_to_bbox(geom)
@@ -241,7 +241,7 @@ class AsyncOSMGeoJSONClient:
 
         async def _do() -> httpx.Response:
             return await client.get(
-                f"{self._base_url}/v2/osm_elements/cost",
+                f"{self._base_url}/v2/osm_features/cost",
                 params=param_list,
             )
 

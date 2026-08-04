@@ -1,4 +1,4 @@
-"""Auto-pagination helpers for /v2/osm_elements."""
+"""Auto-pagination helpers for /v2/osm_features."""
 
 from __future__ import annotations
 

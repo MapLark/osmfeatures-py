@@ -69,7 +69,7 @@ class ResponseMeta:
 
 
 class OSMFeatureCollection(_geojson.FeatureCollection):
-    """A GeoJSON FeatureCollection as returned by ``/v2/osm_elements``.
+    """A GeoJSON FeatureCollection as returned by ``/v2/osm_features``.
 
     Subclasses :class:`geojson.FeatureCollection` (a ``dict``). The non-standard
     ``meta`` field carries API pagination info and is accessible as an attribute.

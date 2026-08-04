@@ -15,8 +15,8 @@ from osmgeojson.models import OSMFeature
 
 FAKE_API_KEY = "sk-test-1234"
 BASE_URL = "http://testserver"
-ELEMENTS_URL = f"{BASE_URL}/v2/osm_elements"
-COST_URL = f"{BASE_URL}/v2/osm_elements/cost"
+FEATURES_URL = f"{BASE_URL}/v2/osm_features"
+COST_URL = f"{BASE_URL}/v2/osm_features/cost"
 
 
 def make_test_feature(fid: str = "way/1", tags: dict[str, str] | None = None) -> dict[str, Any]:

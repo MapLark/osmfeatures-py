@@ -137,7 +137,7 @@ def query_cmd(
     base_url: str | None,
     retries: int,
 ) -> None:
-    """Query OSM elements from the OSM GeoJSON API."""
+    """Query OSM features from the OSM GeoJSON API."""
     try:
         client = _make_client(api_key, base_url, retries)
     except click.UsageError as exc:

@@ -20,7 +20,7 @@ from osmgeojson.async_client import AsyncOSMGeoJSONClient
 from tests.conftest import (
     BASE_URL,
     FAKE_API_KEY,
-    ELEMENTS_URL,
+    FEATURES_URL,
     COST_URL,
     make_test_feature,
     make_feature_collection,

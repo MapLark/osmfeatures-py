@@ -67,7 +67,7 @@ class OSMGeoJSONClient:
 
         def _do() -> requests.Response:
             return self._session.get(
-                f"{self._base_url}/v2/osm_elements",
+                f"{self._base_url}/v2/osm_features",
                 params=param_list,
                 timeout=self._timeout,
             )
@@ -312,7 +312,7 @@ class OSMGeoJSONClient:
         return resp.json()  # type: ignore[no-any-return]
 
     def estimate_cost(self, **params: Any) -> CostEstimate:
-        """Call ``/v2/osm_elements/cost`` to preflight the credit cost.
+        """Call ``/v2/osm_features/cost`` to preflight the credit cost.
 
         Returns a :class:`CostEstimate` with ``estimated_credits``,
         ``tier_limits``, and any ``hints``.  No OSM data is queried.
@@ -325,7 +325,7 @@ class OSMGeoJSONClient:
 
         def _do() -> requests.Response:
             return self._session.get(
-                f"{self._base_url}/v2/osm_elements/cost",
+                f"{self._base_url}/v2/osm_features/cost",
                 params=param_list,
                 timeout=self._timeout,
             )

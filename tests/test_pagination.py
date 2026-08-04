@@ -8,13 +8,13 @@ import pytest
 import responses as rsps
 
 from osmgeojson import split_bbox_tiles
-from tests.conftest import ELEMENTS_URL, make_test_feature, make_feature_collection
+from tests.conftest import FEATURES_URL, make_test_feature, make_feature_collection
 
 
 @rsps.activate
 def test_query_all_single_page(client):
     features = [make_test_feature(f"way/{i}") for i in range(3)]
-    rsps.add(rsps.GET, ELEMENTS_URL, json=make_feature_collection(features, has_more=False))
+    rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection(features, has_more=False))
 
     result = client.query_all(bbox="18.06,59.32,18.09,59.34", bbox_tiles=1)
 
@@ -28,8 +28,8 @@ def test_query_all_two_pages(client):
     page1 = [make_test_feature(f"way/{i}") for i in range(3)]
     page2 = [make_test_feature(f"way/{i}") for i in range(3, 6)]
 
-    rsps.add(rsps.GET, ELEMENTS_URL, json=make_feature_collection(page1, has_more=True, next_cursor="cursor-1"))
-    rsps.add(rsps.GET, ELEMENTS_URL, json=make_feature_collection(page2, has_more=False))
+    rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection(page1, has_more=True, next_cursor="cursor-1"))
+    rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection(page2, has_more=False))
 
     result = client.query_all(bbox="18.06,59.32,18.09,59.34", bbox_tiles=1)
 
@@ -45,8 +45,8 @@ def test_query_all_deduplicates_across_pages(client):
     page1 = [make_test_feature("way/1"), f_shared]
     page2 = [f_shared, make_test_feature("way/2")]
 
-    rsps.add(rsps.GET, ELEMENTS_URL, json=make_feature_collection(page1, has_more=True, next_cursor="cursor-1"))
-    rsps.add(rsps.GET, ELEMENTS_URL, json=make_feature_collection(page2, has_more=False))
+    rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection(page1, has_more=True, next_cursor="cursor-1"))
+    rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection(page2, has_more=False))
 
     result = client.query_all(bbox="18.06,59.32,18.09,59.34", bbox_tiles=1)
     ids = [f.id for f in result.features]
@@ -57,8 +57,8 @@ def test_query_all_deduplicates_across_pages(client):
 def test_query_all_raises_on_cursor_not_advancing(client):
     """API returning has_more=true but stale next_cursor should raise RuntimeError."""
     page1 = [make_test_feature("way/1")]
-    rsps.add(rsps.GET, ELEMENTS_URL, json=make_feature_collection(page1, has_more=True, next_cursor="cursor-1"))
-    rsps.add(rsps.GET, ELEMENTS_URL, json=make_feature_collection(page1, has_more=True, next_cursor="cursor-1"))
+    rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection(page1, has_more=True, next_cursor="cursor-1"))
+    rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection(page1, has_more=True, next_cursor="cursor-1"))
 
     with pytest.raises(RuntimeError, match="did not advance"):
         client.query_all(bbox="18.06,59.32,18.09,59.34", bbox_tiles=1)
@@ -69,7 +69,7 @@ def test_query_all_raises_on_empty_page_with_has_more_true(client):
     """API returning has_more=true with empty features should fail fast."""
     rsps.add(
         rsps.GET,
-        ELEMENTS_URL,
+        FEATURES_URL,
         json=make_feature_collection([], has_more=True, next_cursor="cursor-1"),
     )
 
@@ -83,8 +83,8 @@ def test_query_all_raises_on_empty_page_with_has_more_true(client):
 def test_query_all_default_tiles_two_bboxes(client):
     bbox = "18.06,59.32,18.09,59.34"
     expected = split_bbox_tiles(bbox, 2)
-    rsps.add(rsps.GET, ELEMENTS_URL, json=make_feature_collection([make_test_feature("way/1")], has_more=False))
-    rsps.add(rsps.GET, ELEMENTS_URL, json=make_feature_collection([make_test_feature("way/2")], has_more=False))
+    rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection([make_test_feature("way/1")], has_more=False))
+    rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection([make_test_feature("way/2")], has_more=False))
 
     result = client.query_all(bbox=bbox)
 
@@ -98,8 +98,8 @@ def test_query_all_default_tiles_two_bboxes(client):
 def test_query_all_deduplicates_across_tiles(client):
     bbox = "18.06,59.32,18.09,59.34"
     shared = make_test_feature("way/shared")
-    rsps.add(rsps.GET, ELEMENTS_URL, json=make_feature_collection([shared, make_test_feature("way/a")], has_more=False))
-    rsps.add(rsps.GET, ELEMENTS_URL, json=make_feature_collection([shared, make_test_feature("way/b")], has_more=False))
+    rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection([shared, make_test_feature("way/a")], has_more=False))
+    rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection([shared, make_test_feature("way/b")], has_more=False))
 
     result = client.query_all(bbox=bbox, bbox_tiles=2)
 
@@ -110,7 +110,7 @@ def test_query_all_deduplicates_across_tiles(client):
 def test_query_all_max_features_caps_and_stops(client):
     rsps.add(
         rsps.GET,
-        ELEMENTS_URL,
+        FEATURES_URL,
         json=make_feature_collection(
             [make_test_feature("way/1"), make_test_feature("way/2")],
             has_more=True,
@@ -119,7 +119,7 @@ def test_query_all_max_features_caps_and_stops(client):
     )
     rsps.add(
         rsps.GET,
-        ELEMENTS_URL,
+        FEATURES_URL,
         json=make_feature_collection(
             [make_test_feature("way/3"), make_test_feature("way/4")],
             has_more=False,
@@ -141,7 +141,7 @@ def test_query_all_max_features_caps_and_stops(client):
 def test_query_all_max_features_none_has_no_cap(client):
     rsps.add(
         rsps.GET,
-        ELEMENTS_URL,
+        FEATURES_URL,
         json=make_feature_collection([make_test_feature("way/only")], has_more=False),
     )
 

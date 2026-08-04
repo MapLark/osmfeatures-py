@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "osmgeojson"
-version = "0.2.0"
+version = "0.3.0"
 description = "Python SDK for the MapLark OSM GeoJSON API to query OpenStreetMap data easily."
 readme = "README.md"
 license = { text = "MIT" }
