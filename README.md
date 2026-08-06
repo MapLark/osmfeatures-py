@@ -1,10 +1,13 @@
 # MapLark OSM Features API
 
+Official Python client for the [MapLark OSM Features API](https://maplark.com) (GeoJSON, FlatGeobuf, GeoParquet, CSV). 
+
+
 Query OpenStreetMap features such as buildings, streets, and Points of Interest easily. Search for OSM features by bounding box, tags, and geometry shape and get GeoJSON back within less than 250ms (dependent on query size). No converting between formats manually. The API keeps OpenStreetMap semantics intact, like tags and ways, and returns GeoJSON Features you can feed straight into Leaflet, MapLibre, OpenLayers, or any geospatial toolchain. It is backed by postgis with tiered API keys and rate limiting to keep noisy neighbours out to give you predictable latency for real traffic. It also has self-host path for those willing to host complex infrastructure themselves.
 
-The translation layer is very simple:
+The postgis translation layer is very simple:
 
-- `node` - GeoJSON Point
+- `node` - Point
 - `way` - LineString or Polygon
 - `relation` - MultiPolygon or grouped geometries
 
