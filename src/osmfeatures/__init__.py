@@ -43,6 +43,15 @@ from .models import (
 from .output import to_dataframe, to_geodataframe
 from .retry import RetryConfig
 
+import warnings
+
+warnings.warn(
+    "osmgeojson is deprecated and replaced by osmfeatures. "
+    "Please migrate to the new package: pip install osmfeatures",
+    DeprecationWarning,
+    stacklevel=2
+)
+
 __all__ = [
     # Clients
     "OSMFeaturesClient",
@@ -100,3 +109,4 @@ __all__ = [
 ]
 
 __version__ = "0.1.0"
+
