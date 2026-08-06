@@ -1,4 +1,4 @@
-"""Tests for OSMGeoJSONClient - happy paths and error handling."""
+"""Tests for OSMFeaturesClient - happy paths and error handling."""
 
 from __future__ import annotations
 
@@ -6,14 +6,22 @@ import pytest
 import responses as rsps
 from urllib.parse import parse_qs, urlsplit
 
-from osmgeojson import (
-    OSMGeoJSONAuthError,
-    OSMGeoJSONAPIError,
-    OSMGeoJSONRateLimitError,
+from osmfeatures import (
+    BinaryQueryResult,
+    OSMFeaturesAuthError,
+    OSMFeaturesAPIError,
+    OSMFeaturesRateLimitError,
     CostEstimate,
     OSMFeatureCollection,
 )
-from tests.conftest import FEATURES_URL, COST_URL, make_test_feature, make_feature_collection
+from tests.conftest import (
+    FEATURES_URL,
+    COST_URL,
+    make_test_feature,
+    make_feature_collection,
+    add_features_response,
+    pagination_headers,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +135,7 @@ def test_query_forwards_zoom_length_and_area_filters(client):
 def test_query_raises_auth_error_on_401(client):
     rsps.add(rsps.GET, FEATURES_URL, status=401, body="Unauthorized")
 
-    with pytest.raises(OSMGeoJSONAuthError):
+    with pytest.raises(OSMFeaturesAuthError):
         client.query(bbox="18.06,59.32,18.09,59.34")
 
 
@@ -135,7 +143,7 @@ def test_query_raises_auth_error_on_401(client):
 def test_query_raises_api_error_on_500(client):
     rsps.add(rsps.GET, FEATURES_URL, status=500, body="Internal Server Error")
 
-    with pytest.raises(OSMGeoJSONAPIError) as exc_info:
+    with pytest.raises(OSMFeaturesAPIError) as exc_info:
         client.query(bbox="18.06,59.32,18.09,59.34")
 
     assert exc_info.value.status_code == 500
@@ -143,16 +151,74 @@ def test_query_raises_api_error_on_500(client):
 
 @rsps.activate
 def test_query_meta_populated(client):
-    rsps.add(
-        rsps.GET,
-        FEATURES_URL,
-        json=make_feature_collection([make_test_feature()], has_more=True, next_cursor="cursor-1"),
-    )
+    add_features_response([make_test_feature()], has_more=True, next_cursor="cursor-1")
 
     result = client.query(bbox="18.06,59.32,18.09,59.34")
 
     assert result.meta.has_more is True
     assert result.meta.next_cursor == "cursor-1"
+
+
+@rsps.activate
+def test_query_binary_format_keeps_pagination_meta(client):
+    body = b"id,name\nway/1,Cafe\n"
+    rsps.add(
+        rsps.GET,
+        FEATURES_URL,
+        body=body,
+        headers={
+            "X-Returned": "1",
+            "X-Has-More": "true",
+            "X-Next-Cursor": "cursor-csv-1",
+            "Content-Type": "text/csv",
+        },
+        status=200,
+    )
+
+    result = client.query(bbox="18.06,59.32,18.09,59.34", accept="text/csv", limit=1)
+
+    assert isinstance(result, BinaryQueryResult)
+    assert result.content == body
+    assert result.meta.returned == 1
+    assert result.meta.has_more is True
+    assert result.meta.next_cursor == "cursor-csv-1"
+    parsed = parse_qs(urlsplit(rsps.calls[0].request.url).query)
+    assert "format" not in parsed
+    assert rsps.calls[0].request.headers["Accept"] == "text/csv"
+
+
+@rsps.activate
+def test_query_binary_format_manual_pagination_uses_cursor(client):
+    page1 = b"id\nway/1\n"
+    page2 = b"id\nway/2\n"
+    rsps.add(
+        rsps.GET,
+        FEATURES_URL,
+        body=page1,
+        headers=pagination_headers([{"id": "1"}], has_more=True, next_cursor="c2"),
+        status=200,
+    )
+    rsps.add(
+        rsps.GET,
+        FEATURES_URL,
+        body=page2,
+        headers=pagination_headers([{"id": "2"}], has_more=False),
+        status=200,
+    )
+
+    first = client.query(bbox="18.06,59.32,18.09,59.34", accept="text/tab-separated-values", limit=1)
+    assert isinstance(first, BinaryQueryResult)
+    assert first.meta.has_more is True
+    second = client.query(
+        bbox="18.06,59.32,18.09,59.34",
+        accept="text/tab-separated-values",
+        limit=1,
+        cursor=first.meta.next_cursor,
+    )
+    assert isinstance(second, BinaryQueryResult)
+    assert second.content == page2
+    assert second.meta.has_more is False
+    assert parse_qs(urlsplit(rsps.calls[1].request.url).query)["cursor"] == ["c2"]
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +269,7 @@ def test_estimate_cost_forwards_zoom_length_and_area_filters(client):
 def test_estimate_cost_raises_auth_error_on_401(client):
     rsps.add(rsps.GET, COST_URL, status=401, body="Unauthorized")
 
-    with pytest.raises(OSMGeoJSONAuthError):
+    with pytest.raises(OSMFeaturesAuthError):
         client.estimate_cost(bbox="18.06,59.32,18.09,59.34")
 
 
@@ -213,7 +279,7 @@ def test_estimate_cost_raises_auth_error_on_401(client):
 
 
 def test_feature_properties():
-    from osmgeojson import OSMFeature
+    from osmfeatures import OSMFeature
     f = OSMFeature(
         id="relation/999",
         geometry={"type": "MultiPolygon", "coordinates": []},

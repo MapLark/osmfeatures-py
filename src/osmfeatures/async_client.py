@@ -1,4 +1,4 @@
-"""Asynchronous OSM GeoJSON API client (httpx-based)."""
+"""Asynchronous MapLark OSM Features API client (httpx-based)."""
 
 from __future__ import annotations
 
@@ -7,8 +7,19 @@ from typing import Any
 import httpx
 
 from .chunking import merge_features, shapely_to_bbox, split_bbox_tiles
-from ._http import DEFAULT_BASE_URL, ElementType, ShapeType, build_params, build_rate_limit_error, is_429_retryable, raise_for_response
+from ._http import (
+    DEFAULT_BASE_URL,
+    GEOJSON_ACCEPT,
+    ElementType,
+    ShapeType,
+    build_params,
+    build_rate_limit_error,
+    is_429_retryable,
+    is_geojson_accept,
+    raise_for_response,
+)
 from .models import (
+    BinaryQueryResult,
     CostEstimate,
     OSMFeature,
     OSMFeatureCollection,
@@ -18,14 +29,13 @@ from ._pagination import paginate_all_async
 from .retry import RetryConfig, retry_async
 
 
-
-class AsyncOSMGeoJSONClient:
-    """Asynchronous client for the OSM GeoJSON API (MapLark).
+class AsyncOSMFeaturesClient:
+    """Asynchronous client for the MapLark OSM Features API.
 
     Use as an async context manager::
 
-        async with AsyncOSMGeoJSONClient(api_key="...") as client:
-            fc = await client.query(bbox="18.06,59.32,18.09,59.34", tags=["building"])
+        async with AsyncOSMFeaturesClient(api_key="...") as client:
+            fc = await client.query_async(bbox="18.06,59.32,18.09,59.34", tags=["building"])
 
     Parameters
     ----------
@@ -65,7 +75,9 @@ class AsyncOSMGeoJSONClient:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _raw_query(self, params: dict[str, Any]) -> dict[str, Any]:
+    async def _request(
+        self, params: dict[str, Any], *, accept: str | None = None
+    ) -> httpx.Response:
         param_list = build_params(params)
         client = await self._get_client()
 
@@ -73,6 +85,7 @@ class AsyncOSMGeoJSONClient:
             return await client.get(
                 f"{self._base_url}/v2/osm_features",
                 params=param_list,
+                headers={"Accept": accept or GEOJSON_ACCEPT},
             )
 
         resp = await retry_async(
@@ -84,7 +97,13 @@ class AsyncOSMGeoJSONClient:
             build_rate_limit_error=build_rate_limit_error,
         )
         raise_for_response(resp)
-        return resp.json()  # type: ignore[no-any-return]
+        return resp
+
+    async def _raw_query(
+        self, params: dict[str, Any], *, accept: str | None = None
+    ) -> OSMFeatureCollection:
+        resp = await self._request(params, accept=accept)
+        return OSMFeatureCollection.from_http(resp.json(), resp.headers)
 
     # ------------------------------------------------------------------
     # Public API
@@ -111,10 +130,12 @@ class AsyncOSMGeoJSONClient:
         disable_budget_warning: bool = False,
         geometry: Any = None,
         centroid: bool = False,
-    ) -> OSMFeatureCollection:
+        accept: str | None = None,
+    ) -> OSMFeatureCollection | BinaryQueryResult:
         """Fetch a single page of OSM elements asynchronously.
 
-        Accepts the same parameters as :meth:`OSMGeoJSONClient.query`.
+        Same parameters as :meth:`OSMFeaturesClient.query`. Non-GeoJSON
+        ``accept`` values return :class:`BinaryQueryResult`.
         """
         if geometry is not None:
             bbox = shapely_to_bbox(geometry)
@@ -154,8 +175,10 @@ class AsyncOSMGeoJSONClient:
         if centroid:
             params["centroid"] = True
 
-        data = await self._raw_query(params)
-        return OSMFeatureCollection.from_dict(data)
+        if is_geojson_accept(accept):
+            return await self._raw_query(params, accept=accept)
+        resp = await self._request(params, accept=accept)
+        return BinaryQueryResult.from_http(resp.content, resp.headers)
 
     async def query_all_async(
         self,
@@ -174,12 +197,17 @@ class AsyncOSMGeoJSONClient:
 
         ``max_features`` defaults to 55_000; pass ``None`` for no upper limit.
         Do not pass ``limit`` or ``cursor`` (use ``limit_per_page`` / managed
-        pagination).
+        pagination). Non-GeoJSON ``accept`` is not supported.
         """
         if "limit" in params:
             raise ValueError(
                 "query_all_async does not take limit; use limit_per_page (page size) "
                 "and max_features (total cap)"
+            )
+        if not is_geojson_accept(params.pop("accept", None)):
+            raise TypeError(
+                "query_all_async() only supports GeoJSON; use query_async(accept=...) "
+                "for binary/table encodings"
             )
         if "cursor" in params:
             raise ValueError("query_all_async manages cursors; do not pass cursor")
@@ -262,7 +290,7 @@ class AsyncOSMGeoJSONClient:
             await self._client.aclose()
             self._client = None
 
-    async def __aenter__(self) -> "AsyncOSMGeoJSONClient":
+    async def __aenter__(self) -> "AsyncOSMFeaturesClient":
         return self
 
     async def __aexit__(self, *_: Any) -> None:

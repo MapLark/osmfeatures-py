@@ -11,19 +11,19 @@ if TYPE_CHECKING:
 
 _GEO_INSTALL_HINT = (
     "pandas, geopandas, and shapely are required for DataFrame output. "
-    "Install them with: pip install osmgeojson[geo]"
+    "Install them with: pip install osmfeatures[geo]"
 )
 
 
 def to_dataframe(features: list[Any]) -> "pd.DataFrame":
-    """Convert a list of :class:`~osmgeojson.Feature` objects (or raw feature dicts)
+    """Convert a list of :class:`~osmfeatures.Feature` objects (or raw feature dicts)
     to a flat ``pandas.DataFrame``.
 
     Each tag in ``properties.tags`` becomes its own column (prefixed with
     ``tag:``).  Point geometries (and centroids on polygon/line features) are
     expanded to ``lon`` / ``lat`` columns.
 
-    Requires ``pip install osmgeojson[geo]``.
+    Requires ``pip install osmfeatures[geo]``.
     """
     try:
         import pandas as pd
@@ -70,13 +70,13 @@ def to_dataframe(features: list[Any]) -> "pd.DataFrame":
 
 
 def to_geodataframe(features: list[Any]) -> "gpd.GeoDataFrame":
-    """Convert a list of :class:`~osmgeojson.Feature` objects (or raw feature dicts)
+    """Convert a list of :class:`~osmfeatures.Feature` objects (or raw feature dicts)
     to a ``geopandas.GeoDataFrame`` with EPSG:4326 CRS.
 
     Non-point features include a ``centroid`` column (Shapely Point) in
     addition to the main ``geometry`` column.
 
-    Requires ``pip install osmgeojson[geo]``.
+    Requires ``pip install osmfeatures[geo]``.
     """
     try:
         import geopandas as gpd

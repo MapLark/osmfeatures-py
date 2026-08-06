@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from osmgeojson import parse_bbox, split_bbox_tiles, bbox_area_deg2, merge_features, around_to_bbox
+from osmfeatures import parse_bbox, split_bbox_tiles, bbox_area_deg2, merge_features, around_to_bbox
 
 
 class TestParseBbox:

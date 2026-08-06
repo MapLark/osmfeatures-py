@@ -10,7 +10,7 @@ API call: ``type=way,relation&shape=polygon&tags=leisure=park``
 
 from haversine import Unit, haversine
 
-from osmgeojson import OSMFeature, OSMFeatureCollection, OSMGeoJSONClient
+from osmfeatures import OSMFeature, OSMFeatureCollection, OSMFeaturesClient
 
 CENTRAL_EAST_BBOX = "18.020,59.310,18.180,59.365"
 
@@ -26,7 +26,7 @@ def _bbox_area_ha(coords_list: list) -> float:
     return (width_m * height_m) / 10_000
 
 
-def test_park_explorer(client: OSMGeoJSONClient):
+def test_park_explorer(client: OSMFeaturesClient):
     data = client.query_all(
         bbox=CENTRAL_EAST_BBOX,
         type="way,relation",

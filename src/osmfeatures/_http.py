@@ -5,16 +5,25 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from .models import (
-    OSMGeoJSONAPIError,
-    OSMGeoJSONAuthError,
-    OSMGeoJSONForbiddenError,
-    OSMGeoJSONRateLimitError,
+    OSMFeaturesAPIError,
+    OSMFeaturesAuthError,
+    OSMFeaturesForbiddenError,
+    OSMFeaturesRateLimitError,
 )
 
 DEFAULT_BASE_URL = "https://api.maplark.com"
+GEOJSON_ACCEPT = "application/geo+json"
 
 ElementType = Literal["node", "way", "relation"]
 ShapeType = Literal["line", "polygon", "all"]
+
+
+def is_geojson_accept(accept: str | None) -> bool:
+    """True when Accept is omitted or asks for GeoJSON (default encoding)."""
+    if not accept or not accept.strip():
+        return True
+    media = accept.split(",", 1)[0].split(";", 1)[0].strip().lower()
+    return media in ("*/*", "*", GEOJSON_ACCEPT)
 
 
 def build_params(kwargs: dict[str, Any]) -> list[tuple[str, Any]]:
@@ -43,9 +52,9 @@ def build_params(kwargs: dict[str, Any]) -> list[tuple[str, Any]]:
 def raise_for_response(resp: Any) -> None:
     status = resp.status_code
     if status == 401:
-        raise OSMGeoJSONAuthError(f"Authentication failed (HTTP 401): {resp.text[:200]}")
+        raise OSMFeaturesAuthError(f"Authentication failed (HTTP 401): {resp.text[:200]}")
     if status == 403:
-        raise OSMGeoJSONForbiddenError(f"Access denied (HTTP 403): {resp.text[:200]}")
+        raise OSMFeaturesForbiddenError(f"Access denied (HTTP 403): {resp.text[:200]}")
     if status == 429:
         body: dict[str, Any] = {}
         try:
@@ -59,7 +68,7 @@ def raise_for_response(resp: Any) -> None:
                 retry_after = float(retry_after_raw)
             except (TypeError, ValueError):
                 pass
-        raise OSMGeoJSONRateLimitError(
+        raise OSMFeaturesRateLimitError(
             body.get("detail", body.get("message", f"Rate limit exceeded (HTTP 429): {resp.text[:200]}")),
             error_code=body.get("error", ""),
             tier=body.get("tier", ""),
@@ -68,7 +77,7 @@ def raise_for_response(resp: Any) -> None:
             retry_after=retry_after,
         )
     if not (200 <= status < 300):
-        raise OSMGeoJSONAPIError(
+        raise OSMFeaturesAPIError(
             f"API error (HTTP {status}): {resp.text[:200]}",
             status_code=status,
         )
@@ -104,7 +113,7 @@ def is_429_retryable(resp: Any) -> bool:
         return True
 
 
-def build_rate_limit_error(resp: Any) -> OSMGeoJSONRateLimitError:
+def build_rate_limit_error(resp: Any) -> OSMFeaturesRateLimitError:
     body: dict[str, Any] = {}
     try:
         body = resp.json()
@@ -117,7 +126,7 @@ def build_rate_limit_error(resp: Any) -> OSMGeoJSONRateLimitError:
             retry_after = float(retry_after_raw)
         except (TypeError, ValueError):
             pass
-    return OSMGeoJSONRateLimitError(
+    return OSMFeaturesRateLimitError(
         body.get("detail", body.get("message", "Rate limit exceeded")),
         error_code=body.get("error", ""),
         tier=body.get("tier", ""),

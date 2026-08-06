@@ -1,4 +1,4 @@
-"""Tests for AsyncOSMGeoJSONClient — happy path, pagination, and retry behaviour."""
+"""Tests for AsyncOSMFeaturesClient — happy path, pagination, and retry behaviour."""
 
 from __future__ import annotations
 
@@ -8,15 +8,16 @@ from typing import Any
 import httpx
 import pytest
 
-from osmgeojson import (
-    OSMGeoJSONAuthError,
-    OSMGeoJSONAPIError,
-    OSMGeoJSONRateLimitError,
+from osmfeatures import (
+    BinaryQueryResult,
+    OSMFeaturesAuthError,
+    OSMFeaturesAPIError,
+    OSMFeaturesRateLimitError,
     CostEstimate,
     OSMFeatureCollection,
     RetryConfig,
 )
-from osmgeojson.async_client import AsyncOSMGeoJSONClient
+from osmfeatures.async_client import AsyncOSMFeaturesClient
 from tests.conftest import (
     BASE_URL,
     FAKE_API_KEY,
@@ -24,20 +25,26 @@ from tests.conftest import (
     COST_URL,
     make_test_feature,
     make_feature_collection,
+    features_page,
+    pagination_headers,
 )
 
 # ---------------------------------------------------------------------------
 # Mock transport helpers
 # ---------------------------------------------------------------------------
 
-_ResponseTuple = tuple[int, dict[str, Any]]
+_ResponseTuple = (
+    tuple[int, dict[str, Any] | bytes]
+    | tuple[int, dict[str, Any] | bytes, dict[str, str]]
+)
 
 
 class _MockTransport(httpx.AsyncBaseTransport):
     """Queue-based async mock transport for httpx.
 
-    Each call to ``handle_async_request`` pops the next (status, body) pair
-    from the queue so tests can stage an exact sequence of responses.
+    Each call to ``handle_async_request`` pops the next
+    ``(status, body)`` or ``(status, body, headers)`` triple.
+    ``body`` may be a JSON-serializable dict or raw ``bytes``.
     """
 
     def __init__(self, responses: list[_ResponseTuple]) -> None:
@@ -49,13 +56,23 @@ class _MockTransport(httpx.AsyncBaseTransport):
         self.requests.append(request)
         if self._idx >= len(self._queue):
             raise RuntimeError("_MockTransport ran out of queued responses")
-        status, body = self._queue[self._idx]
+        item = self._queue[self._idx]
         self._idx += 1
-        content = json.dumps(body).encode()
+        if len(item) == 2:
+            status, body = item
+            extra_headers: dict[str, str] = {}
+        else:
+            status, body, extra_headers = item
+        if isinstance(body, (bytes, bytearray)):
+            content = bytes(body)
+            default_ct = "application/octet-stream"
+        else:
+            content = json.dumps(body).encode()
+            default_ct = "application/json"
         return httpx.Response(
             status,
             content=content,
-            headers={"content-type": "application/json"},
+            headers={"content-type": default_ct, **extra_headers},
             request=request,
         )
 
@@ -68,13 +85,13 @@ def _make_client(
     transport: _MockTransport,
     *,
     max_retries: int = 0,
-) -> AsyncOSMGeoJSONClient:
-    """Return an AsyncOSMGeoJSONClient wired to *transport*.
+) -> AsyncOSMFeaturesClient:
+    """Return an AsyncOSMFeaturesClient wired to *transport*.
 
     By pre-populating ``_client`` we bypass the lazy ``_get_client()`` so the
     mock transport is used for every request.
     """
-    client = AsyncOSMGeoJSONClient(
+    client = AsyncOSMFeaturesClient(
         api_key=FAKE_API_KEY,
         base_url=BASE_URL,
         retry_config=RetryConfig(max_retries=max_retries, backoff_base=0.0, jitter=False),
@@ -122,7 +139,7 @@ async def test_async_query_raises_auth_error_on_401():
     client = _make_client(transport)
 
     async with client:
-        with pytest.raises(OSMGeoJSONAuthError):
+        with pytest.raises(OSMFeaturesAuthError):
             await client.query_async(bbox="18.06,59.32,18.09,59.34")
 
 
@@ -131,7 +148,7 @@ async def test_async_query_raises_api_error_on_500():
     client = _make_client(transport)
 
     async with client:
-        with pytest.raises(OSMGeoJSONAPIError) as exc_info:
+        with pytest.raises(OSMFeaturesAPIError) as exc_info:
             await client.query_async(bbox="18.06,59.32,18.09,59.34")
 
     assert exc_info.value.status_code == 500
@@ -139,7 +156,7 @@ async def test_async_query_raises_api_error_on_500():
 
 async def test_async_query_meta_populated():
     transport = _MockTransport(
-        [(200, make_feature_collection([make_test_feature()], has_more=True, next_cursor="cursor-1"))]
+        [features_page([make_test_feature()], has_more=True, next_cursor="cursor-1")]
     )
     client = _make_client(transport)
 
@@ -148,6 +165,32 @@ async def test_async_query_meta_populated():
 
     assert result.meta.has_more is True
     assert result.meta.next_cursor == "cursor-1"
+
+
+async def test_async_query_binary_format_keeps_pagination_meta():
+    body = b"id,name\nway/1,Cafe\n"
+    transport = _MockTransport(
+        [
+            (
+                200,
+                body,
+                pagination_headers([], has_more=True, next_cursor="cursor-csv-1"),
+            )
+        ]
+    )
+    client = _make_client(transport)
+
+    async with client:
+        result = await client.query_async(
+            bbox="18.06,59.32,18.09,59.34", accept="text/csv", limit=1
+        )
+
+    assert isinstance(result, BinaryQueryResult)
+    assert result.content == body
+    assert result.meta.has_more is True
+    assert result.meta.next_cursor == "cursor-csv-1"
+    assert "format" not in dict(transport.requests[0].url.params)
+    assert transport.requests[0].headers["Accept"] == "text/csv"
 
 
 async def test_async_query_forwards_zoom_length_and_area_filters():
@@ -181,7 +224,7 @@ async def test_async_query_forwards_zoom_length_and_area_filters():
 
 async def test_async_query_all_single_page():
     features = [make_test_feature(f"way/{i}") for i in range(3)]
-    transport = _MockTransport([(200, make_feature_collection(features, has_more=False))])
+    transport = _MockTransport([features_page(features, has_more=False)])
     client = _make_client(transport)
 
     async with client:
@@ -196,8 +239,8 @@ async def test_async_query_all_two_pages():
     page2 = [make_test_feature(f"way/{i}") for i in range(3, 6)]
     transport = _MockTransport(
         [
-            (200, make_feature_collection(page1, has_more=True, next_cursor="cursor-1")),
-            (200, make_feature_collection(page2, has_more=False)),
+            features_page(page1, has_more=True, next_cursor="cursor-1"),
+            features_page(page2, has_more=False),
         ]
     )
     client = _make_client(transport)
@@ -216,8 +259,8 @@ async def test_async_query_all_deduplicates_across_pages():
     page2 = [f_shared, make_test_feature("way/2")]
     transport = _MockTransport(
         [
-            (200, make_feature_collection(page1, has_more=True, next_cursor="cursor-1")),
-            (200, make_feature_collection(page2, has_more=False)),
+            features_page(page1, has_more=True, next_cursor="cursor-1"),
+            features_page(page2, has_more=False),
         ]
     )
     client = _make_client(transport)
@@ -232,9 +275,9 @@ async def test_async_query_all_deduplicates_across_pages():
 async def test_async_query_all_raises_on_empty_page_with_has_more_true():
     transport = _MockTransport(
         [
-            (200, make_feature_collection([], has_more=True, next_cursor="cursor-1")),
+            features_page([], has_more=True, next_cursor="cursor-1"),
             # Must never be reached if paginator fails fast.
-            (200, make_feature_collection([], has_more=False)),
+            features_page([], has_more=False),
         ]
     )
     client = _make_client(transport)
@@ -249,8 +292,8 @@ async def test_async_query_all_raises_on_empty_page_with_has_more_true():
 async def test_async_query_all_default_tiles_two_requests():
     transport = _MockTransport(
         [
-            (200, make_feature_collection([make_test_feature("way/1")], has_more=False)),
-            (200, make_feature_collection([make_test_feature("way/2")], has_more=False)),
+            features_page([make_test_feature("way/1")], has_more=False),
+            features_page([make_test_feature("way/2")], has_more=False),
         ]
     )
     client = _make_client(transport)
@@ -313,7 +356,7 @@ async def test_async_estimate_cost_raises_auth_error_on_401():
     client = _make_client(transport)
 
     async with client:
-        with pytest.raises(OSMGeoJSONAuthError):
+        with pytest.raises(OSMFeaturesAuthError):
             await client.estimate_cost_async(bbox="18.06,59.32,18.09,59.34")
 
 
@@ -341,7 +384,7 @@ async def test_async_retries_on_429_then_succeeds():
 
 
 async def test_async_retries_exhausted_raises_rate_limit_error():
-    """All attempts returning 429 (retryable) should raise OSMGeoJSONRateLimitError."""
+    """All attempts returning 429 (retryable) should raise OSMFeaturesRateLimitError."""
     transport = _MockTransport(
         [
             (429, {"error": "too_many_requests", "subtype": "rate_limit_second", "detail": "too fast", "tier": "free"}),
@@ -353,7 +396,7 @@ async def test_async_retries_exhausted_raises_rate_limit_error():
     client = _make_client(transport, max_retries=3)
 
     async with client:
-        with pytest.raises(OSMGeoJSONRateLimitError) as exc_info:
+        with pytest.raises(OSMFeaturesRateLimitError) as exc_info:
             await client.query_async(bbox="18.06,59.32,18.09,59.34")
 
     assert exc_info.value.error_code == "too_many_requests"
@@ -374,7 +417,7 @@ async def test_async_monthly_limit_not_retried():
     client = _make_client(transport, max_retries=3)
 
     async with client:
-        with pytest.raises(OSMGeoJSONRateLimitError):
+        with pytest.raises(OSMFeaturesRateLimitError):
             await client.query_async(bbox="18.06,59.32,18.09,59.34")
 
     assert transport.call_count == 1
@@ -391,7 +434,7 @@ async def test_async_401_not_retried():
     client = _make_client(transport, max_retries=3)
 
     async with client:
-        with pytest.raises(OSMGeoJSONAuthError):
+        with pytest.raises(OSMFeaturesAuthError):
             await client.query_async(bbox="18.06,59.32,18.09,59.34")
 
     assert transport.call_count == 1

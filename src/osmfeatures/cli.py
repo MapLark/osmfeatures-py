@@ -1,4 +1,4 @@
-"""CLI for osmgeojson - ``osmgeojson query`` and ``osmgeojson cost``."""
+"""CLI for osmfeatures - ``osmfeatures query`` and ``osmfeatures cost``."""
 
 from __future__ import annotations
 
@@ -9,20 +9,25 @@ from typing import Any
 
 import click
 
-from .client import OSMGeoJSONClient
+from .client import OSMFeaturesClient
 from ._http import DEFAULT_BASE_URL
-from .models import OSMGeoJSONAuthError, OSMGeoJSONRateLimitError, OSMGeoJSONAPIError
+from .models import (
+    BinaryQueryResult,
+    OSMFeaturesAuthError,
+    OSMFeaturesRateLimitError,
+    OSMFeaturesAPIError,
+)
 from .retry import RetryConfig
 
 
-def _make_client(api_key: str | None, base_url: str | None, retries: int) -> OSMGeoJSONClient:
+def _make_client(api_key: str | None, base_url: str | None, retries: int) -> OSMFeaturesClient:
     resolved_key = api_key or os.environ.get("MAPLARK_API_KEY", "")
     if not resolved_key:
         raise click.UsageError(
             "No API key provided. Pass --api-key or set MAPLARK_API_KEY environment variable."
         )
     resolved_url = base_url or os.environ.get("MAPLARK_BASE_URL", DEFAULT_BASE_URL)
-    return OSMGeoJSONClient(
+    return OSMFeaturesClient(
         api_key=resolved_key,
         base_url=resolved_url,
         retry_config=RetryConfig(max_retries=retries),
@@ -81,7 +86,7 @@ def _add_options(options: list[Any]) -> Any:
 
 @click.group()
 def cli() -> None:
-    """osmgeojson - OSM GeoJSON API SDK CLI."""
+    """osmfeatures - MapLark OSM Features API SDK CLI."""
 
 
 @cli.command("query")
@@ -102,7 +107,20 @@ def cli() -> None:
     default="geojson",
     type=click.Choice(["geojson", "csv", "table"]),
     show_default=True,
-    help="Output format",
+    help="Client-side display format when Accept is GeoJSON",
+)
+@click.option(
+    "--accept",
+    "accept",
+    default=None,
+    type=click.Choice([
+        "application/geo+json",
+        "text/csv",
+        "text/tab-separated-values",
+        "application/flatgeobuf",
+        "application/vnd.apache.parquet",
+    ]),
+    help="Accept media type for server encoding. Non-GeoJSON writes raw bytes to stdout",
 )
 @click.option(
     "--disable-budget-warning",
@@ -132,12 +150,13 @@ def query_cmd(
     all_pages: bool,
     bbox_tiles: int,
     output_format: str,
+    accept: str | None,
     disable_budget_warning: bool,
     api_key: str | None,
     base_url: str | None,
     retries: int,
 ) -> None:
-    """Query OSM features from the OSM GeoJSON API."""
+    """Query OSM features from the MapLark OSM Features API."""
     try:
         client = _make_client(api_key, base_url, retries)
     except click.UsageError as exc:
@@ -173,6 +192,8 @@ def query_cmd(
         params["max_area_m2"] = max_area_m2
     if disable_budget_warning:
         params["disable_budget_warning"] = True
+    if accept is not None:
+        params["accept"] = accept
 
     pagination_kwargs: dict[str, Any] = {"bbox_tiles": bbox_tiles}
     if all_pages:
@@ -187,18 +208,22 @@ def query_cmd(
                 fc = client.query_all(**pagination_kwargs, **params)
             else:
                 fc = client.query(**params)
-    except OSMGeoJSONAuthError as exc:
+    except OSMFeaturesAuthError as exc:
         click.echo(f"Authentication error: {exc}", err=True)
         sys.exit(1)
-    except OSMGeoJSONRateLimitError as exc:
+    except OSMFeaturesRateLimitError as exc:
         click.echo(f"Rate limit: {exc}", err=True)
         sys.exit(1)
-    except OSMGeoJSONAPIError as exc:
+    except OSMFeaturesAPIError as exc:
         click.echo(f"API error (HTTP {exc.status_code}): {exc}", err=True)
         sys.exit(1)
     except ValueError as exc:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
+
+    if isinstance(fc, BinaryQueryResult):
+        sys.stdout.buffer.write(fc.content)
+        return
 
     _apply_output(fc.features, output_format, fc.to_dict())
 
@@ -268,10 +293,10 @@ def cost_cmd(
     try:
         with client:
             estimate = client.estimate_cost(**params)
-    except OSMGeoJSONAuthError as exc:
+    except OSMFeaturesAuthError as exc:
         click.echo(f"Authentication error: {exc}", err=True)
         sys.exit(1)
-    except OSMGeoJSONAPIError as exc:
+    except OSMFeaturesAPIError as exc:
         click.echo(f"API error (HTTP {exc.status_code}): {exc}", err=True)
         sys.exit(1)
 

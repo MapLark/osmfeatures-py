@@ -28,7 +28,7 @@ import pytest
 import networkx as nx
 from haversine import Unit, haversine
 
-from osmgeojson import OSMFeatureCollection, OSMGeoJSONClient
+from osmfeatures import OSMFeatureCollection, OSMFeaturesClient
 from tests.example_apps.graph_utils import build_nx_graph
 
 GAMLA_STAN_BBOX = "18.063,59.322,18.082,59.332"
@@ -38,7 +38,7 @@ PEDESTRIAN_HIGHWAY_TYPES = (
 )
 
 
-def test_pedestrian_wavefront_bfs(client: OSMGeoJSONClient):
+def test_pedestrian_wavefront_bfs(client: OSMFeaturesClient):
     features: list = []
     seen_ids: set[str] = set()
     blocked_access_values = {"no", "private"}

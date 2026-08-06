@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-from osmgeojson import OSMGeoJSONClient
+from osmfeatures import OSMFeaturesClient
 
 # ---------------------------------------------------------------------------
 # Bounding boxes (Stockholm area used throughout the examples)
@@ -51,8 +51,8 @@ CORRIDOR_TILES = [
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
-def client() -> OSMGeoJSONClient:
-    """Live OSMGeoJSONClient pointed at the MapLark API.
+def client() -> OSMFeaturesClient:
+    """Live OSMFeaturesClient pointed at the MapLark API.
 
     Reads ``MAPLARK_API_KEY`` from the environment.  The whole module is
     skipped if the variable is absent so the unit-test suite (which uses a
@@ -62,7 +62,7 @@ def client() -> OSMGeoJSONClient:
     if not api_key:
         pytest.skip("MAPLARK_API_KEY not set — skipping live API example tests")
     base_url = os.environ.get("MAPLARK_BASE_URL", "https://api.maplark.com")
-    return OSMGeoJSONClient(api_key=api_key, base_url=base_url)
+    return OSMFeaturesClient(api_key=api_key, base_url=base_url)
 
 
 @pytest.fixture(autouse=True)
@@ -72,7 +72,7 @@ def rate_limit_sleep():
 
 
 @pytest.fixture(autouse=True)
-def usage_probe(client: OSMGeoJSONClient):
+def usage_probe(client: OSMFeaturesClient):
     """Print unit-budget snapshots before and after each test.
 
     Calls ``GET /v1/usage`` (API key auth) at the start and end of every test

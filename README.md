@@ -1,4 +1,4 @@
-# MapLark OSM GeoJSON API
+# MapLark OSM Features API
 
 Query OpenStreetMap features such as buildings, streets, and Points of Interest easily. Search for OSM features by bounding box, tags, and geometry shape and get GeoJSON back within less than 250ms (dependent on query size). No converting between formats manually. The API keeps OpenStreetMap semantics intact, like tags and ways, and returns GeoJSON Features you can feed straight into Leaflet, MapLibre, OpenLayers, or any geospatial toolchain. It is backed by postgis with tiered API keys and rate limiting to keep noisy neighbours out to give you predictable latency for real traffic. It also has self-host path for those willing to host complex infrastructure themselves.
 
@@ -29,18 +29,19 @@ Read the full API reference here [https://maplark.com/developer](https://maplark
 This client library comes with auto-pagination, bbox tiling (enables larger bbox queries), retry/backoff, pandas/geopandas output, async support, and convenience methods to get common OSM data such as buildings, amenities, bike roads, etc. 
 
 ```
-pip install osmgeojson
-pip install "osmgeojson[geo]"   # pandas / geopandas / shapely support
+pip install osmfeatures
+pip install "osmfeatures[geo]"   # pandas / geopandas / shapely support
 ```
 
+Official client for the MapLark OSM Features API (GeoJSON, FlatGeobuf, GeoParquet, CSV).
 The SDK talks to `api.maplark.com` by default.
 
 ## Quick start
 
 ```python
-from osmgeojson import OSMGeoJSONClient
+from osmfeatures import OSMFeaturesClient
 
-with OSMGeoJSONClient(api_key="sk-...") as client:
+with OSMFeaturesClient(api_key="sk-...") as client:
     fc = client.query(bbox="18.06,59.32,18.09,59.34", tags=["building"])
     print(len(fc.features), "buildings found")
 ```
@@ -54,17 +55,17 @@ with OSMGeoJSONClient(api_key="sk-...") as client:
 ### 1) Create a client
 
 ```python
-from osmgeojson import OSMGeoJSONClient
+from osmfeatures import OSMFeaturesClient
 
-client = OSMGeoJSONClient(api_key="sk-...")
+client = OSMFeaturesClient(api_key="sk-...")
 ```
 
 You can use the client directly and close it when done, or use a context manager:
 
 ```python
-from osmgeojson import OSMGeoJSONClient
+from osmfeatures import OSMFeaturesClient
 
-with OSMGeoJSONClient(api_key="sk-...") as client:
+with OSMFeaturesClient(api_key="sk-...") as client:
     ...
 ```
 
@@ -96,7 +97,7 @@ Common filters:
 - `not_tags=["access=private"]` (exclude)
 - `type="node" | "way" | "relation"`
 - `shape="polygon" | "line" | "all"` (omit = both shapes; `all` also means both)
-- `cursor` (pagination; use `meta.next_cursor` from previous page)
+- `cursor` (pagination; use SDK `meta.next_cursor` from previous page, sourced from `X-Next-Cursor`)
 
 
 
@@ -124,11 +125,11 @@ Async methods mirror the sync API (`query_async`, `query_all_async`):
 
 ```python
 import asyncio
-from osmgeojson import AsyncOSMGeoJSONClient
+from osmfeatures import AsyncOSMFeaturesClient
 
 
 async def main() -> None:
-    async with AsyncOSMGeoJSONClient(api_key="sk-...") as client:
+    async with AsyncOSMFeaturesClient(api_key="sk-...") as client:
         fc = await client.query_async(
             bbox="18.06,59.32,18.09,59.34",
             tags=["building"],
@@ -146,9 +147,9 @@ asyncio.run(main())
 For common datasets, use convenience methods built on top of `query_all()`:
 
 ```python
-from osmgeojson import OSMGeoJSONClient, get_buildings, get_restaurants
+from osmfeatures import OSMFeaturesClient, get_buildings, get_restaurants
 
-with OSMGeoJSONClient(api_key="sk-...") as client:
+with OSMFeaturesClient(api_key="sk-...") as client:
     buildings = get_buildings(client, bbox="18.063,59.322,18.082,59.332")
     restaurants = get_restaurants(client, bbox="18.063,59.322,18.082,59.332")
     print(len(buildings.features), len(restaurants.features))
@@ -173,12 +174,12 @@ print("Usage:", usage)
 
 ### 7) CLI usage
 
-If the package is installed, the CLI is available as `osmgeojson`:
+If the package is installed, the CLI is available as `osmfeatures`:
 
 ```bash
 export MAPLARK_API_KEY="sk-..."
-osmgeojson query --bbox "18.063,59.322,18.082,59.332" --tags building --type way
-osmgeojson query --bbox "18.063,59.322,18.082,59.332" --tags building --all-pages --bbox-tiles 4
+osmfeatures query --bbox "18.063,59.322,18.082,59.332" --tags building --type way
+osmfeatures query --bbox "18.063,59.322,18.082,59.332" --tags building --all-pages --bbox-tiles 4
 ```
 
 

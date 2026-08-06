@@ -1,4 +1,4 @@
-"""Synchronous OSM GeoJSON API client."""
+"""Synchronous MapLark OSM Features API client."""
 
 from __future__ import annotations
 
@@ -9,14 +9,17 @@ import requests
 from .chunking import merge_features, shapely_to_bbox, split_bbox_tiles
 from ._http import (
     DEFAULT_BASE_URL,
+    GEOJSON_ACCEPT,
     ElementType,
     ShapeType,
     build_params,
     build_rate_limit_error,
     is_429_retryable,
+    is_geojson_accept,
     raise_for_response,
 )
 from .models import (
+    BinaryQueryResult,
     CostEstimate,
     OSMFeature,
     OSMFeatureCollection,
@@ -26,8 +29,8 @@ from ._pagination import paginate_all
 from .retry import RetryConfig, retry
 
 
-class OSMGeoJSONClient:
-    """Synchronous client for the OSM GeoJSON API (MapLark).
+class OSMFeaturesClient:
+    """Synchronous client for the MapLark OSM Features API.
 
     Parameters
     ----------
@@ -61,14 +64,15 @@ class OSMGeoJSONClient:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _raw_query(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Execute a single HTTP request and return the parsed JSON body."""
+    def _request(self, params: dict[str, Any], *, accept: str | None = None) -> requests.Response:
+        """Execute a single HTTP request and return the Response."""
         param_list = build_params(params)
 
         def _do() -> requests.Response:
             return self._session.get(
                 f"{self._base_url}/v2/osm_features",
                 params=param_list,
+                headers={"Accept": accept or GEOJSON_ACCEPT},
                 timeout=self._timeout,
             )
 
@@ -81,7 +85,12 @@ class OSMGeoJSONClient:
             build_rate_limit_error=build_rate_limit_error,
         )
         raise_for_response(resp)
-        return resp.json()  # type: ignore[no-any-return]
+        return resp
+
+    def _raw_query(self, params: dict[str, Any], *, accept: str | None = None) -> OSMFeatureCollection:
+        """Execute a single HTTP request; pagination comes from response headers."""
+        resp = self._request(params, accept=accept)
+        return OSMFeatureCollection.from_http(resp.json(), resp.headers)
 
     # ------------------------------------------------------------------
     # Public API
@@ -108,7 +117,8 @@ class OSMGeoJSONClient:
         disable_budget_warning: bool = False,
         geometry: Any = None,
         centroid: bool = False,
-    ) -> OSMFeatureCollection:
+        accept: str | None = None,
+    ) -> OSMFeatureCollection | BinaryQueryResult:
         """Fetch a single page of OSM elements.
 
         Parameters
@@ -136,8 +146,8 @@ class OSMGeoJSONClient:
         limit:
             Maximum features per page.  Defaults to 1000.
         cursor:
-            Pagination cursor; use ``meta.next_cursor`` from the previous
-            response. Omit to start from the first page.
+            Pagination cursor; use ``meta.next_cursor`` (from ``X-Next-Cursor``)
+            of the previous response. Omit to start from the first page.
         zoom:
             Map zoom level used to simplify geometry at lower zooms.
         min_length_m:
@@ -153,10 +163,16 @@ class OSMGeoJSONClient:
             still charged.
         geometry:
             Shapely geometry object.  Converted to ``bbox`` automatically
-            (requires ``pip install osmgeojson[geo]``).
+            (requires ``pip install osmfeatures[geo]``).
         centroid:
             When True, request ``properties.centroid`` on non-point features.
             Default False.
+        accept:
+            ``Accept`` media type. Default / ``application/geo+json`` returns
+            ``OSMFeatureCollection``. Other types (``text/csv``,
+            ``text/tab-separated-values``, ``application/flatgeobuf``,
+            ``application/vnd.apache.parquet``) return :class:`BinaryQueryResult`
+            with body bytes and pagination ``meta`` (for manual ``cursor`` paging).
         """
         if geometry is not None:
             bbox = shapely_to_bbox(geometry)
@@ -196,8 +212,10 @@ class OSMGeoJSONClient:
         if centroid:
             params["centroid"] = True
 
-        data = self._raw_query(params)
-        return OSMFeatureCollection.from_dict(data)
+        if is_geojson_accept(accept):
+            return self._raw_query(params, accept=accept)
+        resp = self._request(params, accept=accept)
+        return BinaryQueryResult.from_http(resp.content, resp.headers)
 
     def query_all(
         self,
@@ -226,12 +244,16 @@ class OSMGeoJSONClient:
             upper limit (API rate limits still apply).
         **params:
             Same as :meth:`query`, except ``limit`` and ``cursor`` (managed
-            internally).
+            internally). Non-GeoJSON ``accept`` is not supported here.
         """
         if "limit" in params:
             raise ValueError(
                 "query_all does not take limit; use limit_per_page (page size) "
                 "and max_features (total cap)"
+            )
+        if not is_geojson_accept(params.pop("accept", None)):
+            raise TypeError(
+                "query_all() only supports GeoJSON; use query(accept=...) for binary/table encodings"
             )
         if "cursor" in params:
             raise ValueError("query_all manages cursors; do not pass cursor")
@@ -345,7 +367,7 @@ class OSMGeoJSONClient:
         """Close the underlying HTTP session."""
         self._session.close()
 
-    def __enter__(self) -> "OSMGeoJSONClient":
+    def __enter__(self) -> "OSMFeaturesClient":
         return self
 
     def __exit__(self, *_: Any) -> None:

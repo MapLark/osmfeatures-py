@@ -1,4 +1,4 @@
-"""Domain-specific convenience helpers built on top of OSMGeoJSONClient.
+"""Domain-specific convenience helpers built on top of OSMFeaturesClient.
 
 Each helper is a thin, typed wrapper that pre-fills the correct OSM tag
 filters, geometry shape, and element type.  All accept ``**kwargs`` that
@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .client import OSMGeoJSONClient
+    from .client import OSMFeaturesClient
     from .models import OSMFeatureCollection
 
 
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 def _q(
-    client: "OSMGeoJSONClient",
+    client: "OSMFeaturesClient",
     *,
     bbox: str | None = None,
     around: str | None = None,
@@ -59,7 +59,7 @@ def _q(
 
 
 def get_buildings(
-    client: "OSMGeoJSONClient",
+    client: "OSMFeaturesClient",
     bbox: str,
     *,
     building: str | None = None,
@@ -78,7 +78,7 @@ def get_buildings(
 
 
 def get_building_polygons(
-    client: "OSMGeoJSONClient",
+    client: "OSMFeaturesClient",
     osm_ids: list[int] | tuple[int, ...],
     **kwargs: Any,
 ) -> "OSMFeatureCollection":
@@ -91,7 +91,7 @@ def get_building_polygons(
 
 
 def get_barriers(
-    client: "OSMGeoJSONClient",
+    client: "OSMFeaturesClient",
     bbox: str,
     *,
     barrier: str | None = None,
@@ -111,7 +111,7 @@ def get_barriers(
 
 
 def get_trees(
-    client: "OSMGeoJSONClient",
+    client: "OSMFeaturesClient",
     bbox: str,
     **kwargs: Any,
 ) -> "OSMFeatureCollection":
@@ -128,7 +128,7 @@ def get_trees(
 
 
 def get_roads(
-    client: "OSMGeoJSONClient",
+    client: "OSMFeaturesClient",
     bbox: str,
     *,
     highway: str | None = None,
@@ -147,7 +147,7 @@ def get_roads(
 
 
 def get_cycleways(
-    client: "OSMGeoJSONClient",
+    client: "OSMFeaturesClient",
     bbox: str,
     **kwargs: Any,
 ) -> "OSMFeatureCollection":
@@ -156,7 +156,7 @@ def get_cycleways(
 
 
 def get_public_transport_stops(
-    client: "OSMGeoJSONClient",
+    client: "OSMFeaturesClient",
     bbox: str,
     **kwargs: Any,
 ) -> "OSMFeatureCollection":
@@ -176,7 +176,7 @@ def get_public_transport_stops(
 
 
 def get_parking(
-    client: "OSMGeoJSONClient",
+    client: "OSMFeaturesClient",
     bbox: str,
     **kwargs: Any,
 ) -> "OSMFeatureCollection":
@@ -190,7 +190,7 @@ def get_parking(
 
 
 def get_amenities(
-    client: "OSMGeoJSONClient",
+    client: "OSMFeaturesClient",
     bbox: str,
     *,
     amenity: str | None = None,
@@ -208,7 +208,7 @@ def get_amenities(
 
 
 def get_restaurants(
-    client: "OSMGeoJSONClient",
+    client: "OSMFeaturesClient",
     bbox: str,
     **kwargs: Any,
 ) -> "OSMFeatureCollection":
@@ -217,7 +217,7 @@ def get_restaurants(
 
 
 def get_cafes(
-    client: "OSMGeoJSONClient",
+    client: "OSMFeaturesClient",
     bbox: str,
     **kwargs: Any,
 ) -> "OSMFeatureCollection":
@@ -226,7 +226,7 @@ def get_cafes(
 
 
 def get_shops(
-    client: "OSMGeoJSONClient",
+    client: "OSMFeaturesClient",
     bbox: str,
     *,
     shop: str | None = None,
@@ -244,7 +244,7 @@ def get_shops(
 
 
 def get_healthcare(
-    client: "OSMGeoJSONClient",
+    client: "OSMFeaturesClient",
     bbox: str,
     **kwargs: Any,
 ) -> "OSMFeatureCollection":
@@ -263,7 +263,7 @@ def get_healthcare(
 
 
 def get_schools(
-    client: "OSMGeoJSONClient",
+    client: "OSMFeaturesClient",
     bbox: str,
     **kwargs: Any,
 ) -> "OSMFeatureCollection":
@@ -287,7 +287,7 @@ def get_schools(
 
 
 def get_parks(
-    client: "OSMGeoJSONClient",
+    client: "OSMFeaturesClient",
     bbox: str,
     **kwargs: Any,
 ) -> "OSMFeatureCollection":
@@ -306,7 +306,7 @@ def get_parks(
 
 
 def get_green_spaces(
-    client: "OSMGeoJSONClient",
+    client: "OSMFeaturesClient",
     bbox: str,
     **kwargs: Any,
 ) -> "OSMFeatureCollection":
@@ -326,7 +326,7 @@ def get_green_spaces(
 
 
 def get_water(
-    client: "OSMGeoJSONClient",
+    client: "OSMFeaturesClient",
     bbox: str,
     **kwargs: Any,
 ) -> "OSMFeatureCollection":
@@ -351,7 +351,7 @@ def get_water(
 
 
 def get_landuse(
-    client: "OSMGeoJSONClient",
+    client: "OSMFeaturesClient",
     bbox: str,
     *,
     landuse: str | None = None,
@@ -369,7 +369,7 @@ def get_landuse(
 
 
 def get_boundaries(
-    client: "OSMGeoJSONClient",
+    client: "OSMFeaturesClient",
     bbox: str,
     *,
     admin_level: int | None = None,
@@ -389,7 +389,7 @@ def get_boundaries(
 
 
 def get_place(
-    client: "OSMGeoJSONClient",
+    client: "OSMFeaturesClient",
     lon: float,
     lat: float,
     radius_m: float,
@@ -411,7 +411,7 @@ def get_place(
 
 
 def get_elements_by_name(
-    client: "OSMGeoJSONClient",
+    client: "OSMFeaturesClient",
     bbox: str,
     name: str,
     **kwargs: Any,

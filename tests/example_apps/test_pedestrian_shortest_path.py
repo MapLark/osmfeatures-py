@@ -21,7 +21,7 @@ one per pedestrian highway type, merged client-side with deduplication.
 import pytest
 import networkx as nx
 
-from osmgeojson import OSMFeatureCollection, OSMGeoJSONClient
+from osmfeatures import OSMFeatureCollection, OSMFeaturesClient
 from tests.example_apps.graph_utils import build_nx_graph
 
 GAMLA_STAN_BBOX = "18.063,59.322,18.082,59.332"
@@ -31,7 +31,7 @@ PEDESTRIAN_HIGHWAY_TYPES = {
 }
 
 
-def test_pedestrian_shortest_path(client: OSMGeoJSONClient):
+def test_pedestrian_shortest_path(client: OSMFeaturesClient):
     pedestrian_features = []
     seen_feature_ids: set[str] = set()
 

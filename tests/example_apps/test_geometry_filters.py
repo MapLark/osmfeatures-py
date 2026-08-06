@@ -8,7 +8,7 @@ These tests exercise live API filtering for:
   - ``min_length_m`` on line highways
 """
 
-from osmgeojson import OSMFeature, OSMFeatureCollection, OSMGeoJSONClient
+from osmfeatures import OSMFeature, OSMFeatureCollection, OSMFeaturesClient
 
 from tests.example_apps.conftest import CENTRAL_EAST_BBOX
 
@@ -18,7 +18,7 @@ def _feature_ids(data: OSMFeatureCollection) -> set[str]:
     return {f["id"] for f in data["features"]}
 
 
-def test_zoomed_out_large_buildings_only(client: OSMGeoJSONClient):
+def test_zoomed_out_large_buildings_only(client: OSMFeaturesClient):
     baseline = client.query(
         bbox=GAMLA_STAN_CORE_BBOX,
         type="way,relation",
@@ -70,7 +70,7 @@ def test_zoomed_out_large_buildings_only(client: OSMGeoJSONClient):
     print(f"\n[geometry filters] buildings baseline={len(baseline['features'])} large={len(large['features'])}")
 
 
-def test_only_long_roads(client: OSMGeoJSONClient):
+def test_only_long_roads(client: OSMFeaturesClient):
     baseline = client.query_all(
         bbox=CENTRAL_EAST_BBOX,
         type="way",

@@ -22,7 +22,7 @@ API calls:
 import pytest
 from haversine import Unit, haversine
 
-from osmgeojson import OSMFeatureCollection, OSMGeoJSONClient
+from osmfeatures import OSMFeatureCollection, OSMFeaturesClient
 
 CENTRAL_EAST_BBOX = "18.020,59.310,18.180,59.365"
 
@@ -70,7 +70,7 @@ def _dist_point_to_segment(
     return haversine((slat, slon), (lat1 + t * dlat, lon1 + t * dlon), unit=Unit.METERS)
 
 
-def test_lakeside_ice_cream_hunt(client: OSMGeoJSONClient):
+def test_lakeside_ice_cream_hunt(client: OSMFeaturesClient):
     # Step 1: water bodies
     water = client.query_all(
         bbox=CENTRAL_EAST_BBOX,

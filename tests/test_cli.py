@@ -8,19 +8,26 @@ from unittest.mock import patch
 import pytest
 from click.testing import CliRunner
 
-from osmgeojson.cli import cli
-from osmgeojson import OSMFeatureCollection
-from tests.conftest import make_test_feature, make_feature_collection
+from osmfeatures.cli import cli
+from osmfeatures import OSMFeatureCollection
+from osmfeatures.models import OSMFeature, ResponseMeta
+from tests.conftest import make_test_feature
 
 
 def make_fc(
     feature_dicts: list[dict] | None = None,
+    *,
     has_more: bool = False,
     next_cursor: str | None = None,
 ) -> OSMFeatureCollection:
     feature_dicts = feature_dicts or [make_test_feature("way/1")]
-    return OSMFeatureCollection.from_dict(
-        make_feature_collection(feature_dicts, has_more=has_more, next_cursor=next_cursor)
+    return OSMFeatureCollection(
+        features=[OSMFeature.from_dict(f) for f in feature_dicts],
+        meta=ResponseMeta(
+            returned=len(feature_dicts),
+            has_more=has_more,
+            next_cursor=next_cursor,
+        ),
     )
 
 
@@ -31,7 +38,7 @@ def make_fc(
 def test_query_output_geojson():
     fc = make_fc()
     runner = CliRunner()
-    with patch("osmgeojson.cli.OSMGeoJSONClient") as MockClient:
+    with patch("osmfeatures.cli.OSMFeaturesClient") as MockClient:
         MockClient.return_value.query.return_value = fc
         result = runner.invoke(cli, [
             "query",
@@ -55,7 +62,7 @@ pandas = pytest.importorskip("pandas", reason="pandas not installed - skipping c
 def test_query_output_csv():
     fc = make_fc()
     runner = CliRunner()
-    with patch("osmgeojson.cli.OSMGeoJSONClient") as MockClient:
+    with patch("osmfeatures.cli.OSMFeaturesClient") as MockClient:
         MockClient.return_value.query.return_value = fc
         result = runner.invoke(cli, [
             "query",
@@ -73,7 +80,7 @@ def test_query_output_csv():
 def test_query_output_table():
     fc = make_fc()
     runner = CliRunner()
-    with patch("osmgeojson.cli.OSMGeoJSONClient") as MockClient:
+    with patch("osmfeatures.cli.OSMFeaturesClient") as MockClient:
         MockClient.return_value.query.return_value = fc
         result = runner.invoke(cli, [
             "query",
@@ -100,7 +107,7 @@ def test_query_missing_api_key(monkeypatch):
 def test_query_limit_is_forwarded_to_single_page_query():
     fc = make_fc()
     runner = CliRunner()
-    with patch("osmgeojson.cli.OSMGeoJSONClient") as MockClient:
+    with patch("osmfeatures.cli.OSMFeaturesClient") as MockClient:
         MockClient.return_value.query.return_value = fc
         result = runner.invoke(cli, [
             "query",
@@ -119,7 +126,7 @@ def test_query_limit_is_forwarded_to_single_page_query():
 def test_query_forwards_zoom_length_and_area_filters():
     fc = make_fc()
     runner = CliRunner()
-    with patch("osmgeojson.cli.OSMGeoJSONClient") as MockClient:
+    with patch("osmfeatures.cli.OSMFeaturesClient") as MockClient:
         MockClient.return_value.query.return_value = fc
         result = runner.invoke(cli, [
             "query",
@@ -150,7 +157,7 @@ def test_query_forwards_zoom_length_and_area_filters():
 def test_query_limit_is_forwarded_as_limit_per_page_for_all_pages():
     fc = make_fc()
     runner = CliRunner()
-    with patch("osmgeojson.cli.OSMGeoJSONClient") as MockClient:
+    with patch("osmfeatures.cli.OSMFeaturesClient") as MockClient:
         MockClient.return_value.query_all.return_value = fc
         result = runner.invoke(cli, [
             "query",
@@ -171,7 +178,7 @@ def test_query_limit_is_forwarded_as_limit_per_page_for_all_pages():
 def test_query_all_pages_forwards_bbox_tiles():
     fc = make_fc()
     runner = CliRunner()
-    with patch("osmgeojson.cli.OSMGeoJSONClient") as MockClient:
+    with patch("osmfeatures.cli.OSMFeaturesClient") as MockClient:
         MockClient.return_value.query_all.return_value = fc
         result = runner.invoke(cli, [
             "query",
@@ -192,7 +199,7 @@ def test_query_all_pages_forwards_bbox_tiles():
 
 def test_cost_forwards_zoom_length_and_area_filters():
     runner = CliRunner()
-    with patch("osmgeojson.cli.OSMGeoJSONClient") as MockClient:
+    with patch("osmfeatures.cli.OSMFeaturesClient") as MockClient:
         MockClient.return_value.estimate_cost.return_value = type(
             "Estimate",
             (),

@@ -5,23 +5,25 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Iterator
 from typing import Any, Callable
 
+from osmfeatures.models import OSMFeatureCollection
+
 
 _MAX_PAGES = 500  # hard safety cap - prevents infinite loops
 
 
 def paginate_all(
-    fetch_fn: Callable[[dict[str, Any]], dict[str, Any]],
+    fetch_fn: Callable[[dict[str, Any]], OSMFeatureCollection],
     params: dict[str, Any],
     *,
     limit_per_page: int = 1000,
 ) -> Iterator[list[dict[str, Any]]]:
-    """Yield pages of raw feature dicts until ``meta.has_more`` is False.
+    """Yield pages of raw feature dicts until ``X-Has-More`` is false.
 
     Parameters
     ----------
     fetch_fn:
-        Synchronous callable that accepts a params dict and returns a raw
-        GeoJSON FeatureCollection dict (with ``meta`` envelope).
+        Synchronous callable that accepts a params dict and returns an
+        :class:`OSMFeatureCollection` (pagination via ``.meta`` from headers).
     params:
         Base query parameters. Any ``limit`` and ``cursor`` keys are managed
         internally and will be overwritten.
@@ -41,12 +43,11 @@ def paginate_all(
         page_params = dict(base)
         if cursor is not None:
             page_params["cursor"] = cursor
-        data = fetch_fn(page_params)
-        features: list[dict[str, Any]] = data.get("features", [])
+        collection = fetch_fn(page_params)
+        features: list[dict[str, Any]] = list(collection.get("features", []))
         yield features
 
-        meta = data.get("meta", {})
-        if not meta.get("has_more", False):
+        if not collection.meta.has_more:
             return
 
         if not features:
@@ -55,7 +56,7 @@ def paginate_all(
                 f"on page {page}."
             )
 
-        next_cursor = meta.get("next_cursor")
+        next_cursor = collection.meta.next_cursor
         if not isinstance(next_cursor, str) or not next_cursor or next_cursor == cursor:
             raise RuntimeError(
                 f"API returned has_more=true but next_cursor ({next_cursor!r}) "
@@ -84,12 +85,11 @@ async def paginate_all_async(
         page_params = dict(base)
         if cursor is not None:
             page_params["cursor"] = cursor
-        data = await fetch_fn(page_params)
-        features: list[dict[str, Any]] = data.get("features", [])
+        collection = await fetch_fn(page_params)
+        features: list[dict[str, Any]] = list(collection.get("features", []))
         yield features
 
-        meta = data.get("meta", {})
-        if not meta.get("has_more", False):
+        if not collection.meta.has_more:
             return
 
         if not features:
@@ -98,7 +98,7 @@ async def paginate_all_async(
                 f"on page {page}."
             )
 
-        next_cursor = meta.get("next_cursor")
+        next_cursor = collection.meta.next_cursor
         if not isinstance(next_cursor, str) or not next_cursor or next_cursor == cursor:
             raise RuntimeError(
                 f"API returned has_more=true but next_cursor ({next_cursor!r}) "

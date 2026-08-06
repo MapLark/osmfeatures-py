@@ -1,10 +1,10 @@
-"""osmgeojson - Python SDK for the OSM GeoJSON API (MapLark)."""
+"""osmfeatures - Python SDK for the MapLark OSM Features API."""
 
 from __future__ import annotations
 
-from .async_client import AsyncOSMGeoJSONClient
+from .async_client import AsyncOSMFeaturesClient
 from .chunking import around_to_bbox, bbox_area_deg2, merge_features, parse_bbox, shapely_to_bbox, split_bbox_tiles
-from .client import OSMGeoJSONClient
+from .client import OSMFeaturesClient
 from .convenience import (
     get_amenities,
     get_barriers,
@@ -29,14 +29,15 @@ from .convenience import (
     get_water,
 )
 from .models import (
+    BinaryQueryResult,
     CostEstimate,
     OSMFeature,
     OSMFeatureCollection,
-    OSMGeoJSONAPIError,
-    OSMGeoJSONAuthError,
-    OSMGeoJSONError,
-    OSMGeoJSONForbiddenError,
-    OSMGeoJSONRateLimitError,
+    OSMFeaturesAPIError,
+    OSMFeaturesAuthError,
+    OSMFeaturesError,
+    OSMFeaturesForbiddenError,
+    OSMFeaturesRateLimitError,
     ResponseMeta,
 )
 from .output import to_dataframe, to_geodataframe
@@ -44,21 +45,22 @@ from .retry import RetryConfig
 
 __all__ = [
     # Clients
-    "OSMGeoJSONClient",
-    "AsyncOSMGeoJSONClient",
+    "OSMFeaturesClient",
+    "AsyncOSMFeaturesClient",
     # Config
     "RetryConfig",
     # Models
     "OSMFeature",
     "OSMFeatureCollection",
+    "BinaryQueryResult",
     "ResponseMeta",
     "CostEstimate",
     # Exceptions
-    "OSMGeoJSONError",
-    "OSMGeoJSONAuthError",
-    "OSMGeoJSONForbiddenError",
-    "OSMGeoJSONRateLimitError",
-    "OSMGeoJSONAPIError",
+    "OSMFeaturesError",
+    "OSMFeaturesAuthError",
+    "OSMFeaturesForbiddenError",
+    "OSMFeaturesRateLimitError",
+    "OSMFeaturesAPIError",
     # Output
     "to_dataframe",
     "to_geodataframe",

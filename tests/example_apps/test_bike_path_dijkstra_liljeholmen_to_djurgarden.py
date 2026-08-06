@@ -30,7 +30,7 @@ import pytest
 import networkx as nx
 from haversine import Unit, haversine
 
-from osmgeojson import OSMFeatureCollection, OSMGeoJSONClient
+from osmfeatures import OSMFeatureCollection, OSMFeaturesClient
 from tests.example_apps.graph_utils import build_nx_graph
 
 CORRIDOR_TILES = [
@@ -40,7 +40,7 @@ CORRIDOR_TILES = [
 ]
 
 
-def test_bike_path_dijkstra_liljeholmen_to_djurgarden(client: OSMGeoJSONClient):
+def test_bike_path_dijkstra_liljeholmen_to_djurgarden(client: OSMFeaturesClient):
     # Query each corridor tile separately; results are merged client-side.
     # or_tags=bicycle matches any way carrying a bicycle key.
     # or_tags=highway=cycleway catches dedicated cycleways that carry no

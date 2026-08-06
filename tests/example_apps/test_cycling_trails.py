@@ -9,12 +9,12 @@ OSM tags used:
 API calls use ``or_tags`` to match either bicycle permission value.
 """
 
-from osmgeojson import OSMFeature, OSMFeatureCollection, OSMGeoJSONClient
+from osmfeatures import OSMFeature, OSMFeatureCollection, OSMFeaturesClient
 
 DJURGARDEN_BBOX = "18.090,59.320,18.170,59.345"
 
 
-def test_cycling_trails(client: OSMGeoJSONClient):
+def test_cycling_trails(client: OSMFeaturesClient):
     # Paths with cycling explicitly permitted (bicycle=yes or bicycle=designated)
     paths_cycling = client.query(
         bbox=DJURGARDEN_BBOX,

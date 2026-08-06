@@ -93,14 +93,14 @@ def around_to_bbox(lon: float, lat: float, radius_m: float) -> str:
 def shapely_to_bbox(geometry: Any) -> str:
     """Convert a Shapely geometry to a ``"min_lon,min_lat,max_lon,max_lat"`` bbox string.
 
-    Requires the ``[geo]`` extra (``pip install osmgeojson[geo]``).
+    Requires the ``[geo]`` extra (``pip install osmfeatures[geo]``).
     """
     try:
         from shapely.geometry.base import BaseGeometry  # type: ignore[import-untyped]
     except ImportError as exc:
         raise ImportError(
             "shapely is required for geometry input. "
-            "Install it with: pip install osmgeojson[geo]"
+            "Install it with: pip install osmfeatures[geo]"
         ) from exc
 
     if isinstance(geometry, BaseGeometry):

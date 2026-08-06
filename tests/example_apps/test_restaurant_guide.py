@@ -10,12 +10,12 @@ API call: ``type=node,way&tags=amenity=restaurant``
 
 from collections import defaultdict
 
-from osmgeojson import OSMFeature, OSMFeatureCollection, OSMGeoJSONClient
+from osmfeatures import OSMFeature, OSMFeatureCollection, OSMFeaturesClient
 
 GAMLA_STAN_BBOX = "18.063,59.322,18.082,59.332"
 
 
-def test_restaurant_guide(client: OSMGeoJSONClient):
+def test_restaurant_guide(client: OSMFeaturesClient):
     data = client.query(
         bbox=GAMLA_STAN_BBOX,
         type="node,way",

@@ -1,9 +1,9 @@
-"""Typed data models for the osmgeojson SDK."""
+"""Typed data models for the osmfeatures SDK."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Mapping
 
 import geojson as _geojson
 
@@ -14,7 +14,7 @@ import geojson as _geojson
 
 
 class OSMFeature(_geojson.Feature):
-    """A GeoJSON Feature from the OSM GeoJSON API with OSM-specific helpers.
+    """A GeoJSON Feature from the OSM Features API with OSM-specific helpers.
 
     Subclasses :class:`geojson.Feature` (a ``dict``), so it serializes directly
     with ``json.dumps`` and is accepted anywhere a GeoJSON dict is expected.
@@ -55,24 +55,56 @@ class OSMFeature(_geojson.Feature):
 
 @dataclass
 class ResponseMeta:
+    """Pagination from ``X-Returned`` / ``X-Has-More`` / ``X-Next-Cursor``."""
+
     returned: int
     has_more: bool
     next_cursor: str | None = None
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "ResponseMeta":
+    def from_headers(cls, headers: Mapping[str, str]) -> "ResponseMeta":
+        # requests / httpx headers are case-insensitive; Mapping.get is fine.
+        returned_raw = headers.get("X-Returned") or headers.get("x-returned") or "0"
+        has_more_raw = (
+            headers.get("X-Has-More") or headers.get("x-has-more") or "false"
+        ).strip().lower()
+        next_cursor = headers.get("X-Next-Cursor") or headers.get("x-next-cursor") or None
+        if next_cursor == "":
+            next_cursor = None
+        try:
+            returned = int(returned_raw)
+        except (TypeError, ValueError):
+            returned = 0
         return cls(
-            returned=d.get("returned", 0),
-            has_more=d.get("has_more", False),
-            next_cursor=d.get("next_cursor"),
+            returned=returned,
+            has_more=has_more_raw == "true",
+            next_cursor=next_cursor,
         )
+
+
+@dataclass(frozen=True)
+class BinaryQueryResult:
+    """Non-geojson ``query`` page: raw body bytes plus pagination headers.
+
+    Returned when ``accept`` is a non-GeoJSON media type (``text/csv``,
+    ``text/tab-separated-values``, ``application/flatgeobuf``, or
+    ``application/vnd.apache.parquet``). Use ``meta.next_cursor`` /
+    ``meta.has_more`` to page manually (``query_all`` only supports GeoJSON).
+    """
+
+    content: bytes
+    meta: ResponseMeta
+
+    @classmethod
+    def from_http(cls, content: bytes, headers: Mapping[str, str]) -> "BinaryQueryResult":
+        return cls(content=content, meta=ResponseMeta.from_headers(headers))
 
 
 class OSMFeatureCollection(_geojson.FeatureCollection):
     """A GeoJSON FeatureCollection as returned by ``/v2/osm_features``.
 
-    Subclasses :class:`geojson.FeatureCollection` (a ``dict``). The non-standard
-    ``meta`` field carries API pagination info and is accessible as an attribute.
+    Subclasses :class:`geojson.FeatureCollection` (a ``dict``). Pagination lives
+    in response headers and is exposed as :attr:`meta` after the HTTP call.
     """
 
     def __init__(
@@ -89,20 +121,14 @@ class OSMFeatureCollection(_geojson.FeatureCollection):
         return self._meta
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "OSMFeatureCollection":
-        features = [OSMFeature.from_dict(f) for f in d.get("features", [])]
-        meta = ResponseMeta.from_dict(d.get("meta", {}))
-        return cls(features=features, meta=meta)
+    def from_http(cls, body: dict[str, Any], headers: Mapping[str, str]) -> "OSMFeatureCollection":
+        features = [OSMFeature.from_dict(f) for f in body.get("features", [])]
+        return cls(features=features, meta=ResponseMeta.from_headers(headers))
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "type": "FeatureCollection",
             "features": [dict(f) for f in self["features"]],
-            "meta": {
-                "returned": self._meta.returned,
-                "has_more": self._meta.has_more,
-                "next_cursor": self._meta.next_cursor,
-            },
         }
 
 
@@ -131,19 +157,19 @@ class CostEstimate:
 # ---------------------------------------------------------------------------
 
 
-class OSMGeoJSONError(Exception):
-    """Base exception for all osmgeojson SDK errors."""
+class OSMFeaturesError(Exception):
+    """Base exception for all osmfeatures SDK errors."""
 
 
-class OSMGeoJSONAuthError(OSMGeoJSONError):
+class OSMFeaturesAuthError(OSMFeaturesError):
     """Raised on HTTP 401 - missing or invalid API key."""
 
 
-class OSMGeoJSONForbiddenError(OSMGeoJSONError):
+class OSMFeaturesForbiddenError(OSMFeaturesError):
     """Raised on HTTP 403 - unknown tier or access denied."""
 
 
-class OSMGeoJSONRateLimitError(OSMGeoJSONError):
+class OSMFeaturesRateLimitError(OSMFeaturesError):
     """Raised on HTTP 429 - per-second or monthly budget exceeded, or query too expensive."""
 
     def __init__(
@@ -163,7 +189,7 @@ class OSMGeoJSONRateLimitError(OSMGeoJSONError):
         self.retry_after = retry_after
 
 
-class OSMGeoJSONAPIError(OSMGeoJSONError):
+class OSMFeaturesAPIError(OSMFeaturesError):
     """Raised on other non-2xx HTTP responses."""
 
     def __init__(self, message: str, status_code: int) -> None:

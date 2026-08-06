@@ -7,7 +7,7 @@ import pytest
 pytest.importorskip("pandas", reason="pandas not installed - skipping output tests")
 pytest.importorskip("geopandas", reason="geopandas not installed - skipping output tests")
 
-from osmgeojson import to_dataframe, to_geodataframe
+from osmfeatures import to_dataframe, to_geodataframe
 from tests.conftest import make_test_feature
 
 

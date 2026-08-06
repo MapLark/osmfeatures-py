@@ -21,7 +21,7 @@ API calls:
 
 from haversine import Unit, haversine
 
-from osmgeojson import OSMFeatureCollection, OSMGeoJSONClient
+from osmfeatures import OSMFeatureCollection, OSMFeaturesClient
 
 SODERMALM_BBOX = "18.045,59.308,18.100,59.330"
 
@@ -37,7 +37,7 @@ def _linestring_length_m(coords: list) -> float:
     return total
 
 
-def test_city_cycling_infrastructure(client: OSMGeoJSONClient):
+def test_city_cycling_infrastructure(client: OSMFeaturesClient):
     # Dedicated cycleways
     cycleways = client.query(
         bbox=SODERMALM_BBOX,

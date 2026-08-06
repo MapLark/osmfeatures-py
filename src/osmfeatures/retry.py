@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from .models import OSMGeoJSONRateLimitError
+from .models import OSMFeaturesRateLimitError
 
 
 @dataclass
@@ -56,7 +56,7 @@ def retry(
     get_status: Callable[[Any], int],
     get_headers: Callable[[Any], dict[str, Any]],
     is_rate_limit_error: Callable[[Any], bool],
-    build_rate_limit_error: Callable[[Any], OSMGeoJSONRateLimitError],
+    build_rate_limit_error: Callable[[Any], OSMFeaturesRateLimitError],
 ) -> Any:
     """Execute *fn* with retry/backoff.  Returns the response on success.
 
@@ -74,7 +74,7 @@ def retry(
         Returns True when the 429 response body is a retryable rate-limit error
         (as opposed to a hard monthly limit).
     build_rate_limit_error:
-        Builds an ``OSMGeoJSONRateLimitError`` from the response (used when
+        Builds an ``OSMFeaturesRateLimitError`` from the response (used when
         retries are exhausted).
     """
     last_response: Any = None
@@ -112,7 +112,7 @@ async def retry_async(
     get_status: Callable[[Any], int],
     get_headers: Callable[[Any], dict[str, Any]],
     is_rate_limit_error: Callable[[Any], bool],
-    build_rate_limit_error: Callable[[Any], OSMGeoJSONRateLimitError],
+    build_rate_limit_error: Callable[[Any], OSMFeaturesRateLimitError],
 ) -> Any:
     """Async counterpart to :func:`retry`."""
     import asyncio
