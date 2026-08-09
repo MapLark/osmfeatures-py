@@ -100,6 +100,7 @@ Common filters:
 - `not_tags=["access=private"]` (exclude)
 - `type="node" | "way" | "relation"`
 - `shape="polygon" | "line" | "all"` (omit = both shapes; `all` also means both)
+- `clip_geometry=True | False` (`True` default; set `False` to keep full geometry outside bbox)
 - `cursor` (pagination; use SDK `meta.next_cursor` from previous page, sourced from `X-Next-Cursor`)
 
 

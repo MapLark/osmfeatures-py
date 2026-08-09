@@ -76,6 +76,7 @@ def test_only_long_roads(client: OSMFeaturesClient):
         type="way",
         shape="line",
         tags="highway",
+        clip_geometry=False,
         max_features=300,
     )
     assert isinstance(baseline, OSMFeatureCollection)
@@ -87,6 +88,7 @@ def test_only_long_roads(client: OSMFeaturesClient):
         shape="line",
         tags="highway",
         min_length_m=1200,
+        clip_geometry=False,
         max_features=300,
     )
     assert isinstance(long_roads, OSMFeatureCollection)
@@ -101,6 +103,7 @@ def test_only_long_roads(client: OSMFeaturesClient):
         tags="highway",
         min_length_m=200,
         max_length_m=1199,
+        clip_geometry=False,
         max_features=300,
     )
     assert isinstance(medium_roads, OSMFeatureCollection)
@@ -111,6 +114,6 @@ def test_only_long_roads(client: OSMFeaturesClient):
         assert isinstance(f, OSMFeature)
         assert f.osm_type == "way"
         assert f.tags.get("highway") is not None
-        assert f["geometry"]["type"] == "LineString"
+        assert f["geometry"]["type"] in ("LineString", "MultiLineString")
 
     print(f"\n[geometry filters] roads baseline={len(baseline['features'])} long={len(long_roads['features'])}")

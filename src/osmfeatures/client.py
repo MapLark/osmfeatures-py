@@ -117,6 +117,7 @@ class OSMFeaturesClient:
         disable_budget_warning: bool = False,
         geometry: Any = None,
         centroid: bool = False,
+        clip_geometry: bool = True,
         accept: str | None = None,
     ) -> OSMFeatureCollection | BinaryQueryResult:
         """Fetch a single page of OSM elements.
@@ -167,6 +168,9 @@ class OSMFeaturesClient:
         centroid:
             When True, request ``properties.centroid`` on non-point features.
             Default False.
+        clip_geometry:
+            When True (default), clip returned geometry to the requested bbox.
+            Set False to return full geometry for features intersecting the bbox.
         accept:
             ``Accept`` media type. Default / ``application/geo+json`` returns
             ``OSMFeatureCollection``. Other types (``text/csv``,
@@ -211,6 +215,7 @@ class OSMFeaturesClient:
             params["disable_budget_warning"] = disable_budget_warning
         if centroid:
             params["centroid"] = True
+        params["clip_geometry"] = clip_geometry
 
         if is_geojson_accept(accept):
             return self._raw_query(params, accept=accept)

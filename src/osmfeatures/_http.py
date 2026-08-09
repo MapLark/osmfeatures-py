@@ -37,15 +37,16 @@ def build_params(kwargs: dict[str, Any]) -> list[tuple[str, Any]]:
     repeatable = {"tags", "or_tags", "not_tags"}
     params: list[tuple[str, Any]] = []
     for key, value in kwargs.items():
+        wire_key = "clipGeometry" if key == "clip_geometry" else key
         if key == "type" and isinstance(value, (list, tuple)):
-            params.append((key, ",".join(str(v) for v in value)))
+            params.append((wire_key, ",".join(str(v) for v in value)))
         elif key in repeatable and isinstance(value, (list, tuple)):
             for v in value:
-                params.append((key, v))
+                params.append((wire_key, v))
         elif isinstance(value, bool):
-            params.append((key, "true" if value else "false"))
+            params.append((wire_key, "true" if value else "false"))
         else:
-            params.append((key, value))
+            params.append((wire_key, value))
     return params
 
 

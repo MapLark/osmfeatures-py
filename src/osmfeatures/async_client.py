@@ -130,6 +130,7 @@ class AsyncOSMFeaturesClient:
         disable_budget_warning: bool = False,
         geometry: Any = None,
         centroid: bool = False,
+        clip_geometry: bool = True,
         accept: str | None = None,
     ) -> OSMFeatureCollection | BinaryQueryResult:
         """Fetch a single page of OSM elements asynchronously.
@@ -174,6 +175,7 @@ class AsyncOSMFeaturesClient:
             params["disable_budget_warning"] = disable_budget_warning
         if centroid:
             params["centroid"] = True
+        params["clip_geometry"] = clip_geometry
 
         if is_geojson_accept(accept):
             return await self._raw_query(params, accept=accept)
