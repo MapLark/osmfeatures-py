@@ -132,6 +132,19 @@ def test_query_forwards_zoom_length_and_area_filters(client):
 
 
 @rsps.activate
+def test_query_sends_location_and_radius_not_around(client):
+    rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection([]))
+
+    client.query(location="59.334,18.063", radius=500, tags=["amenity=cafe"])
+
+    parsed = parse_qs(urlsplit(rsps.calls[0].request.url).query)
+    assert parsed["location"] == ["59.334,18.063"]
+    assert parsed["radius"] == ["500"]
+    assert "around" not in parsed
+    assert "bbox" not in parsed
+
+
+@rsps.activate
 def test_query_raises_auth_error_on_401(client):
     rsps.add(rsps.GET, FEATURES_URL, status=401, body="Unauthorized")
 
@@ -263,6 +276,18 @@ def test_estimate_cost_forwards_zoom_length_and_area_filters(client):
     assert parsed["max_length_m"] == ["2000"]
     assert parsed["min_area_m2"] == ["300"]
     assert parsed["max_area_m2"] == ["3000"]
+
+
+@rsps.activate
+def test_estimate_cost_sends_location_and_radius_not_around(client):
+    rsps.add(rsps.GET, COST_URL, json={"estimated_credits": 1, "tier_limits": {}, "hints": []})
+
+    client.estimate_cost(location="59.334,18.063", radius=500, tags=["amenity=cafe"])
+
+    parsed = parse_qs(urlsplit(rsps.calls[0].request.url).query)
+    assert parsed["location"] == ["59.334,18.063"]
+    assert parsed["radius"] == ["500"]
+    assert "around" not in parsed
 
 
 @rsps.activate

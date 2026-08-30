@@ -62,7 +62,7 @@ def client() -> OSMFeaturesClient:
     if not api_key:
         pytest.skip("MAPLARK_API_KEY not set — skipping live API example tests")
     base_url = os.environ.get("MAPLARK_BASE_URL", "https://api.maplark.com")
-    return OSMFeaturesClient(api_key=api_key, base_url=base_url)
+    return OSMFeaturesClient(api_key=api_key, base_url=base_url, timeout=60.0)
 
 
 @pytest.fixture(autouse=True)

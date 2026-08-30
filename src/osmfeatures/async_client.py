@@ -7,6 +7,20 @@ from typing import Any
 import httpx
 
 from .chunking import merge_features, shapely_to_bbox, split_bbox_tiles
+from ._geo_agent import (
+    PLACES_NEARBY_PATH,
+    PLACES_SEARCH_PATH,
+    ROUTES_ISOCHRONE_PATH,
+    ROUTES_OPTIMIZED_PATH_PATH,
+    ROUTES_PATH_PATH,
+    RouteTravelMode,
+    places_details_path,
+    places_nearby_body,
+    places_search_body,
+    routes_isochrone_body,
+    routes_optimized_path_body,
+    routes_path_body,
+)
 from ._http import (
     DEFAULT_BASE_URL,
     GEOJSON_ACCEPT,
@@ -105,6 +119,40 @@ class AsyncOSMFeaturesClient:
         resp = await self._request(params, accept=accept)
         return OSMFeatureCollection.from_http(resp.json(), resp.headers)
 
+    async def _post_json(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        client = await self._get_client()
+
+        async def _do() -> httpx.Response:
+            return await client.post(f"{self._base_url}{path}", json=body)
+
+        resp = await retry_async(
+            _do,
+            self._retry,
+            get_status=lambda r: r.status_code,
+            get_headers=lambda r: dict(r.headers),
+            is_rate_limit_error=is_429_retryable,
+            build_rate_limit_error=build_rate_limit_error,
+        )
+        raise_for_response(resp)
+        return resp.json()  # type: ignore[no-any-return]
+
+    async def _get_json(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        client = await self._get_client()
+
+        async def _do() -> httpx.Response:
+            return await client.get(f"{self._base_url}{path}", params=params or None)
+
+        resp = await retry_async(
+            _do,
+            self._retry,
+            get_status=lambda r: r.status_code,
+            get_headers=lambda r: dict(r.headers),
+            is_rate_limit_error=is_429_retryable,
+            build_rate_limit_error=build_rate_limit_error,
+        )
+        raise_for_response(resp)
+        return resp.json()  # type: ignore[no-any-return]
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -113,7 +161,8 @@ class AsyncOSMFeaturesClient:
         self,
         *,
         bbox: str | None = None,
-        around: str | None = None,
+        location: str | None = None,
+        radius: float | None = None,
         type: ElementType | list[ElementType] | None = None,  # noqa: A002
         shape: ShapeType | None = None,
         osm_ids: str | None = None,
@@ -144,8 +193,10 @@ class AsyncOSMFeaturesClient:
         params: dict[str, Any] = {}
         if bbox is not None:
             params["bbox"] = bbox
-        if around is not None:
-            params["around"] = around
+        if location is not None:
+            params["location"] = location
+        if radius is not None:
+            params["radius"] = radius
         if type is not None:
             params["type"] = type
         if shape is not None:
@@ -285,6 +336,137 @@ class AsyncOSMFeaturesClient:
         )
         raise_for_response(resp)
         return CostEstimate.from_dict(resp.json())
+
+    async def usage_async(self) -> dict[str, Any]:
+        """Return this month's unit-budget usage for the authenticated API key."""
+        return await self._get_json("/v1/usage")
+
+    async def places_search_async(
+        self,
+        *,
+        bbox: str | None = None,
+        location: dict[str, float] | None = None,
+        radius: float | None = None,
+        type: str | None = None,  # noqa: A002
+        tags: list[str] | None = None,
+        or_tags: list[str] | None = None,
+        limit: int = 100,
+        open_now: bool = False,
+        as_of: str | None = None,
+    ) -> dict[str, Any]:
+        """Find places via ``POST /v1/places/search``."""
+        return await self._post_json(
+            PLACES_SEARCH_PATH,
+            places_search_body(
+                bbox=bbox,
+                location=location,
+                radius=radius,
+                type=type,
+                tags=tags,
+                or_tags=or_tags,
+                limit=limit,
+                open_now=open_now,
+                as_of=as_of,
+            ),
+        )
+
+    async def places_nearby_async(
+        self,
+        *,
+        location: dict[str, float],
+        radius: float = 1000.0,
+        type: str | None = None,  # noqa: A002
+        tags: list[str] | None = None,
+        or_tags: list[str] | None = None,
+        limit: int = 10,
+        open_now: bool = False,
+        as_of: str | None = None,
+    ) -> dict[str, Any]:
+        """Nearest places ranked by straight-line distance."""
+        return await self._post_json(
+            PLACES_NEARBY_PATH,
+            places_nearby_body(
+                location=location,
+                radius=radius,
+                type=type,
+                tags=tags,
+                or_tags=or_tags,
+                limit=limit,
+                open_now=open_now,
+                as_of=as_of,
+            ),
+        )
+
+    async def places_details_async(
+        self,
+        osm_type: str,
+        osm_id: int | str | None = None,
+    ) -> dict[str, Any]:
+        """One place via ``GET /v1/places/{osm_type}/{osm_id}``.
+
+        *osm_type* may be a search/nearby feature id (``node/123``) when
+        *osm_id* is omitted.
+        """
+        return await self._get_json(places_details_path(osm_type, osm_id))
+
+    async def routes_isochrone_async(
+        self,
+        *,
+        origin: dict[str, float],
+        max_distance_m: float | None = None,
+        duration_s: float | None = None,
+        search_buffer_m: float | None = None,
+        travel_mode: RouteTravelMode = "WALK",
+    ) -> dict[str, Any]:
+        """Reach polygon along the walk/bike network."""
+        return await self._post_json(
+            ROUTES_ISOCHRONE_PATH,
+            routes_isochrone_body(
+                origin=origin,
+                max_distance_m=max_distance_m,
+                duration_s=duration_s,
+                search_buffer_m=search_buffer_m,
+                travel_mode=travel_mode,
+            ),
+        )
+
+    async def routes_path_async(
+        self,
+        *,
+        stops: list[dict[str, float]],
+        search_buffer_m: float | None = None,
+        travel_mode: RouteTravelMode = "WALK",
+    ) -> dict[str, Any]:
+        """Given-order walk/bike path."""
+        return await self._post_json(
+            ROUTES_PATH_PATH,
+            routes_path_body(
+                stops=stops,
+                search_buffer_m=search_buffer_m,
+                travel_mode=travel_mode,
+            ),
+        )
+
+    async def routes_optimized_path_async(
+        self,
+        *,
+        start: dict[str, float],
+        stops: list[dict[str, float]],
+        search_buffer_m: float | None = None,
+        loop: bool = True,
+        travel_mode: RouteTravelMode = "WALK",
+    ) -> dict[str, Any]:
+        """TSP walk/bike tour from ``start``. ``loop`` returns to start."""
+        return await self._post_json(
+            ROUTES_OPTIMIZED_PATH_PATH,
+            routes_optimized_path_body(
+                start=start,
+                stops=stops,
+                search_buffer_m=search_buffer_m,
+                loop=loop,
+                travel_mode=travel_mode,
+            ),
+        )
 
     async def close(self) -> None:
         """Close the underlying HTTP client."""

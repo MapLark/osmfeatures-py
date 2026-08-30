@@ -94,7 +94,7 @@ for feature in fc.features:
 Common filters:
 
 - `bbox="min_lon,min_lat,max_lon,max_lat"`
-- `around="lon,lat,radius_m"`
+- `location="lat,lng"` with `radius` in metres
 - `tags=["amenity=restaurant"]` (AND)
 - `or_tags=["bicycle=yes", "bicycle=designated"]` (OR)
 - `not_tags=["access=private"]` (exclude)
@@ -174,9 +174,40 @@ usage = client.usage()
 print("Usage:", usage)
 ```
 
+### 7) Geo-agent (places, routes)
 
+Planner vs code, HTTP contracts, and `nearest_within`: see `osm_backend_saas/GEO_AGENT.md` in the MapLark repo.
 
-### 7) CLI usage
+```python
+from osmfeatures import nearest_within
+
+origin = {"lon": 18.075, "lat": 59.316}
+
+cafes = client.places_search(
+    location={"lat": origin["lat"], "lng": origin["lon"]},
+    radius=800,
+    or_tags=["amenity=cafe"],
+    open_now=True,
+    as_of="2026-08-10T18:00:00+02:00",
+)
+nearby = client.places_nearby(
+    location={"lat": origin["lat"], "lng": origin["lon"]},
+    or_tags=["amenity=cafe"],
+    limit=5,
+    open_now=True,
+    as_of="2026-08-10T18:00:00+02:00",
+)
+details = client.places_details(cafes["features"][0]["id"])
+bbox = "18.05,59.33,18.10,59.36"
+restaurants = client.places_search(bbox=bbox, or_tags=["amenity=restaurant"])
+stations = client.places_search(bbox=bbox, or_tags=["railway=station"])
+near_station = nearest_within(restaurants, stations, max_distance_m=100)
+iso = client.routes_isochrone(origin=origin, duration_s=600, travel_mode="WALK")
+path = client.routes_path(stops=[origin, {"lon": 18.08, "lat": 59.318}])
+opt = client.routes_optimized_path(start=origin, stops=[{"lon": 18.08, "lat": 59.318}])
+```
+
+### 8) CLI usage
 
 If the package is installed, the CLI is available as `osmfeatures`:
 
@@ -202,6 +233,7 @@ The repository includes runnable example-app tests in `tests/example_apps/` show
 - `test_pedestrian_wavefront_bfs.py`: hop-based accessibility rings via BFS.
 - `test_bike_path_dijkstra_liljeholmen_to_djurgarden.py`: tiled corridor bike routing from Liljeholmen to Djurgarden.
 - `test_geometry_filters.py`: zoom + area/length filters for large buildings and long roads.
+- `test_geo_agent.py`: geo-agent chains (bar crawl, bike parks, isochrone filter/compare/coverage, client-side open-at-clock).
 
 Run all example apps:
 

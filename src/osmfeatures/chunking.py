@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from typing import Any
 
 
-# Degrees-per-metre at the equator (approximate, sufficient for splitting)
-_DEG_PER_METRE_LAT = 1.0 / 111_320.0
+_METRES_PER_DEG_LAT = 111_320.0
 
 
 def parse_bbox(bbox: str) -> tuple[float, float, float, float]:
@@ -66,6 +66,25 @@ def split_bbox_tiles(bbox: str, tile_count: int) -> list[str]:
     return [f"{a},{b},{c},{d}" for a, b, c, d in tiles]
 
 
+def _next_power_of_two(n: int) -> int:
+    if n <= 1:
+        return 1
+    return 1 << (n - 1).bit_length()
+
+
+def tile_count_for_corridor(corridor: str, max_tile_area: float | None) -> int:
+    """Power-of-2 tile count so each tile's area is at most *max_tile_area* (deg²).
+
+    Caps at 256 tiles. Returns 1 when *max_tile_area* is unset/non-positive or
+    the corridor already fits.
+    """
+    area = bbox_area_deg2(corridor)
+    if max_tile_area is None or max_tile_area <= 0 or area <= max_tile_area:
+        return 1
+    needed = math.ceil(area / max_tile_area)
+    return min(_next_power_of_two(needed), 256)
+
+
 def merge_features(feature_lists: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
     """Merge multiple feature lists, deduplicating by ``feature["id"]``."""
     seen: set[str] = set()
@@ -79,15 +98,27 @@ def merge_features(feature_lists: list[list[dict[str, Any]]]) -> list[dict[str, 
     return merged
 
 
+def corridor_bbox(points: Sequence[tuple[float, float]], buffer_m: float) -> str:
+    """Axis-aligned bbox covering *points* ``(lon, lat)`` expanded by *buffer_m* metres."""
+    if not points:
+        raise ValueError("points must be non-empty")
+    lons = [p[0] for p in points]
+    lats = [p[1] for p in points]
+    min_lon, max_lon = min(lons), max(lons)
+    min_lat, max_lat = min(lats), max(lats)
+    mid_lat = (min_lat + max_lat) / 2.0
+    dlat = buffer_m / _METRES_PER_DEG_LAT
+    dlon = buffer_m / (_METRES_PER_DEG_LAT * max(math.cos(math.radians(mid_lat)), 1e-9))
+    return f"{min_lon - dlon},{min_lat - dlat},{max_lon + dlon},{max_lat + dlat}"
+
+
 def around_to_bbox(lon: float, lat: float, radius_m: float) -> str:
     """Convert a radius search to a bounding-box string (approximation).
 
     Useful when you want to use bbox-tiling logic on an ``around`` query
     area.  The result is a square bbox that fully contains the circle.
     """
-    delta_lat = radius_m * _DEG_PER_METRE_LAT
-    delta_lon = radius_m * _DEG_PER_METRE_LAT / max(math.cos(math.radians(lat)), 1e-9)
-    return f"{lon - delta_lon},{lat - delta_lat},{lon + delta_lon},{lat + delta_lat}"
+    return corridor_bbox([(lon, lat)], radius_m)
 
 
 def shapely_to_bbox(geometry: Any) -> str:

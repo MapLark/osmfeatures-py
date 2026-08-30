@@ -61,7 +61,8 @@ def _apply_output(features: list[Any], output_format: str, fc_dict: dict[str, An
 
 _SPATIAL_OPTIONS = [
     click.option("--bbox", default=None, help="Bounding box: min_lon,min_lat,max_lon,max_lat"),
-    click.option("--around", default=None, help="Radius search: lon,lat,radius_m"),
+    click.option("--location", default=None, help="Radius search point: lat,lng (requires --radius)"),
+    click.option("--radius", default=None, type=float, help="Search radius in metres (requires --location)"),
     click.option("--osm-ids", "osm_ids", default=None, help="Comma-separated OSM IDs (direct lookup)"),
     click.option("--tags", multiple=True, help="Tag filter key=value or key (AND, repeatable)"),
     click.option("--or-tags", "or_tags", multiple=True, help="Tag filter OR group (repeatable)"),
@@ -134,7 +135,8 @@ def cli() -> None:
 @click.option("--retries", default=3, show_default=True, type=int, help="Max retry attempts")
 def query_cmd(
     bbox: str | None,
-    around: str | None,
+    location: str | None,
+    radius: float | None,
     osm_ids: str | None,
     tags: tuple[str, ...],
     or_tags: tuple[str, ...],
@@ -166,8 +168,10 @@ def query_cmd(
     params: dict[str, Any] = {}
     if bbox:
         params["bbox"] = bbox
-    if around:
-        params["around"] = around
+    if location:
+        params["location"] = location
+    if radius is not None:
+        params["radius"] = radius
     if osm_ids:
         params["osm_ids"] = osm_ids
     if tags:
@@ -236,7 +240,8 @@ def query_cmd(
 @click.option("--retries", default=3, show_default=True, type=int, help="Max retry attempts")
 def cost_cmd(
     bbox: str | None,
-    around: str | None,
+    location: str | None,
+    radius: float | None,
     osm_ids: str | None,
     tags: tuple[str, ...],
     or_tags: tuple[str, ...],
@@ -263,8 +268,10 @@ def cost_cmd(
     params: dict[str, Any] = {}
     if bbox:
         params["bbox"] = bbox
-    if around:
-        params["around"] = around
+    if location:
+        params["location"] = location
+    if radius is not None:
+        params["radius"] = radius
     if osm_ids:
         params["osm_ids"] = osm_ids
     if tags:

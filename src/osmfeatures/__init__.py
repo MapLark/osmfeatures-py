@@ -3,8 +3,18 @@
 from __future__ import annotations
 
 from .async_client import AsyncOSMFeaturesClient
-from .chunking import around_to_bbox, bbox_area_deg2, merge_features, parse_bbox, shapely_to_bbox, split_bbox_tiles
+from .chunking import (
+    around_to_bbox,
+    bbox_area_deg2,
+    corridor_bbox,
+    merge_features,
+    parse_bbox,
+    shapely_to_bbox,
+    split_bbox_tiles,
+    tile_count_for_corridor,
+)
 from .client import OSMFeaturesClient
+from .nearest import nearest_within
 from .convenience import (
     get_amenities,
     get_barriers,
@@ -79,7 +89,10 @@ __all__ = [
     "parse_bbox",
     "bbox_area_deg2",
     "around_to_bbox",
+    "corridor_bbox",
+    "tile_count_for_corridor",
     "shapely_to_bbox",
+    "nearest_within",
     # Convenience helpers - built environment
     "get_buildings",
     "get_building_polygons",

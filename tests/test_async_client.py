@@ -217,6 +217,22 @@ async def test_async_query_forwards_zoom_length_and_area_filters():
     assert params["max_area_m2"] == "4000"
 
 
+async def test_async_query_sends_location_and_radius_not_around():
+    transport = _MockTransport([(200, make_feature_collection([]))])
+    client = _make_client(transport)
+
+    async with client:
+        await client.query_async(
+            location="59.334,18.063", radius=500, tags=["amenity=cafe"]
+        )
+
+    params = dict(transport.requests[0].url.params)
+    assert params["location"] == "59.334,18.063"
+    assert params["radius"] == "500"
+    assert "around" not in params
+    assert "bbox" not in params
+
+
 # ---------------------------------------------------------------------------
 # query_all() — pagination
 # ---------------------------------------------------------------------------
@@ -351,6 +367,21 @@ async def test_async_estimate_cost_forwards_zoom_length_and_area_filters():
     assert params["max_area_m2"] == "5000"
 
 
+async def test_async_estimate_cost_sends_location_and_radius_not_around():
+    transport = _MockTransport([(200, {"estimated_credits": 1, "tier_limits": {}, "hints": []})])
+    client = _make_client(transport)
+
+    async with client:
+        await client.estimate_cost_async(
+            location="59.334,18.063", radius=500, tags=["amenity=cafe"]
+        )
+
+    params = dict(transport.requests[0].url.params)
+    assert params["location"] == "59.334,18.063"
+    assert params["radius"] == "500"
+    assert "around" not in params
+
+
 async def test_async_estimate_cost_raises_auth_error_on_401():
     transport = _MockTransport([(401, {"error": "unauthorized"})])
     client = _make_client(transport)
@@ -438,3 +469,12 @@ async def test_async_401_not_retried():
             await client.query_async(bbox="18.06,59.32,18.09,59.34")
 
     assert transport.call_count == 1
+
+
+async def test_async_usage():
+    transport = _MockTransport([(200, {"tier": "standard", "usage_this_month": 1})])
+    client = _make_client(transport)
+    async with client:
+        out = await client.usage_async()
+    assert out["tier"] == "standard"
+    assert transport.requests[0].url.path.endswith("/v1/usage")

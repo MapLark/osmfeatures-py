@@ -23,7 +23,8 @@ def _q(
     client: "OSMFeaturesClient",
     *,
     bbox: str | None = None,
-    around: str | None = None,
+    location: str | None = None,
+    radius: float | None = None,
     tags: list[str] | None = None,
     or_tags: list[str] | None = None,
     not_tags: list[str] | None = None,
@@ -35,8 +36,10 @@ def _q(
     params: dict[str, Any] = {}
     if bbox is not None:
         params["bbox"] = bbox
-    if around is not None:
-        params["around"] = around
+    if location is not None:
+        params["location"] = location
+    if radius is not None:
+        params["radius"] = radius
     if tags:
         params["tags"] = tags
     if or_tags:
@@ -405,9 +408,15 @@ def get_place(
         Optional OSM ``place`` value to narrow, e.g. ``"city"``,
         ``"suburb"``, ``"neighbourhood"``, ``"village"``.
     """
-    around = f"{lon},{lat},{radius_m}"
     tag = f"place={place}" if place else "place"
-    return _q(client, around=around, tags=[tag], type=["node"], **kwargs)
+    return _q(
+        client,
+        location=f"{lat},{lon}",
+        radius=radius_m,
+        tags=[tag],
+        type=["node"],
+        **kwargs,
+    )
 
 
 def get_elements_by_name(

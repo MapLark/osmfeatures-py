@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import pytest
 
-from osmfeatures import parse_bbox, split_bbox_tiles, bbox_area_deg2, merge_features, around_to_bbox
+from osmfeatures import (
+    around_to_bbox,
+    bbox_area_deg2,
+    corridor_bbox,
+    merge_features,
+    parse_bbox,
+    split_bbox_tiles,
+    tile_count_for_corridor,
+)
 
 
 class TestParseBbox:
@@ -71,6 +79,39 @@ class TestMergeFeatures:
     def test_empty_input(self) -> None:
         assert merge_features([]) == []
         assert merge_features([[]]) == []
+
+
+class TestTileCountForCorridor:
+    def test_fits_returns_one(self) -> None:
+        assert tile_count_for_corridor("0,0,1,1", 1.0) == 1
+        assert tile_count_for_corridor("0,0,1,1", None) == 1
+        assert tile_count_for_corridor("0,0,1,1", 0) == 1
+
+    def test_rounds_up_to_power_of_two(self) -> None:
+        # area 4 / max 1 → need 4 tiles
+        assert tile_count_for_corridor("0,0,2,2", 1.0) == 4
+        # area 3 / max 1 → need 3 → round up to 4
+        assert tile_count_for_corridor("0,0,3,1", 1.0) == 4
+
+    def test_caps_at_256(self) -> None:
+        assert tile_count_for_corridor("0,0,1000,1000", 1.0) == 256
+
+
+class TestCorridorBbox:
+    def test_single_point_matches_around(self) -> None:
+        assert corridor_bbox([(18.065, 59.33)], 1000) == around_to_bbox(18.065, 59.33, 1000)
+
+    def test_covers_all_points_plus_buffer(self) -> None:
+        bbox = corridor_bbox([(0.0, 0.0), (1.0, 0.5)], 0)
+        assert parse_bbox(bbox) == (0.0, 0.0, 1.0, 0.5)
+        buffered = parse_bbox(corridor_bbox([(0.0, 0.0), (1.0, 0.5)], 1000))
+        assert buffered[0] < 0.0 < buffered[2]
+        assert buffered[1] < 0.0
+        assert buffered[3] > 0.5
+
+    def test_rejects_empty(self) -> None:
+        with pytest.raises(ValueError, match="non-empty"):
+            corridor_bbox([], 100)
 
 
 class TestAroundToBbox:
