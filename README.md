@@ -29,7 +29,7 @@ Read the full API reference here [https://maplark.com/developer](https://maplark
 
 ## Python SDK
 
-This client library comes with auto-pagination, bbox tiling (enables larger bbox queries), retry/backoff, pandas/geopandas output, async support, and convenience methods to get common OSM data such as buildings, amenities, bike roads, etc. 
+This client library comes with auto-pagination, bbox tiling (enables larger bbox queries), retry/backoff, pandas/geopandas output, async support, convenience methods for common OSM layers (buildings, amenities, bike roads, and so on), and Geo-agent methods for places, opening hours, and walk/bike routing. 
 
 ```
 pip install osmfeatures
@@ -174,38 +174,157 @@ usage = client.usage()
 print("Usage:", usage)
 ```
 
-### 7) Geo-agent (places, routes)
+### 7) Geo Agent (places and routes)
 
-Planner vs code, HTTP contracts, and `nearest_within`: see `osm_backend_saas/GEO_AGENT.md` in the MapLark repo.
+`query()` is the generic OSM layer: buildings, roads, park polygons, any tag and geometry shape. Geo-agent is the place and mobility layer on top of the same data. You pick OSM tags, an area, a time, and a travel mode. The API returns coordinates, opening-hours status, straight-line ranks, and walk/bike geometry. You do not compute metres or parse `opening_hours` strings yourself. 
+
+These endpoints can be used by an AI agent to generate responses such as "cafes near me" or "suggest a bar crawl in Stockholm". For example
+
+#### Typical questions
+
+| Prompt | SDK |
+|------|-----|
+| "Cafes near me" | `client.places_nearby()` or `client.places_search()` with `location` + `radius` |
+| "Restaurants within 150 m of a station" | two `client.places_search()`, then `nearest_within()` |
+| "Bars open at 20:00" | `client.places_search()` with `as_of`, keep `openingHours.status == "open"` |
+| "Cafes within a 10-minute bike ride" | `client.routes_isochrone()` + `client.places_search()` in a covering radius + keep points inside the polygon |
+| "A walking bar crawl in Stockholm" | `client.places_search()` + `client.routes_optimized_path()` (`loop=True`) |
+| "Walk from my hotel to the cafe, then the office" | `client.routes_path()` with those stops in listed order |
+| "Suggest a walk to a bar, a restaurant, and a cafe, no particular order" | `client.routes_optimized_path()` with `loop=False` |
+| "Is the office a 20-minute walk from the apartment?" | `client.routes_isochrone()` from A, point-in-polygon for B |
+
+
+Runnable prompts like these live in `tests/example_apps/test_geo_agent.py`. Full HTTP reference: [https://maplark.com/developer](https://maplark.com/developer).
+
+#### Places search
+
+`places_search()` finds places in a bounding box **or** a `location` plus `radius` (not both). Optional `tags` (AND) and `or_tags` (OR) use the same OSM filters as `query()`. Default `limit` is 100 (max 10_000).
 
 ```python
-from osmfeatures import nearest_within
-
-origin = {"lon": 18.075, "lat": 59.316}
-
 cafes = client.places_search(
-    location={"lat": origin["lat"], "lng": origin["lon"]},
+    location={"lat": 59.316, "lng": 18.075},
     radius=800,
     or_tags=["amenity=cafe"],
     open_now=True,
     as_of="2026-08-10T18:00:00+02:00",
 )
+print(len(cafes["features"]), "open cafes")
+print(cafes["metadata"]["evaluated_at"])
+```
+
+Response is a GeoJSON FeatureCollection plus `metadata.evaluated_at` (UTC instant used for hours).
+
+#### Nearby (ranked from a point)
+
+`places_nearby()` answers "X near this point". It requires `tags` or `or_tags`. Results are ranked by straight-line spheroid distance, nearest first. Default radius is 1000 m. Default `limit` is 10.
+
+```python
 nearby = client.places_nearby(
-    location={"lat": origin["lat"], "lng": origin["lon"]},
+    location={"lat": 59.316, "lng": 18.075},
     or_tags=["amenity=cafe"],
     limit=5,
     open_now=True,
     as_of="2026-08-10T18:00:00+02:00",
 )
+for item in nearby["items"]:
+    print(item["distance_m"], item["feature"]["id"])
+```
+
+Response: `{status, items: [{feature, distance_m}], estimated_units, evaluated_at}`.
+
+#### Place details
+
+`places_details()` loads one place by the id that search or nearby returned (`node/123`). You can pass that string, or `osm_type` plus `osm_id`. Missing or non-place ids return HTTP 404.
+
+```python
 details = client.places_details(cafes["features"][0]["id"])
+# same as: client.places_details("node", 123)
+print(details["feature"]["properties"]["tags"])
+print(details["timezone"], details["evaluated_at"])
+```
+
+Response: `{status, feature, estimated_units, evaluated_at, timezone}`. Hours are annotated at request time in the place's IANA zone (from its coordinates).
+
+#### Opening hours
+
+Every place feature includes `properties.openingHours`:
+
+- `status`: `open`, `closed`, or `unknown`
+- `openNow`: `true` / `false`, or `null` when unknown
+
+Hours use each place's IANA timezone from its coordinates. There is no request `timezone` field.
+
+- `open_now=True` keeps only known-open places. Missing or unparseable OSM `opening_hours` are dropped (same idea as Google Places `openNow`).
+- `as_of` is the evaluation instant (default: now). A value with an offset (`Z` or `+02:00`) is an absolute instant. A naive value (`2026-08-10T20:00:00`, no offset) is that local clock at the search location or bbox center.
+- Passing `as_of` or `open_now` also requires an OSM `opening_hours` tag, so untagged POIs do not fill the page.
+- Closed places that have hours still return unless `open_now` is set.
+
+#### "X near Y" (local join)
+
+`nearby` ranks against one point. "Restaurants within 150 m of a station" is two searches plus a local join. `nearest_within` does no HTTP.
+
+```python
+from osmfeatures import nearest_within
+
 bbox = "18.05,59.33,18.10,59.36"
 restaurants = client.places_search(bbox=bbox, or_tags=["amenity=restaurant"])
 stations = client.places_search(bbox=bbox, or_tags=["railway=station"])
-near_station = nearest_within(restaurants, stations, max_distance_m=100)
-iso = client.routes_isochrone(origin=origin, duration_s=600, travel_mode="WALK")
-path = client.routes_path(stops=[origin, {"lon": 18.08, "lat": 59.318}])
-opt = client.routes_optimized_path(start=origin, stops=[{"lon": 18.08, "lat": 59.318}])
+pairs = nearest_within(restaurants, stations, max_distance_m=150, limit=20)
+
+for pair in pairs:
+    print(pair["distance_m"], pair["feature"]["id"], "near", pair["nearest"]["id"])
 ```
+
+Each pair is `{"feature": <primary>, "distance_m": <float>, "nearest": <secondary>}`. The point comes from `geometry` when it is a Point, else `properties.centroid`. A feature with neither raises `ValueError`. Empty secondary returns `[]`. Distances are spherical haversine (mean Earth radius 6371000 m). Fine at search `limit` (default 100).
+
+#### Walk and bike routes
+
+Routing follows the OSM walk or bicycle network (query-time Dijkstra on tiled highways). Provide `travel_mode="WALK"` (default) or `"BICYCLE"`. Walk treats the graph as undirected (oneways ignored). Bicycle is directed and honors OSM oneway, `oneway:bicycle`, contraflow cycleways, and implied roundabout oneway. Car routing (`DRIVE`) is not available.
+
+Duration budgets convert at about 5 km/h for walk (1.4 m/s) and 15 km/h for bicycle (4.2 m/s). Optional `search_buffer_m` widens the highway fetch corridor if a path cannot be formed in the default area.
+
+Router endpoints return an OSRM-style `status` in a 200 body (not always HTTP 4xx):
+
+- `ok`
+- `area_too_large_for_tier` (no graph fetch)
+- `tile_too_dense`
+- `start_unreachable` / `end_unreachable`
+- `no_path_within_area`
+
+Always check `status` before reading `geometry`.
+
+**Isochrone.** Reach polygon from `origin`. Provide exactly one of `max_distance_m` or `duration_s`. Geometry is a buffered union of reachable edges (city blocks stay holes).
+
+```python
+origin = {"lon": 18.075, "lat": 59.316}
+iso = client.routes_isochrone(origin=origin, duration_s=600, travel_mode="WALK")
+if iso["status"] == "ok":
+    print(iso["geometry"]["type"], iso["distance_m"], iso["duration_s"])
+```
+
+**Path.** Given-order walk or bike through 2 to 250 stops. Does not reorder stops or close a loop. Two stops is A to B. Three or more stitches legs and returns `stop_distances_m`. To walk a known sequence home, repeat home as the last stop. Unordered search hits belong on `routes_optimized_path`.
+
+```python
+path = client.routes_path(
+    stops=[origin, {"lon": 18.08, "lat": 59.318}],
+    travel_mode="WALK",
+)
+```
+
+**Optimized path.** Tour from `start` through unordered `stops` (nearest-neighbour + 2-opt). Do not put `start` in `stops`. `loop=True` (default) returns to start. `loop=False` is an open path that ends at the last ordered stop. Response includes `ordered_stops` (start first).
+
+```python
+opt = client.routes_optimized_path(
+    start=origin,
+    stops=[{"lon": 18.08, "lat": 59.318}, {"lon": 18.07, "lat": 59.320}],
+    loop=True,
+    travel_mode="WALK",
+)
+print(opt["status"], opt.get("ordered_stops"), opt.get("distance_m"))
+```
+
+Points accept `lon` or `lng`. Places methods send `{lat, lng}`. Route methods send `{lon, lat}`.
+
 
 ### 8) CLI usage
 
