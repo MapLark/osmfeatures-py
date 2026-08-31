@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "osmfeatures"
-version = "0.1.0"
+version = "0.2.0"
 description = "Official client for the MapLark OSM Features API (GeoJSON, FlatGeobuf, GeoParquet, CSV)"
 readme = "README.md"
 license = { text = "MIT" }
