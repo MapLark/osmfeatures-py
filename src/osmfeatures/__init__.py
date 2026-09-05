@@ -121,5 +121,5 @@ __all__ = [
     "get_elements_by_name",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.1"
 

@@ -18,7 +18,6 @@ To narrow down between "open ways" and "closed ways", use the `way_shape` parame
 - `way_shape=line` - open ways (roads, paths, rivers) or line-shaped relations (routes, boundaries)
 - `way_shape=polygon` - closed ways (buildings, parks) or multipolygon relations.
 - `way_shape=all` - both shapes (default when way_shape is omitted).
-- `shape` is a deprecated alias for `way_shape`.
 
 For example, to get all buildings in an area:
 
