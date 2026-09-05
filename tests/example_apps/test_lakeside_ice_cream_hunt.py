@@ -15,7 +15,7 @@ the nearest endpoint, keeping rankings accurate for water bodies with sparse
 vertex spacing.
 
 API calls:
-  - ``type=way,relation&shape=polygon&tags=natural=water``
+  - ``type=way,relation&way_shape=polygon&tags=natural=water``
   - ``type=node,way&tags=amenity=ice_cream``
 """
 
@@ -75,7 +75,7 @@ def test_lakeside_ice_cream_hunt(client: OSMFeaturesClient):
     water = client.query_all(
         bbox=CENTRAL_EAST_BBOX,
         type="way,relation",
-        shape="polygon",
+        way_shape="polygon",
         tags="natural=water",
         max_features=50,
     )

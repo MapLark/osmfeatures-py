@@ -102,10 +102,21 @@ def test_query_type_list_uses_single_comma_separated_query_value(client):
 def test_query_forwards_shape_all(client):
     rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection([]))
 
+    client.query(bbox="18.06,59.32,18.09,59.34", type="way", way_shape="all")
+
+    parsed = parse_qs(urlsplit(rsps.calls[0].request.url).query)
+    assert parsed["way_shape"] == ["all"]
+
+
+@rsps.activate
+def test_query_forwards_deprecated_shape_as_way_shape(client):
+    rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection([]))
+
     client.query(bbox="18.06,59.32,18.09,59.34", type="way", shape="all")
 
     parsed = parse_qs(urlsplit(rsps.calls[0].request.url).query)
-    assert parsed["shape"] == ["all"]
+    assert parsed["way_shape"] == ["all"]
+    assert "shape" not in parsed
 
 
 @rsps.activate
@@ -115,7 +126,7 @@ def test_query_forwards_zoom_length_and_area_filters(client):
     client.query(
         bbox="18.06,59.32,18.09,59.34",
         type="way",
-        shape="polygon",
+        way_shape="polygon",
         zoom=10,
         min_length_m=100,
         max_length_m=500,
@@ -262,7 +273,7 @@ def test_estimate_cost_forwards_zoom_length_and_area_filters(client):
     client.estimate_cost(
         bbox="18.06,59.32,18.09,59.34",
         type="way",
-        shape="line",
+        way_shape="line",
         zoom=9,
         min_length_m=200,
         max_length_m=2000,

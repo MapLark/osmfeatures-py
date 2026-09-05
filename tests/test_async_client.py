@@ -201,7 +201,7 @@ async def test_async_query_forwards_zoom_length_and_area_filters():
         await client.query_async(
             bbox="18.06,59.32,18.09,59.34",
             type="way",
-            shape="line",
+            way_shape="line",
             zoom=11,
             min_length_m=150,
             max_length_m=1500,
@@ -351,7 +351,7 @@ async def test_async_estimate_cost_forwards_zoom_length_and_area_filters():
         await client.estimate_cost_async(
             bbox="18.06,59.32,18.09,59.34",
             type="way",
-            shape="polygon",
+            way_shape="polygon",
             zoom=8,
             min_length_m=250,
             max_length_m=2500,

@@ -164,6 +164,7 @@ class AsyncOSMFeaturesClient:
         location: str | None = None,
         radius: float | None = None,
         type: ElementType | list[ElementType] | None = None,  # noqa: A002
+        way_shape: ShapeType | None = None,
         shape: ShapeType | None = None,
         osm_ids: str | None = None,
         tags: list[str] | str | None = None,
@@ -199,6 +200,8 @@ class AsyncOSMFeaturesClient:
             params["radius"] = radius
         if type is not None:
             params["type"] = type
+        if way_shape is not None:
+            params["way_shape"] = way_shape
         if shape is not None:
             params["shape"] = shape
         if osm_ids is not None:

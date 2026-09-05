@@ -14,7 +14,7 @@ Graph construction:
     sharing the same coordinate.
   - Edge weights: haversine distance in metres.
 
-API calls: multiple ``type=way&shape=line&tags=highway=<type>`` queries,
+API calls: multiple ``type=way&way_shape=line&tags=highway=<type>`` queries,
 one per pedestrian highway type, merged client-side with deduplication.
 """
 
@@ -39,7 +39,7 @@ def test_pedestrian_shortest_path(client: OSMFeaturesClient):
         data = client.query(
             bbox=GAMLA_STAN_BBOX,
             type="way",
-            shape="line",
+            way_shape="line",
             tags=f"highway={highway_type}",
             limit=300,
         )

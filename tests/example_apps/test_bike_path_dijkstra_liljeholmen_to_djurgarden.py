@@ -54,7 +54,7 @@ def test_bike_path_dijkstra_liljeholmen_to_djurgarden(client: OSMFeaturesClient)
             limit_per_page=500,
             bbox=tile_bbox,
             type="way",
-            shape="line",
+            way_shape="line",
             clip_geometry=False,
             or_tags=["bicycle", "highway=cycleway"],
             not_tags=["bicycle=no", "bicycle=private", "bicycle=dismount", "bicycle=use_sidepath"],

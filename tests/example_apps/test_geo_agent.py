@@ -197,7 +197,7 @@ def _fetch_parks(
         bbox=corridor,
         tags="leisure=park",
         type="way,relation",
-        shape="polygon",
+        way_shape="polygon",
     )
     max_area = cost.tier_limits.get("max_bbox_area_tagged")
     tiles = split_bbox_tiles(corridor, tile_count_for_corridor(corridor, max_area))
@@ -208,7 +208,7 @@ def _fetch_parks(
             bbox=tile,
             tags="leisure=park",
             type=["way", "relation"],
-            shape="polygon",
+            way_shape="polygon",
             zoom=_PARK_ZOOM,
             limit=_PARK_LIMIT,
             clip_geometry=False,

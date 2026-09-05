@@ -5,7 +5,7 @@ and a rough area estimate in hectares.
 Parks in OSM are polygon features (ways or multipolygon relations).  The
 centroid is used to place a label or map pin at the centre of each park.
 
-API call: ``type=way,relation&shape=polygon&tags=leisure=park``
+API call: ``type=way,relation&way_shape=polygon&tags=leisure=park``
 """
 
 from haversine import Unit, haversine
@@ -30,7 +30,7 @@ def test_park_explorer(client: OSMFeaturesClient):
     data = client.query_all(
         bbox=CENTRAL_EAST_BBOX,
         type="way,relation",
-        shape="polygon",
+        way_shape="polygon",
         tags="leisure=park",
         max_features=50,
         centroid=True,

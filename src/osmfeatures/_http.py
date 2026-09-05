@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import Any, Literal
 
 from .models import (
@@ -26,6 +27,24 @@ def is_geojson_accept(accept: str | None) -> bool:
     return media in ("*/*", "*", GEOJSON_ACCEPT)
 
 
+def fold_way_shape(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Map deprecated ``shape`` onto ``way_shape``. Returns a shallow copy."""
+    out = dict(kwargs)
+    shape = out.pop("shape", None)
+    way_shape = out.get("way_shape")
+    if way_shape is not None and shape is not None and way_shape != shape:
+        raise ValueError("way_shape and deprecated shape disagree. Pass only way_shape.")
+    if shape is not None:
+        warnings.warn(
+            "shape is deprecated; use way_shape",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        if way_shape is None:
+            out["way_shape"] = shape
+    return out
+
+
 def build_params(kwargs: dict[str, Any]) -> list[tuple[str, Any]]:
     """Convert SDK kwargs to a list of (key, value) pairs for requests.
 
@@ -34,6 +53,7 @@ def build_params(kwargs: dict[str, Any]) -> list[tuple[str, Any]]:
     The ``type`` parameter is encoded as a single comma-separated value
     because the backend expects ``type=node,way`` instead of repeated keys.
     """
+    kwargs = fold_way_shape(kwargs)
     repeatable = {"tags", "or_tags", "not_tags"}
     params: list[tuple[str, Any]] = []
     for key, value in kwargs.items():

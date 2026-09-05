@@ -17,7 +17,7 @@ Area: Gamla Stan, Stockholm's old town.  Stortorget (the central square) is
 the BFS origin.  The dense medieval grid produces many distinct hop levels in
 a compact footprint, making the wavefront clearly visible.
 
-API calls: multiple ``type=way&shape=line&tags=highway=<type>`` queries per
+API calls: multiple ``type=way&way_shape=line&tags=highway=<type>`` queries per
 pedestrian highway type, merged with deduplication.
 """
 
@@ -47,7 +47,7 @@ def test_pedestrian_wavefront_bfs(client: OSMFeaturesClient):
         data = client.query(
             bbox=GAMLA_STAN_BBOX,
             type="way",
-            shape="line",
+            way_shape="line",
             tags=f"highway={hw}",
             limit=300,
         )

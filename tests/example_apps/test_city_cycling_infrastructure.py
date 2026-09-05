@@ -15,8 +15,8 @@ positive infrastructure values are matched; ``cycleway=no`` and
 ``cycleway=separate`` explicitly mean no lane is present.
 
 API calls:
-  - ``type=way&shape=line&tags=highway=cycleway``
-  - ``type=way&shape=line&or_tags=[cycleway=lane, cycleway:left=lane, ...]``
+  - ``type=way&way_shape=line&tags=highway=cycleway``
+  - ``type=way&way_shape=line&or_tags=[cycleway=lane, cycleway:left=lane, ...]``
 """
 
 from haversine import Unit, haversine
@@ -42,7 +42,7 @@ def test_city_cycling_infrastructure(client: OSMFeaturesClient):
     cycleways = client.query(
         bbox=SODERMALM_BBOX,
         type="way",
-        shape="line",
+        way_shape="line",
         tags="highway=cycleway",
         limit=100,
     )
@@ -52,7 +52,7 @@ def test_city_cycling_infrastructure(client: OSMFeaturesClient):
     bike_lanes = client.query(
         bbox=SODERMALM_BBOX,
         type="way",
-        shape="line",
+        way_shape="line",
         or_tags=[f"{key}={val}" for key in _lane_keys for val in _lane_values],
         limit=100,
         disable_budget_warning=True,

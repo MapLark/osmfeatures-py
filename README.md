@@ -13,11 +13,12 @@ The postgis translation layer is very simple:
 
 You filter with the same tags mappers already use (`amenity=cafe`, `building=yes`, and so on). Knowledge from OSM, Overpass, and tagging docs transfers immediately.
 
-To narrow down between "open ways" and "closed ways", use the `shape` parameter:
+To narrow down between "open ways" and "closed ways", use the `way_shape` parameter:
 
-- `shape=line` - open ways (roads, paths, rivers) or line-shaped relations (routes, boundaries)
-- `shape=polygon` - closed ways (buildings, parks) or multipolygon relations.
-- `shape=all` - both shapes (default when shape is omitted).
+- `way_shape=line` - open ways (roads, paths, rivers) or line-shaped relations (routes, boundaries)
+- `way_shape=polygon` - closed ways (buildings, parks) or multipolygon relations.
+- `way_shape=all` - both shapes (default when way_shape is omitted).
+- `shape` is a deprecated alias for `way_shape`.
 
 For example, to get all buildings in an area:
 
@@ -82,7 +83,7 @@ with OSMFeaturesClient(api_key="sk-...") as client:
 fc = client.query(
     bbox="18.063,59.322,18.082,59.332",
     type="way",
-    shape="line",
+    way_shape="line",
     tags=["highway=cycleway"],
     limit=500,
 )
@@ -99,7 +100,7 @@ Common filters:
 - `or_tags=["bicycle=yes", "bicycle=designated"]` (OR)
 - `not_tags=["access=private"]` (exclude)
 - `type="node" | "way" | "relation"`
-- `shape="polygon" | "line" | "all"` (omit = both shapes; `all` also means both)
+- `way_shape="polygon" | "line" | "all"` (omit = both shapes; `all` also means both)
 - `clip_geometry=True | False` (`True` default; set `False` to keep full geometry outside bbox)
 - `cursor` (pagination; use SDK `meta.next_cursor` from previous page, sourced from `X-Next-Cursor`)
 

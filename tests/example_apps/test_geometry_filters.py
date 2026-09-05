@@ -22,7 +22,7 @@ def test_zoomed_out_large_buildings_only(client: OSMFeaturesClient):
     baseline = client.query(
         bbox=GAMLA_STAN_CORE_BBOX,
         type="way,relation",
-        shape="polygon",
+        way_shape="polygon",
         tags="building",
         zoom=11,
         limit=300,
@@ -33,7 +33,7 @@ def test_zoomed_out_large_buildings_only(client: OSMFeaturesClient):
     large = client.query(
         bbox=GAMLA_STAN_CORE_BBOX,
         type="way,relation",
-        shape="polygon",
+        way_shape="polygon",
         tags="building",
         zoom=11,
         min_area_m2=3000,
@@ -50,7 +50,7 @@ def test_zoomed_out_large_buildings_only(client: OSMFeaturesClient):
     medium = client.query(
         bbox=GAMLA_STAN_CORE_BBOX,
         type="way,relation",
-        shape="polygon",
+        way_shape="polygon",
         tags="building",
         zoom=11,
         min_area_m2=500,
@@ -74,7 +74,7 @@ def test_only_long_roads(client: OSMFeaturesClient):
     baseline = client.query_all(
         bbox=CENTRAL_EAST_BBOX,
         type="way",
-        shape="line",
+        way_shape="line",
         tags="highway",
         clip_geometry=False,
         max_features=300,
@@ -85,7 +85,7 @@ def test_only_long_roads(client: OSMFeaturesClient):
     long_roads = client.query_all(
         bbox=CENTRAL_EAST_BBOX,
         type="way",
-        shape="line",
+        way_shape="line",
         tags="highway",
         min_length_m=1200,
         clip_geometry=False,
@@ -99,7 +99,7 @@ def test_only_long_roads(client: OSMFeaturesClient):
     medium_roads = client.query_all(
         bbox=CENTRAL_EAST_BBOX,
         type="way",
-        shape="line",
+        way_shape="line",
         tags="highway",
         min_length_m=200,
         max_length_m=1199,

@@ -19,7 +19,7 @@ def test_cycling_trails(client: OSMFeaturesClient):
     paths_cycling = client.query(
         bbox=DJURGARDEN_BBOX,
         type="way",
-        shape="line",
+        way_shape="line",
         tags="highway=path",
         or_tags=["bicycle=yes", "bicycle=designated"],
         limit=50,
@@ -29,7 +29,7 @@ def test_cycling_trails(client: OSMFeaturesClient):
     tracks = client.query(
         bbox=DJURGARDEN_BBOX,
         type="way",
-        shape="line",
+        way_shape="line",
         tags="highway=track",
         or_tags=["bicycle=yes", "bicycle=designated"],
         limit=50,

@@ -159,6 +159,7 @@ class OSMFeaturesClient:
         location: str | None = None,
         radius: float | None = None,
         type: ElementType | list[ElementType] | None = None,  # noqa: A002
+        way_shape: ShapeType | None = None,
         shape: ShapeType | None = None,
         osm_ids: str | None = None,
         tags: list[str] | str | None = None,
@@ -190,9 +191,11 @@ class OSMFeaturesClient:
         type:
             Element type(s) to return: ``"node"``, ``"way"``, or
             ``"relation"``.  Pass a list to request multiple types.
-        shape:
-            Geometry shape filter: ``"polygon"`` or ``"line"``.
+        way_shape:
+            Geometry class for ways/relations: ``"polygon"`` or ``"line"``.
             Omit for both shapes; ``"all"`` also means both.
+        shape:
+            Deprecated alias for ``way_shape``.
         osm_ids:
             Comma-separated OSM IDs for direct lookup.  Mutually exclusive
             with spatial / tag filters.
@@ -249,6 +252,8 @@ class OSMFeaturesClient:
             params["radius"] = radius
         if type is not None:
             params["type"] = type
+        if way_shape is not None:
+            params["way_shape"] = way_shape
         if shape is not None:
             params["shape"] = shape
         if osm_ids is not None:

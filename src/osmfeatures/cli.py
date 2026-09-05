@@ -68,7 +68,8 @@ _SPATIAL_OPTIONS = [
     click.option("--or-tags", "or_tags", multiple=True, help="Tag filter OR group (repeatable)"),
     click.option("--not-tags", "not_tags", multiple=True, help="Exclusion tag filter (repeatable)"),
     click.option("--type", "element_type", default=None, help="Comma-separated element types: node,way,relation"),
-    click.option("--shape", default=None, type=click.Choice(["line", "polygon", "all"]), help="Geometry shape filter"),
+    click.option("--way-shape", "way_shape", default=None, type=click.Choice(["line", "polygon", "all"]), help="Geometry class for ways/relations"),
+    click.option("--shape", default=None, type=click.Choice(["line", "polygon", "all"]), help="Deprecated alias for --way-shape"),
     click.option("--zoom", default=None, type=float, help="Map zoom level for geometry simplification"),
     click.option("--min-length-m", "min_length_m", default=None, type=float, help="Minimum line length in metres"),
     click.option("--max-length-m", "max_length_m", default=None, type=float, help="Maximum line length in metres"),
@@ -142,6 +143,7 @@ def query_cmd(
     or_tags: tuple[str, ...],
     not_tags: tuple[str, ...],
     element_type: str | None,
+    way_shape: str | None,
     shape: str | None,
     zoom: float | None,
     min_length_m: float | None,
@@ -182,8 +184,9 @@ def query_cmd(
         params["not_tags"] = list(not_tags)
     if element_type:
         params["type"] = [t.strip() for t in element_type.split(",")]
-    if shape:
-        params["shape"] = shape
+    resolved_shape = way_shape or shape
+    if resolved_shape:
+        params["way_shape"] = resolved_shape
     if zoom is not None:
         params["zoom"] = zoom
     if min_length_m is not None:
@@ -247,6 +250,7 @@ def cost_cmd(
     or_tags: tuple[str, ...],
     not_tags: tuple[str, ...],
     element_type: str | None,
+    way_shape: str | None,
     shape: str | None,
     zoom: float | None,
     min_length_m: float | None,
@@ -282,8 +286,9 @@ def cost_cmd(
         params["not_tags"] = list(not_tags)
     if element_type:
         params["type"] = [t.strip() for t in element_type.split(",")]
-    if shape:
-        params["shape"] = shape
+    resolved_shape = way_shape or shape
+    if resolved_shape:
+        params["way_shape"] = resolved_shape
     if zoom is not None:
         params["zoom"] = zoom
     if min_length_m is not None:

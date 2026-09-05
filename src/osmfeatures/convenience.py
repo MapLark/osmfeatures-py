@@ -29,7 +29,7 @@ def _q(
     or_tags: list[str] | None = None,
     not_tags: list[str] | None = None,
     type: list[str] | None = None,
-    shape: str | None = None,
+    way_shape: str | None = None,
     osm_ids: str | None = None,
     **extra: Any,
 ) -> "OSMFeatureCollection":
@@ -48,8 +48,8 @@ def _q(
         params["not_tags"] = not_tags
     if type:
         params["type"] = type
-    if shape:
-        params["shape"] = shape
+    if way_shape:
+        params["way_shape"] = way_shape
     if osm_ids is not None:
         params["osm_ids"] = osm_ids
     params.update(extra)
@@ -77,7 +77,7 @@ def get_buildings(
         ``"residential"``, ``"commercial"``, ``"yes"``.
     """
     tag = f"building={building}" if building else "building"
-    return _q(client, bbox=bbox, tags=[tag], type=["way"], shape="polygon", **kwargs)
+    return _q(client, bbox=bbox, tags=[tag], type=["way"], way_shape="polygon", **kwargs)
 
 
 def get_building_polygons(
@@ -90,7 +90,7 @@ def get_building_polygons(
     Mirrors the ``_geojson_fetch_polygons`` helper used in solis_aurum_app.
     """
     ids_str = ",".join(str(i) for i in osm_ids)
-    return _q(client, osm_ids=ids_str, type=["way"], shape="polygon", **kwargs)
+    return _q(client, osm_ids=ids_str, type=["way"], way_shape="polygon", **kwargs)
 
 
 def get_barriers(
@@ -146,7 +146,7 @@ def get_roads(
         ``"primary"``, ``"residential"``, ``"footway"``.
     """
     tag = f"highway={highway}" if highway else "highway"
-    return _q(client, bbox=bbox, tags=[tag], type=["way"], shape="line", **kwargs)
+    return _q(client, bbox=bbox, tags=[tag], type=["way"], way_shape="line", **kwargs)
 
 
 def get_cycleways(
@@ -155,7 +155,7 @@ def get_cycleways(
     **kwargs: Any,
 ) -> "OSMFeatureCollection":
     """Fetch dedicated cycle-path line features within *bbox*."""
-    return _q(client, bbox=bbox, tags=["highway=cycleway"], type=["way"], shape="line", **kwargs)
+    return _q(client, bbox=bbox, tags=["highway=cycleway"], type=["way"], way_shape="line", **kwargs)
 
 
 def get_public_transport_stops(
