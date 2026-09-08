@@ -15,6 +15,7 @@ Official Python client for the [MapLark OSM Features API](https://maplark.com) (
   - [Cost and usage](#cost-and-usage)
 - [AI](#ai)
   - [MCP Server](#mcp-server)
+  - [Cursor / Claude Desktop](#cursor--claude-desktop)
   - [Typical AI questions](#typical-ai-questions)
 - [Places and routes](#places-and-routes)
   - [Places search](#places-search)
@@ -215,6 +216,30 @@ There is no geocode tool yet: pass a bbox or lat/lng as "here". For a large bbox
 - Local (no HTTP): `nearest_within`, `filter_open`, `point_in_polygon`, `points_in_polygon`
 - Draw / export: `preview_map`, `export_geojson`
 
+#### Run MCP server manually
+```bash
+pip install "osmfeatures[mcp]"
+export MAPLARK_API_KEY="sk-..."
+osmfeatures mcp
+```
+
+#### Cursor / Claude Desktop
+First install [uv](https://docs.astral.sh/uv/) for one-click server start.
+
+```json
+{
+  "mcpServers": {
+    "maplark": {
+      "command": "uvx",
+      "args": ["--from", "osmfeatures[mcp]", "osmfeatures", "mcp"],
+      "env": { "MAPLARK_API_KEY": "YOUR_KEY" }
+    }
+  }
+}
+```
+
+Planner rules: you pick tags, bbox or location+radius, budgets, `openNow`/`asOf`, and the next tool. Code computes metres, ranks, network paths, and opening-hours status.
+
 ### Typical AI questions
 
 | Prompt | MCP tools |
@@ -231,29 +256,6 @@ There is no geocode tool yet: pass a bbox or lat/lng as "here". For a large bbox
 
 The same operations exist on `OSMFeaturesClient` when you are not going through an LLM (see [Places and routes](#places-and-routes)). Full HTTP reference: [https://maplark.com/developer](https://maplark.com/developer).
 
-#### Run MCP server manually
-```bash
-pip install "osmfeatures[mcp]"
-export MAPLARK_API_KEY="sk-..."
-osmfeatures mcp
-```
-
-#### Cursor / Claude Desktop
-Prerequisite - install [uv](https://docs.astral.sh/uv/).
-
-```json
-{
-  "mcpServers": {
-    "maplark": {
-      "command": "uvx",
-      "args": ["--from", "osmfeatures[mcp]", "osmfeatures", "mcp"],
-      "env": { "MAPLARK_API_KEY": "YOUR_KEY" }
-    }
-  }
-}
-```
-
-Planner rules: you pick tags, bbox or location+radius, budgets, `openNow`/`asOf`, and the next tool. Code computes metres, ranks, network paths, and opening-hours status.
 
 ## Places and routes
 

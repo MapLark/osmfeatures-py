@@ -112,7 +112,7 @@ def test_max_comparisons_zero_raises():
 
 
 def test_default_cap_constant():
-    assert MAX_COMPARISONS == 250_000
+    assert MAX_COMPARISONS == 500_000
 
 
 def test_empty_secondary_is_empty():
