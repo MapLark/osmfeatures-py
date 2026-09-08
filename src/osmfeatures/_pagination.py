@@ -15,7 +15,7 @@ def paginate_all(
     fetch_fn: Callable[[dict[str, Any]], OSMFeatureCollection],
     params: dict[str, Any],
     *,
-    limit_per_page: int = 1000,
+    limit_per_page: int | None = None,
 ) -> Iterator[list[dict[str, Any]]]:
     """Yield pages of raw feature dicts until ``X-Has-More`` is false.
 
@@ -28,7 +28,8 @@ def paginate_all(
         Base query parameters. Any ``limit`` and ``cursor`` keys are managed
         internally and will be overwritten.
     limit_per_page:
-        Upstream ``limit`` per HTTP request (page size).
+        Upstream ``limit`` per HTTP request (page size). Omit to use the API
+        default (1000).
 
     Yields
     ------
@@ -36,7 +37,8 @@ def paginate_all(
         The ``features`` list from each page response.
     """
     base = {k: v for k, v in params.items() if k not in ("limit", "cursor")}
-    base["limit"] = limit_per_page
+    if limit_per_page is not None:
+        base["limit"] = limit_per_page
     cursor: str | None = None
 
     for page in range(_MAX_PAGES):
@@ -74,11 +76,12 @@ async def paginate_all_async(
     fetch_fn: Callable[[dict[str, Any]], Any],
     params: dict[str, Any],
     *,
-    limit_per_page: int = 1000,
+    limit_per_page: int | None = None,
 ) -> AsyncIterator[list[dict[str, Any]]]:
     """Async counterpart to :func:`paginate_all` (yields pages)."""
     base = {k: v for k, v in params.items() if k not in ("limit", "cursor")}
-    base["limit"] = limit_per_page
+    if limit_per_page is not None:
+        base["limit"] = limit_per_page
     cursor: str | None = None
 
     for page in range(_MAX_PAGES):

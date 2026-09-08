@@ -14,6 +14,7 @@ from .chunking import (
     tile_count_for_corridor,
 )
 from .client import OSMFeaturesClient
+from .geometry import point_in_geometry
 from .nearest import nearest_within
 from .convenience import (
     get_amenities,
@@ -53,15 +54,6 @@ from .models import (
 from .output import to_dataframe, to_geodataframe
 from .retry import RetryConfig
 
-import warnings
-
-warnings.warn(
-    "osmgeojson is deprecated and replaced by osmfeatures. "
-    "Please migrate to the new package: pip install osmfeatures",
-    DeprecationWarning,
-    stacklevel=2
-)
-
 __all__ = [
     # Clients
     "OSMFeaturesClient",
@@ -93,6 +85,7 @@ __all__ = [
     "tile_count_for_corridor",
     "shapely_to_bbox",
     "nearest_within",
+    "point_in_geometry",
     # Convenience helpers - built environment
     "get_buildings",
     "get_building_polygons",
@@ -121,5 +114,5 @@ __all__ = [
     "get_elements_by_name",
 ]
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 

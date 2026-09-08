@@ -1,7 +1,30 @@
 # MapLark OSM Features API
 
-Official Python client for the [MapLark OSM Features API](https://maplark.com) (GeoJSON, FlatGeobuf, GeoParquet, CSV). 
+Official Python client for the [MapLark OSM Features API](https://maplark.com) (GeoJSON, FlatGeobuf, GeoParquet, CSV).
 
+## Contents
+
+- [Python SDK](#python-sdk)
+- [Quick start](#quick-start)
+- [Basic API usage](#basic-api-usage)
+  - [Create a client](#create-a-client)
+  - [Query OSM features](#query-osm-features)
+  - [Auto-pagination and bbox tiling](#auto-pagination-and-bbox-tiling)
+  - [Async client](#async-client)
+  - [Convenience helpers](#convenience-helpers)
+  - [Cost and usage](#cost-and-usage)
+- [AI](#ai)
+  - [MCP Server](#mcp-server)
+  - [Typical AI questions](#typical-ai-questions)
+- [Places and routes](#places-and-routes)
+  - [Places search](#places-search)
+  - [Nearby](#nearby-ranked-from-a-point)
+  - [Place details](#place-details)
+  - [Opening hours](#opening-hours)
+  - [X near Y](#x-near-y-local-join)
+  - [Walk and bike routes](#walk-and-bike-routes)
+- [CLI](#cli)
+- [Example apps](#example-apps)
 
 Query OpenStreetMap features such as buildings, streets, and Points of Interest easily. Search for OSM features by bounding box, tags, and geometry shape and get GeoJSON back within less than 250ms (dependent on query size). No converting between formats manually. The API keeps OpenStreetMap semantics intact, like tags and ways, and returns GeoJSON Features you can feed straight into Leaflet, MapLibre, OpenLayers, or any geospatial toolchain. It is backed by postgis with tiered API keys and rate limiting to keep noisy neighbours out to give you predictable latency for real traffic. It also has self-host path for those willing to host complex infrastructure themselves.
 
@@ -29,11 +52,12 @@ Read the full API reference here [https://maplark.com/developer](https://maplark
 
 ## Python SDK
 
-This client library comes with auto-pagination, bbox tiling (enables larger bbox queries), retry/backoff, pandas/geopandas output, async support, convenience methods for common OSM layers (buildings, amenities, bike roads, and so on), and Geo-agent methods for places, opening hours, and walk/bike routing. 
+This client library comes with auto-pagination, bbox tiling (enables larger bbox queries), retry/backoff, pandas/geopandas output, async support, convenience methods for common OSM layers (buildings, amenities, bike roads, and so on), a stdio MCP server for Claude / Cursor / Custom agents, and places/routes methods for opening hours and walk/bike routing. 
 
 ```
 pip install osmfeatures
 pip install "osmfeatures[geo]"   # pandas / geopandas / shapely support
+pip install "osmfeatures[mcp]"   # stdio MCP server for Claude / Cursor
 ```
 
 Official client for the MapLark OSM Features API (GeoJSON, FlatGeobuf, GeoParquet, CSV).
@@ -55,7 +79,7 @@ with OSMFeaturesClient(api_key="sk-...") as client:
 
 
 
-### 1) Create a client
+### Create a client
 
 ```python
 from osmfeatures import OSMFeaturesClient
@@ -74,7 +98,7 @@ with OSMFeaturesClient(api_key="sk-...") as client:
 
 
 
-### 2) Query OSM features
+### Query OSM features
 
 `query()` fetches a single page:
 
@@ -100,12 +124,12 @@ Common filters:
 - `not_tags=["access=private"]` (exclude)
 - `type="node" | "way" | "relation"`
 - `way_shape="polygon" | "line" | "all"` (omit = both shapes; `all` also means both)
-- `clip_geometry=True | False` (`True` default; set `False` to keep full geometry outside bbox)
+- `clip_geometry=True | False` (omit for the API default `True`; set `False` to keep full geometry outside bbox)
 - `cursor` (pagination; use SDK `meta.next_cursor` from previous page, sourced from `X-Next-Cursor`)
 
 
 
-### 3) Auto-pagination and bbox tiling
+### Auto-pagination and bbox tiling
 
 Use `query_all()` to fetch all pages and deduplicate by OSM feature id. By default it splits the bbox into 2 tiles (power of 2) so large areas use more requests; pass `bbox_tiles=1` to disable, or raise it (`4`, `8`, …) for bigger areas:
 
@@ -113,9 +137,7 @@ Use `query_all()` to fetch all pages and deduplicate by OSM feature id. By defau
 all_restaurants = client.query_all(
     bbox="18.063,59.322,18.082,59.332",
     tags="amenity=restaurant",
-    limit_per_page=1000,  # page size per HTTP request
-    max_features=55_000,  # total cap; pass None for no cap
-    bbox_tiles=2,  # default
+    max_features=55_000,  # client total cap; pass None for no cap
 )
 
 print(all_restaurants.meta.returned)
@@ -123,7 +145,7 @@ print(all_restaurants.meta.returned)
 
 
 
-### 4) Async client
+### Async client
 
 Async methods mirror the sync API (`query_async`, `query_all_async`):
 
@@ -146,7 +168,7 @@ asyncio.run(main())
 
 
 
-### 5) Convenience helpers
+### Convenience helpers
 
 For common datasets, use convenience methods built on top of `query_all()`:
 
@@ -161,7 +183,7 @@ with OSMFeaturesClient(api_key="sk-...") as client:
 
 
 
-### 6) Cost and usage
+### Cost and usage
 
 ```python
 estimate = client.estimate_cost(
@@ -174,31 +196,76 @@ usage = client.usage()
 print("Usage:", usage)
 ```
 
-### 7) Geo Agent (places and routes)
+## AI
+Add real geospatial intelligence to your Artificial Intelligence agents. Use Maplark in Claude Code or to new agentic apps.
 
-`query()` is the generic OSM layer: buildings, roads, park polygons, any tag and geometry shape. Geo-agent is the place and mobility layer on top of the same data. You pick OSM tags, an area, a time, and a travel mode. The API returns coordinates, opening-hours status, straight-line ranks, and walk/bike geometry. You do not compute metres or parse `opening_hours` strings yourself. 
+### MCP Server
 
-These endpoints can be used by an AI agent to generate responses such as "cafes near me" or "suggest a bar crawl in Stockholm". For example
+The MCP server is the agent surface. Your LLM is the planner: it chooses OSM tags, a bbox or location+radius, a time, a travel mode, and the next tool. The tools compute metres, ranks, opening-hours status, and walk/bike paths. You do not compute haversine, parse `opening_hours` strings, or invent coordinates.
 
-#### Typical questions
+Results come back as summaries (ids, names, lon/lat scalars, `distance_m`, `openingHours.status`) plus a `collection_id`. They never include GeoJSON coordinate arrays. Call `preview_map(collection_id)` to draw: a local page loads [OpenFreeMap](https://openfreemap.org/) (Liberty) in MapLibre and fetches GeoJSON from localhost, so coordinates never enter the model. Call `export_geojson` only when the user asked for a raw file: it writes GeoJSON to disk and returns a path, not coordinates.
 
-| Prompt | SDK |
+There is no geocode tool yet: pass a bbox or lat/lng as "here". For a large bbox, call `query_all` with `bbox_tiles` (power of 2; `1` disables tiling), not page `query` by hand. MCP `query_all` defaults to `max_features=10000` (raise it if `has_more`); the SDK default remains 55_000. Do not invent `places_near_to` or `places_open_after`. The server ships these rules as `instructions`.
+
+#### Tools
+
+- Places: `places_search`, `places_nearby`, `places_details`
+- Routes: `routes_isochrone`, `routes_path`, `routes_optimized_path`
+- Generic OSM: `query` (one page), `query_all` (tiled pages)
+- Local (no HTTP): `nearest_within`, `filter_open`, `point_in_polygon`, `points_in_polygon`
+- Draw / export: `preview_map`, `export_geojson`
+
+### Typical AI questions
+
+| Prompt | MCP tools |
 |------|-----|
-| "Cafes near me" | `client.places_nearby()` or `client.places_search()` with `location` + `radius` |
-| "Restaurants within 150 m of a station" | two `client.places_search()`, then `nearest_within()` |
-| "Bars open at 20:00" | `client.places_search()` with `as_of`, keep `openingHours.status == "open"` |
-| "Cafes within a 10-minute bike ride" | `client.routes_isochrone()` + `client.places_search()` in a covering radius + keep points inside the polygon |
-| "A walking bar crawl in Stockholm" | `client.places_search()` + `client.routes_optimized_path()` (`loop=True`) |
-| "Walk from my hotel to the cafe, then the office" | `client.routes_path()` with those stops in listed order |
-| "Suggest a walk to a bar, a restaurant, and a cafe, no particular order" | `client.routes_optimized_path()` with `loop=False` |
-| "Is the office a 20-minute walk from the apartment?" | `client.routes_isochrone()` from A, point-in-polygon for B |
+| "Cafes near me" | `places_nearby` or `places_search` with location+radius / bbox |
+| "Restaurants within 150 m of a station" | two `places_search`, then `nearest_within` |
+| "Bars open at 20:00" | `places_search` with `as_of` (no `open_now` so closed hits stay), then `filter_open` |
+| "Cafes within a 10-minute bike ride" | `routes_isochrone` + `places_search` in a covering radius + `points_in_polygon` |
+| "A walking bar crawl in Stockholm" | `places_search` + `routes_optimized_path` (`loop=true`) |
+| "Walk from my hotel to the cafe, then the office" | `routes_path` with those stops in listed order |
+| "Suggest a walk to a bar, a restaurant, and a cafe, no particular order" | `routes_optimized_path` with `loop=false` |
+| "Is the office a 20-minute walk from the apartment?" | `routes_isochrone` from A, `point_in_polygon` for B |
+| "Show this on a map" | `preview_map(collection_id)` after a search or route |
 
+The same operations exist on `OSMFeaturesClient` when you are not going through an LLM (see [Places and routes](#places-and-routes)). Full HTTP reference: [https://maplark.com/developer](https://maplark.com/developer).
 
-Runnable prompts like these live in `tests/example_apps/test_geo_agent.py`. Full HTTP reference: [https://maplark.com/developer](https://maplark.com/developer).
+#### Run MCP server manually
+```bash
+pip install "osmfeatures[mcp]"
+export MAPLARK_API_KEY="sk-..."
+osmfeatures mcp
+```
 
-#### Places search
+#### Cursor / Claude Desktop
+Prerequisite - install [uv](https://docs.astral.sh/uv/).
 
-`places_search()` finds places in a bounding box **or** a `location` plus `radius` (not both). Optional `tags` (AND) and `or_tags` (OR) use the same OSM filters as `query()`. Default `limit` is 100 (max 10_000).
+```json
+{
+  "mcpServers": {
+    "maplark": {
+      "command": "uvx",
+      "args": ["--from", "osmfeatures[mcp]", "osmfeatures", "mcp"],
+      "env": { "MAPLARK_API_KEY": "YOUR_KEY" }
+    }
+  }
+}
+```
+
+Planner rules: you pick tags, bbox or location+radius, budgets, `openNow`/`asOf`, and the next tool. Code computes metres, ranks, network paths, and opening-hours status.
+
+## Places and routes
+
+`query()` is the generic OSM layer: buildings, roads, park polygons, any tag and geometry shape. Places and routes are the place and mobility layer on top of the same data. You pick OSM tags, an area, a time, and a travel mode. The API returns coordinates, opening-hours status, straight-line ranks, and walk/bike geometry. You do not compute metres or parse `opening_hours` strings yourself.
+
+These are the same operations as the MCP tools; call them on `OSMFeaturesClient` when you are not going through an LLM.
+
+Runnable Python chains live in `tests/example_apps/test_geo_agent.py`. Full HTTP reference: [https://maplark.com/developer](https://maplark.com/developer).
+
+### Places search
+
+`places_search()` finds places in a bounding box **or** a `location` plus `radius` (not both). Optional `tags` (AND) and `or_tags` (OR) use the same OSM filters as `query()`. Omit `limit` to use the API default (100, max 10_000).
 
 ```python
 cafes = client.places_search(
@@ -214,9 +281,9 @@ print(cafes["metadata"]["evaluated_at"])
 
 Response is a GeoJSON FeatureCollection plus `metadata.evaluated_at` (UTC instant used for hours).
 
-#### Nearby (ranked from a point)
+### Nearby (ranked from a point)
 
-`places_nearby()` answers "X near this point". It requires `tags` or `or_tags`. Results are ranked by straight-line spheroid distance, nearest first. Default radius is 1000 m. Default `limit` is 10.
+`places_nearby()` answers "X near this point". It requires `tags` or `or_tags`. Results are ranked by straight-line spheroid distance, nearest first. Omit `radius` / `limit` to use the API defaults (1000 m / 100).
 
 ```python
 nearby = client.places_nearby(
@@ -232,7 +299,7 @@ for item in nearby["items"]:
 
 Response: `{status, items: [{feature, distance_m}], estimated_units, evaluated_at}`.
 
-#### Place details
+### Place details
 
 `places_details()` loads one place by the id that search or nearby returned (`node/123`). You can pass that string, or `osm_type` plus `osm_id`. Missing or non-place ids return HTTP 404.
 
@@ -245,7 +312,7 @@ print(details["timezone"], details["evaluated_at"])
 
 Response: `{status, feature, estimated_units, evaluated_at, timezone}`. Hours are annotated at request time in the place's IANA zone (from its coordinates).
 
-#### Opening hours
+### Opening hours
 
 Every place feature includes `properties.openingHours`:
 
@@ -259,7 +326,7 @@ Hours use each place's IANA timezone from its coordinates. There is no request `
 - Passing `as_of` or `open_now` also requires an OSM `opening_hours` tag, so untagged POIs do not fill the page.
 - Closed places that have hours still return unless `open_now` is set.
 
-#### "X near Y" (local join)
+### "X near Y" (local join)
 
 `nearby` ranks against one point. "Restaurants within 150 m of a station" is two searches plus a local join. `nearest_within` does no HTTP.
 
@@ -277,9 +344,9 @@ for pair in pairs:
 
 Each pair is `{"feature": <primary>, "distance_m": <float>, "nearest": <secondary>}`. The point comes from `geometry` when it is a Point, else `properties.centroid`. A feature with neither raises `ValueError`. Empty secondary returns `[]`. Distances are spherical haversine (mean Earth radius 6371000 m). Fine at search `limit` (default 100).
 
-#### Walk and bike routes
+### Walk and bike routes
 
-Routing follows the OSM walk or bicycle network (query-time Dijkstra on tiled highways). Provide `travel_mode="WALK"` (default) or `"BICYCLE"`. Walk treats the graph as undirected (oneways ignored). Bicycle is directed and honors OSM oneway, `oneway:bicycle`, contraflow cycleways, and implied roundabout oneway. Car routing (`DRIVE`) is not available.
+Routing follows the OSM walk or bicycle network (query-time Dijkstra on tiled highways). Omit `travel_mode` to use the API default (`WALK`), or pass `"BICYCLE"`. Walk treats the graph as undirected (oneways ignored). Bicycle is directed and honors OSM oneway, `oneway:bicycle`, contraflow cycleways, and implied roundabout oneway. Car routing (`DRIVE`) is not available.
 
 Duration budgets convert at about 5 km/h for walk (1.4 m/s) and 15 km/h for bicycle (4.2 m/s). Optional `search_buffer_m` widens the highway fetch corridor if a path cannot be formed in the default area.
 
@@ -325,8 +392,9 @@ print(opt["status"], opt.get("ordered_stops"), opt.get("distance_m"))
 
 Points accept `lon` or `lng`. Places methods send `{lat, lng}`. Route methods send `{lon, lat}`.
 
+Local helpers (no HTTP): `nearest_within(primary, secondary, max_distance_m)` for "X near Y", and `point_in_geometry(lon, lat, geom)` for isochrone containment.
 
-### 8) CLI usage
+## CLI
 
 If the package is installed, the CLI is available as `osmfeatures`:
 
@@ -334,6 +402,7 @@ If the package is installed, the CLI is available as `osmfeatures`:
 export MAPLARK_API_KEY="sk-..."
 osmfeatures query --bbox "18.063,59.322,18.082,59.332" --tags building --type way
 osmfeatures query --bbox "18.063,59.322,18.082,59.332" --tags building --all-pages --bbox-tiles 4
+osmfeatures mcp
 ```
 
 
@@ -352,7 +421,7 @@ The repository includes runnable example-app tests in `tests/example_apps/` show
 - `test_pedestrian_wavefront_bfs.py`: hop-based accessibility rings via BFS.
 - `test_bike_path_dijkstra_liljeholmen_to_djurgarden.py`: tiled corridor bike routing from Liljeholmen to Djurgarden.
 - `test_geometry_filters.py`: zoom + area/length filters for large buildings and long roads.
-- `test_geo_agent.py`: geo-agent chains (bar crawl, bike parks, isochrone filter/compare/coverage, client-side open-at-clock).
+- `test_geo_agent.py`: Python places/routes chains (bar crawl, bike parks, isochrone filter/compare/coverage, client-side open-at-clock).
 
 Run all example apps:
 

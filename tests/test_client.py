@@ -143,6 +143,19 @@ def test_query_forwards_zoom_length_and_area_filters(client):
 
 
 @rsps.activate
+def test_query_omits_api_defaults(client):
+    rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection([]))
+
+    client.query(bbox="18.06,59.32,18.09,59.34")
+
+    parsed = parse_qs(urlsplit(rsps.calls[0].request.url).query)
+    assert "limit" not in parsed
+    assert "centroid" not in parsed
+    assert "clip_geometry" not in parsed
+    assert "clipGeometry" not in parsed
+
+
+@rsps.activate
 def test_query_sends_location_and_radius_not_around(client):
     rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection([]))
 

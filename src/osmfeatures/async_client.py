@@ -170,7 +170,7 @@ class AsyncOSMFeaturesClient:
         tags: list[str] | str | None = None,
         or_tags: list[str] | str | None = None,
         not_tags: list[str] | str | None = None,
-        limit: int = 1000,
+        limit: int | None = None,
         cursor: str | None = None,
         zoom: float | None = None,
         min_length_m: float | None = None,
@@ -180,7 +180,7 @@ class AsyncOSMFeaturesClient:
         disable_budget_warning: bool = False,
         geometry: Any = None,
         centroid: bool = False,
-        clip_geometry: bool = True,
+        clip_geometry: bool | None = None,
         accept: str | None = None,
     ) -> OSMFeatureCollection | BinaryQueryResult:
         """Fetch a single page of OSM elements asynchronously.
@@ -212,7 +212,8 @@ class AsyncOSMFeaturesClient:
             params["or_tags"] = or_tags
         if not_tags is not None:
             params["not_tags"] = not_tags
-        params["limit"] = limit
+        if limit is not None:
+            params["limit"] = limit
         if cursor is not None:
             params["cursor"] = cursor
         if zoom is not None:
@@ -229,7 +230,8 @@ class AsyncOSMFeaturesClient:
             params["disable_budget_warning"] = disable_budget_warning
         if centroid:
             params["centroid"] = True
-        params["clip_geometry"] = clip_geometry
+        if clip_geometry is not None:
+            params["clip_geometry"] = clip_geometry
 
         if is_geojson_accept(accept):
             return await self._raw_query(params, accept=accept)
@@ -239,7 +241,7 @@ class AsyncOSMFeaturesClient:
     async def query_all_async(
         self,
         *,
-        limit_per_page: int = 1000,
+        limit_per_page: int | None = None,
         bbox_tiles: int = 2,
         max_features: int | None = 55_000,
         **params: Any,
@@ -353,7 +355,7 @@ class AsyncOSMFeaturesClient:
         type: str | None = None,  # noqa: A002
         tags: list[str] | None = None,
         or_tags: list[str] | None = None,
-        limit: int = 100,
+        limit: int | None = None,
         open_now: bool = False,
         as_of: str | None = None,
     ) -> dict[str, Any]:
@@ -377,11 +379,11 @@ class AsyncOSMFeaturesClient:
         self,
         *,
         location: dict[str, float],
-        radius: float = 1000.0,
+        radius: float | None = None,
         type: str | None = None,  # noqa: A002
         tags: list[str] | None = None,
         or_tags: list[str] | None = None,
-        limit: int = 10,
+        limit: int | None = None,
         open_now: bool = False,
         as_of: str | None = None,
     ) -> dict[str, Any]:
@@ -419,7 +421,7 @@ class AsyncOSMFeaturesClient:
         max_distance_m: float | None = None,
         duration_s: float | None = None,
         search_buffer_m: float | None = None,
-        travel_mode: RouteTravelMode = "WALK",
+        travel_mode: RouteTravelMode | None = None,
     ) -> dict[str, Any]:
         """Reach polygon along the walk/bike network."""
         return await self._post_json(
@@ -438,7 +440,7 @@ class AsyncOSMFeaturesClient:
         *,
         stops: list[dict[str, float]],
         search_buffer_m: float | None = None,
-        travel_mode: RouteTravelMode = "WALK",
+        travel_mode: RouteTravelMode | None = None,
     ) -> dict[str, Any]:
         """Given-order walk/bike path."""
         return await self._post_json(
@@ -456,8 +458,8 @@ class AsyncOSMFeaturesClient:
         start: dict[str, float],
         stops: list[dict[str, float]],
         search_buffer_m: float | None = None,
-        loop: bool = True,
-        travel_mode: RouteTravelMode = "WALK",
+        loop: bool | None = None,
+        travel_mode: RouteTravelMode | None = None,
     ) -> dict[str, Any]:
         """TSP walk/bike tour from ``start``. ``loop`` returns to start."""
         return await self._post_json(

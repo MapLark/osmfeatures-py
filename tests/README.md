@@ -4,7 +4,7 @@ Unit tests for the `osmfeatures` SDK. No live API or database required - all HTT
 
 ## Setup
 
-From `osmfeatures-python/`:
+From the repository root:
 
 ```bash
 python3 -m venv .venv
@@ -12,11 +12,11 @@ source .venv/bin/activate
 pip install -e ".[all,test]"
 ```
 
-This installs the SDK in editable mode plus all optional extras (`pandas`, `geopandas`, `shapely`) and the test dependencies (`pytest`, `responses`, `pytest-asyncio`).
+This installs the SDK in editable mode plus all optional extras (`pandas`, `geopandas`, `shapely`, `mcp`) and the test dependencies (`pytest`, `responses`, `pytest-asyncio`).
 
 ## Running
 
-From `osmfeatures-python/`:
+From the repository root:
 
 ```bash
 source .venv/bin/activate
@@ -37,7 +37,10 @@ python3 -m pytest tests/test_client.py::test_query_returns_feature_collection -v
 |------|----------------|
 | `test_chunking.py` | `split_bbox_tiles`, `merge_features`, `around_to_bbox`, `parse_bbox` |
 | `test_client.py` | `OSMFeaturesClient` - happy paths, auth header, error responses, cost estimate |
-| `test_cli.py` | CLI `query` command - `--output geojson/csv/table`, missing API key error |
+| `test_cli.py` | CLI `query` / `mcp` - `--output geojson/csv/table`, missing API key or MCP extra |
+| `test_mcp_session.py` | Geo-agent session summaries, local joins, containment, file export |
+| `test_mcp_server.py` | `build_server()` tool names, `instructions`, FastMCP `call_tool` wiring |
+| `test_preview.py` | Local MapLibre preview HTTP (OpenFreeMap, no geometry in planner payload) |
 | `test_retry.py` | Retry + backoff: 429->200, exhausted retries, monthly limit, `Retry-After` header |
 | `test_pagination.py` | `query_all` single/multi-page, dedup, stale cursor guard |
 | `test_output.py` | `to_dataframe` column names, `to_geodataframe` CRS/geometry (skipped if `pandas`/`geopandas` not installed) |

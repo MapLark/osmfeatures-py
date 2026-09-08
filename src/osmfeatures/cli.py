@@ -1,4 +1,4 @@
-"""CLI for osmfeatures - ``osmfeatures query`` and ``osmfeatures cost``."""
+"""CLI for osmfeatures - ``osmfeatures query``, ``osmfeatures cost``, and ``osmfeatures mcp``."""
 
 from __future__ import annotations
 
@@ -233,6 +233,31 @@ def query_cmd(
         return
 
     _apply_output(fc.features, output_format, fc.to_dict())
+
+
+@cli.command("mcp")
+@click.option("--api-key", default=None, envvar="MAPLARK_API_KEY", help="MapLark API key")
+@click.option("--base-url", default=None, envvar="MAPLARK_BASE_URL", help="API base URL")
+def mcp_cmd(api_key: str | None, base_url: str | None) -> None:
+    """Run the MapLark geo-agent MCP server on stdio (requires osmfeatures[mcp])."""
+    resolved_key = api_key or os.environ.get("MAPLARK_API_KEY", "")
+    if not resolved_key:
+        click.echo(
+            "Error: No API key provided. Pass --api-key or set MAPLARK_API_KEY.",
+            err=True,
+        )
+        sys.exit(1)
+    try:
+        from .mcp_server import run_stdio
+    except ModuleNotFoundError as exc:
+        if exc.name != "mcp" and not (exc.name or "").startswith("mcp."):
+            raise
+        click.echo(
+            "Error: MCP extra not installed. pip install 'osmfeatures[mcp]'",
+            err=True,
+        )
+        sys.exit(1)
+    run_stdio(api_key=resolved_key, base_url=base_url)
 
 
 @cli.command("cost")

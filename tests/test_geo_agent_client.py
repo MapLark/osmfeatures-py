@@ -38,6 +38,7 @@ def test_places_search_posts_camelcase_body(client: OSMFeaturesClient):
     assert body["orTags"] == ["amenity=cafe"]
     assert body["openNow"] is True
     assert body["asOf"] == "2026-08-10T18:00:00+02:00"
+    assert body["limit"] == 10
 
 
 @rsps.activate
@@ -70,16 +71,16 @@ def test_routes_isochrone_and_optimized_path(client: OSMFeaturesClient):
     )
     assert path["status"] == "ok"
     iso_body = json.loads(rsps.calls[0].request.body)
-    assert iso_body["travelMode"] == "WALK"
+    assert "travelMode" not in iso_body
     assert iso_body["origin"] == {"lon": 18.075, "lat": 59.316}
     opt_body = json.loads(rsps.calls[1].request.body)
     assert opt_body["travelMode"] == "BICYCLE"
     assert opt_body["start"] == {"lon": 18.075, "lat": 59.316}
     assert opt_body["stops"][0] == {"lon": 18.08, "lat": 59.318}
-    assert opt_body["loop"] is True
+    assert "loop" not in opt_body
     path_body = json.loads(rsps.calls[2].request.body)
     assert path_body["stops"][0] == {"lon": 18.075, "lat": 59.316}
-    assert path_body["travelMode"] == "WALK"
+    assert "travelMode" not in path_body
 
 
 @rsps.activate
@@ -109,6 +110,26 @@ def test_places_nearby(client: OSMFeaturesClient):
     body = json.loads(rsps.calls[0].request.body)
     assert body["openNow"] is True
     assert body["asOf"] == "2026-08-10T18:00:00+02:00"
+    assert body["limit"] == 3
+    assert "radius" not in body
+
+
+@rsps.activate
+def test_places_and_routes_omit_api_defaults(client: OSMFeaturesClient):
+    rsps.add(
+        rsps.POST,
+        f"{BASE_URL}/v1/places/search",
+        json={"type": "FeatureCollection", "features": []},
+    )
+    rsps.add(rsps.POST, f"{BASE_URL}/v1/places/nearby", json={"status": "ok", "items": []})
+    client.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=cafe"])
+    search_body = json.loads(rsps.calls[0].request.body)
+    assert "limit" not in search_body
+    assert "openNow" not in search_body
+    client.places_nearby(location={"lat": 59.3, "lng": 18.0}, or_tags=["amenity=cafe"])
+    nearby_body = json.loads(rsps.calls[1].request.body)
+    assert "limit" not in nearby_body
+    assert "radius" not in nearby_body
 
 
 def test_parse_place_ref():

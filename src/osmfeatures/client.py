@@ -165,7 +165,7 @@ class OSMFeaturesClient:
         tags: list[str] | str | None = None,
         or_tags: list[str] | str | None = None,
         not_tags: list[str] | str | None = None,
-        limit: int = 1000,
+        limit: int | None = None,
         cursor: str | None = None,
         zoom: float | None = None,
         min_length_m: float | None = None,
@@ -175,7 +175,7 @@ class OSMFeaturesClient:
         disable_budget_warning: bool = False,
         geometry: Any = None,
         centroid: bool = False,
-        clip_geometry: bool = True,
+        clip_geometry: bool | None = None,
         accept: str | None = None,
     ) -> OSMFeatureCollection | BinaryQueryResult:
         """Fetch a single page of OSM elements.
@@ -207,7 +207,7 @@ class OSMFeaturesClient:
         not_tags:
             Exclusion tag filters.  Requires a spatial anchor.
         limit:
-            Maximum features per page.  Defaults to 1000.
+            Maximum features per page. Omit to use the API default (1000).
         cursor:
             Pagination cursor; use ``meta.next_cursor`` (from ``X-Next-Cursor``)
             of the previous response. Omit to start from the first page.
@@ -229,10 +229,11 @@ class OSMFeaturesClient:
             (requires ``pip install osmfeatures[geo]``).
         centroid:
             When True, request ``properties.centroid`` on non-point features.
-            Default False.
+            Omit to use the API default (False).
         clip_geometry:
-            When True (default), clip returned geometry to the requested bbox.
-            Set False to return full geometry for features intersecting the bbox.
+            When True, clip returned geometry to the requested bbox.
+            Omit to use the API default (True). Set False to return full
+            geometry for features intersecting the bbox.
         accept:
             ``Accept`` media type. Default / ``application/geo+json`` returns
             ``OSMFeatureCollection``. Other types (``text/csv``,
@@ -264,7 +265,8 @@ class OSMFeaturesClient:
             params["or_tags"] = or_tags
         if not_tags is not None:
             params["not_tags"] = not_tags
-        params["limit"] = limit
+        if limit is not None:
+            params["limit"] = limit
         if cursor is not None:
             params["cursor"] = cursor
         if zoom is not None:
@@ -281,7 +283,8 @@ class OSMFeaturesClient:
             params["disable_budget_warning"] = disable_budget_warning
         if centroid:
             params["centroid"] = True
-        params["clip_geometry"] = clip_geometry
+        if clip_geometry is not None:
+            params["clip_geometry"] = clip_geometry
 
         if is_geojson_accept(accept):
             return self._raw_query(params, accept=accept)
@@ -291,7 +294,7 @@ class OSMFeaturesClient:
     def query_all(
         self,
         *,
-        limit_per_page: int = 1000,
+        limit_per_page: int | None = None,
         bbox_tiles: int = 2,
         max_features: int | None = 55_000,
         **params: Any,
@@ -306,7 +309,8 @@ class OSMFeaturesClient:
         Parameters
         ----------
         limit_per_page:
-            Upstream ``limit`` per HTTP request (page size). Defaults to 1000.
+            Upstream ``limit`` per HTTP request (page size). Omit to use the
+            API default (1000).
         bbox_tiles:
             Number of bbox tiles (power of 2). Defaults to 2. Ignored when
             there is no ``bbox``.
@@ -447,7 +451,7 @@ class OSMFeaturesClient:
         type: str | None = None,  # noqa: A002
         tags: list[str] | None = None,
         or_tags: list[str] | None = None,
-        limit: int = 100,
+        limit: int | None = None,
         open_now: bool = False,
         as_of: str | None = None,
     ) -> dict[str, Any]:
@@ -471,11 +475,11 @@ class OSMFeaturesClient:
         self,
         *,
         location: dict[str, float],
-        radius: float = 1000.0,
+        radius: float | None = None,
         type: str | None = None,  # noqa: A002
         tags: list[str] | None = None,
         or_tags: list[str] | None = None,
-        limit: int = 10,
+        limit: int | None = None,
         open_now: bool = False,
         as_of: str | None = None,
     ) -> dict[str, Any]:
@@ -513,7 +517,7 @@ class OSMFeaturesClient:
         max_distance_m: float | None = None,
         duration_s: float | None = None,
         search_buffer_m: float | None = None,
-        travel_mode: RouteTravelMode = "WALK",
+        travel_mode: RouteTravelMode | None = None,
     ) -> dict[str, Any]:
         """Reach polygon along the walk/bike network (``POST /v1/routes/isochrone``)."""
         return self._post_json(
@@ -532,7 +536,7 @@ class OSMFeaturesClient:
         *,
         stops: list[dict[str, float]],
         search_buffer_m: float | None = None,
-        travel_mode: RouteTravelMode = "WALK",
+        travel_mode: RouteTravelMode | None = None,
     ) -> dict[str, Any]:
         """Given-order walk/bike path (``POST /v1/routes/path``)."""
         return self._post_json(
@@ -550,8 +554,8 @@ class OSMFeaturesClient:
         start: dict[str, float],
         stops: list[dict[str, float]],
         search_buffer_m: float | None = None,
-        loop: bool = True,
-        travel_mode: RouteTravelMode = "WALK",
+        loop: bool | None = None,
+        travel_mode: RouteTravelMode | None = None,
     ) -> dict[str, Any]:
         """TSP walk/bike tour from ``start`` (``POST /v1/routes/optimized_path``). ``loop`` returns to start."""
         return self._post_json(

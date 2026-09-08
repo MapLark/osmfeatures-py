@@ -229,3 +229,43 @@ def test_cost_forwards_zoom_length_and_area_filters():
         min_area_m2=500.0,
         max_area_m2=5000.0,
     )
+
+
+def test_mcp_missing_api_key(monkeypatch):
+    monkeypatch.delenv("MAPLARK_API_KEY", raising=False)
+    result = CliRunner().invoke(cli, ["mcp"])
+    assert result.exit_code != 0
+    assert "API key" in result.output
+
+
+def test_mcp_missing_extra(monkeypatch):
+    import builtins
+    import sys
+
+    monkeypatch.delitem(sys.modules, "osmfeatures.mcp_server", raising=False)
+    for key in list(sys.modules):
+        if key == "mcp" or key.startswith("mcp."):
+            monkeypatch.delitem(sys.modules, key, raising=False)
+
+    real_import = builtins.__import__
+
+    def blocked(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "mcp" or name.startswith("mcp."):
+            raise ModuleNotFoundError("No module named 'mcp'", name="mcp")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", blocked)
+    result = CliRunner().invoke(cli, ["mcp", "--api-key", "sk-test"])
+    assert result.exit_code != 0
+    assert "osmfeatures[mcp]" in result.output
+
+
+def test_mcp_import_error_is_not_missing_extra(monkeypatch):
+    import sys
+    import types
+
+    monkeypatch.setitem(sys.modules, "osmfeatures.mcp_server", types.ModuleType("osmfeatures.mcp_server"))
+    result = CliRunner().invoke(cli, ["mcp", "--api-key", "sk-test"])
+    assert result.exit_code != 0
+    assert "osmfeatures[mcp]" not in result.output
+    assert result.exception is not None

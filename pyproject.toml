@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "osmfeatures"
-version = "0.2.1"
+version = "0.3.0"
 description = "Official client for the MapLark OSM Features API (GeoJSON, FlatGeobuf, GeoParquet, CSV)"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
-keywords = ["openstreetmap", "osm", "geojson", "flatgeobuf", "geoparquet", "overpass", "maplark", "geospatial", "maps"]
+keywords = ["openstreetmap", "osm", "geojson", "flatgeobuf", "geoparquet", "overpass", "maplark", "geospatial", "maps", "mcp", "ai"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -34,7 +34,13 @@ geo = [
     "geopandas>=0.14",
     "shapely>=2.0",
 ]
-all = ["pandas>=2.0", "geopandas>=0.14", "shapely>=2.0"]
+mcp = ["mcp>=1.8,<2"]
+all = [
+    "pandas>=2.0",
+    "geopandas>=0.14",
+    "shapely>=2.0",
+    "mcp>=1.8,<2",
+]
 test = [
     "pytest>=7.0",
     "responses>=0.25",

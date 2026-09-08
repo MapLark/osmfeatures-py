@@ -60,11 +60,11 @@ def places_search_body(
     type: str | None = None,  # noqa: A002
     tags: list[str] | None = None,
     or_tags: list[str] | None = None,
-    limit: int = 100,
+    limit: int | None = None,
     open_now: bool = False,
     as_of: str | None = None,
 ) -> dict[str, Any]:
-    body: dict[str, Any] = {"limit": limit}
+    body: dict[str, Any] = {}
     if bbox is not None:
         body["bbox"] = bbox
     if location is not None:
@@ -77,6 +77,8 @@ def places_search_body(
         body["tags"] = list(tags)
     if or_tags:
         body["orTags"] = list(or_tags)
+    if limit is not None:
+        body["limit"] = limit
     if open_now:
         body["openNow"] = True
     if as_of is not None:
@@ -87,25 +89,25 @@ def places_search_body(
 def places_nearby_body(
     *,
     location: dict[str, float],
-    radius: float = 1000.0,
+    radius: float | None = None,
     type: str | None = None,  # noqa: A002
     tags: list[str] | None = None,
     or_tags: list[str] | None = None,
-    limit: int = 10,
+    limit: int | None = None,
     open_now: bool = False,
     as_of: str | None = None,
 ) -> dict[str, Any]:
-    body: dict[str, Any] = {
-        "location": latlng(location),
-        "radius": radius,
-        "limit": limit,
-    }
+    body: dict[str, Any] = {"location": latlng(location)}
+    if radius is not None:
+        body["radius"] = radius
     if type is not None:
         body["type"] = type
     if tags:
         body["tags"] = list(tags)
     if or_tags:
         body["orTags"] = list(or_tags)
+    if limit is not None:
+        body["limit"] = limit
     if open_now:
         body["openNow"] = True
     if as_of is not None:
@@ -119,18 +121,17 @@ def routes_isochrone_body(
     max_distance_m: float | None = None,
     duration_s: float | None = None,
     search_buffer_m: float | None = None,
-    travel_mode: RouteTravelMode = "WALK",
+    travel_mode: RouteTravelMode | None = None,
 ) -> dict[str, Any]:
-    body: dict[str, Any] = {
-        "origin": lonlat(origin),
-        "travelMode": travel_mode,
-    }
+    body: dict[str, Any] = {"origin": lonlat(origin)}
     if max_distance_m is not None:
         body["max_distance_m"] = max_distance_m
     if duration_s is not None:
         body["duration_s"] = duration_s
     if search_buffer_m is not None:
         body["search_buffer_m"] = search_buffer_m
+    if travel_mode is not None:
+        body["travelMode"] = travel_mode
     return body
 
 
@@ -138,14 +139,13 @@ def routes_path_body(
     *,
     stops: list[dict[str, float]],
     search_buffer_m: float | None = None,
-    travel_mode: RouteTravelMode = "WALK",
+    travel_mode: RouteTravelMode | None = None,
 ) -> dict[str, Any]:
-    body: dict[str, Any] = {
-        "stops": [lonlat(s) for s in stops],
-        "travelMode": travel_mode,
-    }
+    body: dict[str, Any] = {"stops": [lonlat(s) for s in stops]}
     if search_buffer_m is not None:
         body["search_buffer_m"] = search_buffer_m
+    if travel_mode is not None:
+        body["travelMode"] = travel_mode
     return body
 
 
@@ -154,15 +154,18 @@ def routes_optimized_path_body(
     start: dict[str, float],
     stops: list[dict[str, float]],
     search_buffer_m: float | None = None,
-    loop: bool = True,
-    travel_mode: RouteTravelMode = "WALK",
+    loop: bool | None = None,
+    travel_mode: RouteTravelMode | None = None,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
         "start": lonlat(start),
         "stops": [lonlat(s) for s in stops],
-        "loop": loop,
-        "travelMode": travel_mode,
     }
+    if loop is not None:
+        body["loop"] = loop
     if search_buffer_m is not None:
         body["search_buffer_m"] = search_buffer_m
+    if travel_mode is not None:
+        body["travelMode"] = travel_mode
     return body
+

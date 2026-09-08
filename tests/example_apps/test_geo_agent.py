@@ -50,7 +50,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from haversine import Unit, haversine
 
-from osmfeatures import OSMFeaturesAPIError, OSMFeaturesClient
+from osmfeatures import OSMFeaturesAPIError, OSMFeaturesClient, point_in_geometry
 from osmfeatures.chunking import (
     around_to_bbox,
     merge_features,
@@ -139,33 +139,6 @@ def _point_from_feature(feat: dict) -> dict[str, float] | None:
 
 def _haversine_m(a: dict[str, float], b: dict[str, float]) -> float:
     return float(haversine((a["lat"], a["lon"]), (b["lat"], b["lon"]), unit=Unit.METERS))
-
-
-def _point_in_ring(lon: float, lat: float, ring: list[list[float]]) -> bool:
-    """Even-odd point-in-polygon test against a single ring."""
-    inside = False
-    n = len(ring)
-    for i in range(n):
-        x1, y1 = ring[i][0], ring[i][1]
-        x2, y2 = ring[(i + 1) % n][0], ring[(i + 1) % n][1]
-        if (y1 > lat) != (y2 > lat):
-            x_at_lat = x1 + (lat - y1) * (x2 - x1) / (y2 - y1)
-            if lon < x_at_lat:
-                inside = not inside
-    return inside
-
-
-def _point_in_geometry(lon: float, lat: float, geom: dict) -> bool:
-    """Point-in-polygon against Polygon/MultiPolygon exterior ring(s). Holes ignored."""
-    gtype = geom.get("type")
-    coords = geom.get("coordinates") or []
-    if gtype == "Polygon":
-        rings = [coords[0]] if coords else []
-    elif gtype == "MultiPolygon":
-        rings = [poly[0] for poly in coords if poly]
-    else:
-        return False
-    return any(_point_in_ring(lon, lat, ring) for ring in rings)
 
 
 def _iter_exterior_rings(geom: dict):
@@ -374,7 +347,7 @@ def test_bike_parks_cafe_stockholm(client: OSMFeaturesClient):
     parks = _fetch_parks(client, origin, _BIKE_RADIUS_M)
     assert parks, f"Expected at least one park near Djurgården, got 0. bbox_fallback={bbox}"
     route_through_park = any(
-        _point_in_geometry(lon, lat, feat["geometry"])
+        point_in_geometry(lon, lat, feat["geometry"])
         for lon, lat in coords
         for feat in parks
     )
@@ -425,7 +398,7 @@ def test_filter_then_search_bike_isochrone_stockholm(client: OSMFeaturesClient):
     for f in candidates:
         pt = _point_from_feature(f)
         assert pt is not None
-        if _point_in_geometry(pt["lon"], pt["lat"], geom):
+        if point_in_geometry(pt["lon"], pt["lat"], geom):
             inside.append(f)
     assert inside, (
         f"Expected at least one cafe/restaurant open after 20:00 inside the "
@@ -456,8 +429,8 @@ def test_compare_locations_walk_isochrone_stockholm(client: OSMFeaturesClient):
     assert iso.get("distance_m") == pytest.approx(budget_m, rel=1e-6)
     assert iso.get("duration_s") == pytest.approx(duration_s, rel=1e-6)
 
-    near_inside = _point_in_geometry(_NEAR_OFFICE["lon"], _NEAR_OFFICE["lat"], geom)
-    far_inside = _point_in_geometry(_FAR_POINT["lon"], _FAR_POINT["lat"], geom)
+    near_inside = point_in_geometry(_NEAR_OFFICE["lon"], _NEAR_OFFICE["lat"], geom)
+    far_inside = point_in_geometry(_FAR_POINT["lon"], _FAR_POINT["lat"], geom)
     assert near_inside, (
         f"Expected nearby office {_NEAR_OFFICE} inside 20 min walk isochrone "
         f"from {_APARTMENT} (~{budget_m:.0f}m network)"
@@ -493,7 +466,7 @@ def test_site_coverage_walk_isochrone_stockholm(client: OSMFeaturesClient):
     )
     n_verts = _geometry_vertex_count(geom)
     assert n_verts >= 4, f"Expected a closed polygon, got {n_verts} vertices"
-    assert _point_in_geometry(entrance["lon"], entrance["lat"], geom), (
+    assert point_in_geometry(entrance["lon"], entrance["lat"], geom), (
         "Park entrance should lie inside its own coverage polygon"
     )
     print(

@@ -12,6 +12,8 @@ from typing import Any
 # Mean Earth radius. ponytail: sphere, not WGS84 ellipsoid; swap if you need
 # centimetre-grade distances.
 _EARTH_RADIUS_M = 6_371_000.0
+# O(n×m) haversine. 500k is ~1000×500 or 10_000×50; search-sized joins fit.
+MAX_COMPARISONS = 500_000
 
 
 def _haversine_m(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
@@ -55,7 +57,8 @@ def nearest_within(
     primary: Any,
     secondary: Any,
     max_distance_m: float,
-    limit: int = 20,
+    limit: int | None = 20,
+    max_comparisons: int | None = MAX_COMPARISONS,
 ) -> list[dict[str, Any]]:
     """Nearest secondary for each primary, within ``max_distance_m``.
 
@@ -63,16 +66,32 @@ def nearest_within(
     ``geometry`` when it is a Point, else ``properties.centroid``. A feature
     with neither raises ``ValueError``.
 
-    Returns pairs sorted by ``distance_m``, sliced to ``limit``::
+    Returns pairs sorted by ``distance_m``::
 
         {"feature": primary, "distance_m": metres, "nearest": secondary}
 
-    O(n×m) haversine. Fine at search ``limit`` (default 100).
+    ``limit`` keeps the closest pairs (SDK default 20). Pass ``None`` for every
+    primary that has a match. O(n×m) haversine. Fine at search ``limit``
+    (default 100). Joins whose ``len(primary) * len(secondary)`` exceeds
+    ``max_comparisons`` (default 500_000) raise ``ValueError``. Pass
+    ``max_comparisons=None`` for no cap.
     """
+    if limit is not None and limit < 1:
+        raise ValueError("limit must be a positive int")
+    if max_comparisons is not None and max_comparisons < 1:
+        raise ValueError("max_comparisons must be a positive int")
     primaries = _features(primary)
     secondaries = _features(secondary)
     if not primaries or not secondaries:
         return []
+
+    n, m = len(primaries), len(secondaries)
+    if max_comparisons is not None and n * m > max_comparisons:
+        raise ValueError(
+            f"nearest_within join is {n}×{m} comparisons "
+            f"(cap {max_comparisons}). Shrink the collections "
+            "(places_search/nearby limit, not query_all)."
+        )
 
     sec_pts = [(s, _lon_lat(s)) for s in secondaries]
     pairs: list[dict[str, Any]] = []
