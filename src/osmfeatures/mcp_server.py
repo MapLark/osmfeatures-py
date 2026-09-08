@@ -51,13 +51,14 @@ or location+radius as "here". There is no geocode tool yet — do not invent a
 lon/lat for a named city. Ask for a bbox, a lat/lng, or use a point the user
 supplied.
 
-Tool results are summaries (ids, names, lon/lat scalars, distance_m,
-openingHours.status) plus a collection_id. count is the full hit total; items
+Tool results are summaries (ids, names, OSM tags, lon/lat scalars, distance_m,
+openNow) plus a collection_id. count is the full hit total; items
 lists at most {SUMMARY_ITEM_CAP} (items_truncated is true when more were stored).
-Do not treat len(items) as the total. They never include GeoJSON coordinate
-arrays. Call preview_map(collection_id) to draw on an OpenFreeMap basemap (the
-browser fetches GeoJSON; you only get a URL). Call export_geojson only when the
-user asked for a raw GeoJSON file: it writes a file and returns a filesystem
+Do not treat len(items) as the total. When presenting a table, show only tag
+keys that answer the question (e.g. cuisine), not every key. They never include
+GeoJSON coordinate arrays. Call preview_map(collection_id) to draw on a
+basemap (the browser fetches GeoJSON; you only get a URL). Call export_geojson only
+when the user asked for a raw GeoJSON file: it writes a file and returns a filesystem
 path. Do not read that file or paste coordinate arrays.
 
 Local tools (no HTTP): nearest_within(primary_id, secondary_id, max_distance_m),
@@ -69,6 +70,8 @@ Do not invent places_near_to or places_open_after.
 Prompt shapes:
 - cafes near me → places_nearby or places_search with location+radius / bbox
 - how many vegan restaurants → places_search, report count (items may be a prefix)
+- list restaurants by cuisine → places_search, group the items prefix by tags.cuisine
+  (not the full count if items_truncated)
 - restaurants within 150 m of a station → two places_search + nearest_within
 - bars open past midnight / cafes open at 8pm → places_search with as_of
   (no open_now so closed hits stay), then filter_open; if short of N and the
@@ -262,7 +265,7 @@ def build_server(session: GeoAgentSession, preview: PreviewServer | None = None)
 
     @mcp.tool()
     def filter_open(collection_id: str) -> dict[str, Any]:
-        """Keep stored places with openingHours.status == open. Search first with as_of."""
+        """Keep stored places with openNow true. Search first with as_of."""
         return session.filter_open(collection_id)
 
     @mcp.tool()

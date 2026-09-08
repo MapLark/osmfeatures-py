@@ -34,7 +34,7 @@ Scenario 6 — client-side openAfter
   "bars open at 20:00"
   1. Pin `asOf` to that local clock (client picks the IANA zone)
   2. client.places_search      — no openNow; hours annotated as of `asOf`
-  3. Keep features with openingHours.status == open
+  3. Keep features with openNow true
   4. If short of N open hits, raise limit and search again
 
 Uses the osmfeatures SDK (no raw HTTP). Requires MAPLARK_API_KEY and Stockholm
@@ -91,8 +91,8 @@ def _at_clock(hour: int, minute: int = 0) -> str:
     return now.replace(hour=hour, minute=minute, second=0, microsecond=0).isoformat()
 
 
-def _opening_status(feat: dict) -> str:
-    return ((feat.get("properties") or {}).get("openingHours") or {}).get("status") or "unknown"
+def _is_open(feat: dict) -> bool:
+    return (feat.get("properties") or {}).get("openNow") is True
 
 
 def _search_open_at_clock(
@@ -118,7 +118,7 @@ def _search_open_at_clock(
             limit=limit,
         )
         feats = fc.get("features") or []
-        opened = [f for f in feats if _opening_status(f) == "open"]
+        opened = [f for f in feats if _is_open(f)]
         if len(opened) >= want or len(feats) < limit or limit >= max_limit:
             return opened[:want]
         limit = min(max(limit * 2, want), max_limit)
@@ -491,6 +491,6 @@ def test_client_open_after_clock_stockholm(client: OSMFeaturesClient):
         f"Expected at least {want} bars/pubs open at 20:00 local near Södermalm, "
         f"got {len(opened)}. location={location} radius={_WALK_RADIUS_M}"
     )
-    assert all(_opening_status(f) == "open" for f in opened)
+    assert all(_is_open(f) for f in opened)
     assert all(_point_from_feature(f) is not None for f in opened)
     print(f"[open after] {len(opened)} bars/pubs open at 20:00 local")

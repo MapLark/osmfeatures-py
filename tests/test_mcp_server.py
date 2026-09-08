@@ -44,16 +44,28 @@ SQUARE = {
 }
 
 
-def _feat(fid: str, lon: float, lat: float, *, name: str | None = None, status: str = "unknown") -> dict:
-    tags = {"name": name} if name else {}
+def _feat(
+    fid: str,
+    lon: float,
+    lat: float,
+    *,
+    name: str | None = None,
+    status: str = "unknown",
+    **extra_tags: str,
+) -> dict:
+    tags = dict(extra_tags)
+    if name:
+        tags["name"] = name
+    props: dict = {"tags": tags}
+    if status == "open":
+        props["openNow"] = True
+    elif status == "closed":
+        props["openNow"] = False
     return {
         "type": "Feature",
         "id": fid,
         "geometry": {"type": "Point", "coordinates": [lon, lat]},
-        "properties": {
-            "tags": tags,
-            "openingHours": {"status": status, "openNow": status == "open"},
-        },
+        "properties": props,
     }
 
 
@@ -147,6 +159,8 @@ async def test_build_server_wires_instructions_and_tools():
     assert f"max_features is {QUERY_ALL_MAX_FEATURES}" in mcp.instructions
     assert f"at most {SUMMARY_ITEM_CAP}" in mcp.instructions
     assert "items_truncated" in mcp.instructions
+    assert "OSM tags" in mcp.instructions
+    assert "tags.cuisine" in mcp.instructions
     assert f"over {MAX_COMPARISONS} comparisons" in mcp.instructions
     tools = await mcp.list_tools()
     names = {tool.name for tool in tools}
@@ -225,7 +239,9 @@ def test_places_search_point_partial_raises(lat, lng, radius):
 @pytest.mark.asyncio
 async def test_call_tool_places_search_bbox_and_location(stack):
     client, mcp = stack
-    client.search = _fc(_feat("node/1", 18.07, 59.32, name="Drop Coffee"))
+    client.search = _fc(
+        _feat("node/1", 18.07, 59.32, name="Drop Coffee", amenity="cafe", cuisine="coffee_shop")
+    )
     by_bbox = await _call(
         mcp,
         "places_search",
@@ -235,6 +251,11 @@ async def test_call_tool_places_search_bbox_and_location(stack):
     )
     assert by_bbox["collection_id"] == "fc_1"
     assert by_bbox["items"][0]["name"] == "Drop Coffee"
+    assert by_bbox["items"][0]["tags"] == {
+        "name": "Drop Coffee",
+        "amenity": "cafe",
+        "cuisine": "coffee_shop",
+    }
     assert client.calls[-1][1]["location"] is None
     assert client.calls[-1][1]["as_of"] == "2026-08-10T18:00:00"
     assert client.calls[-1][1]["open_now"] is False

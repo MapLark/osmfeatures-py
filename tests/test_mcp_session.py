@@ -11,21 +11,34 @@ from osmfeatures._mcp_session import (
     QUERY_ALL_MAX_FEATURES,
     SUMMARY_ITEM_CAP,
     assert_no_coordinate_arrays,
+    with_search_origin,
 )
 from osmfeatures.geometry import point_in_geometry
 from osmfeatures.models import OSMFeature, OSMFeatureCollection, ResponseMeta
 
 
-def _feat(fid: str, lon: float, lat: float, *, name: str | None = None, status: str = "unknown") -> dict:
-    tags = {"name": name} if name else {}
+def _feat(
+    fid: str,
+    lon: float,
+    lat: float,
+    *,
+    name: str | None = None,
+    status: str = "unknown",
+    **extra_tags: str,
+) -> dict:
+    tags = dict(extra_tags)
+    if name:
+        tags["name"] = name
+    props: dict = {"tags": tags}
+    if status == "open":
+        props["openNow"] = True
+    elif status == "closed":
+        props["openNow"] = False
     return {
         "type": "Feature",
         "id": fid,
         "geometry": {"type": "Point", "coordinates": [lon, lat]},
-        "properties": {
-            "tags": tags,
-            "openingHours": {"status": status, "openNow": status == "open"},
-        },
+        "properties": props,
     }
 
 
@@ -65,7 +78,7 @@ def _poly_feat(
     centroid: tuple[float, float] | None = None,
 ) -> dict:
     tags = {"name": name} if name else {}
-    props: dict = {"tags": tags, "openingHours": {"status": "unknown", "openNow": False}}
+    props: dict = {"tags": tags}
     if centroid is not None:
         props["centroid"] = {"type": "Point", "coordinates": [centroid[0], centroid[1]]}
     return {"type": "Feature", "id": fid, "geometry": geom, "properties": props}
@@ -133,6 +146,22 @@ def test_point_in_geometry_hole_and_multipolygon():
     assert point_in_geometry(18.08, 59.32, holed_multi) is False
 
 
+def test_with_search_origin_preserves_feature_collection_metadata():
+    feat = OSMFeature.from_dict(_feat("node/1", 18.075, 59.316, name="Drop Coffee"))
+    fc = OSMFeatureCollection(
+        features=[feat],
+        evaluated_at="2026-08-10T16:00:00Z",
+        timezone="Europe/Stockholm",
+        estimated_units=1,
+    )
+    out = with_search_origin(fc, {"lat": 59.316, "lng": 18.075})
+    assert out["search_origin"] == {"lat": 59.316, "lng": 18.075}
+    assert out["evaluated_at"] == "2026-08-10T16:00:00Z"
+    assert out["timezone"] == "Europe/Stockholm"
+    assert out["estimated_units"] == 1
+    assert "search_origin" not in fc
+
+
 def test_cafes_near_me_place_list():
     client = FakeClient()
     client.nearby = {
@@ -151,11 +180,53 @@ def test_cafes_near_me_place_list():
     assert out["count"] == 2
     assert out["evaluated_at"] == "2026-08-10T16:00:00Z"
     assert out["items"][0]["name"] == "Drop Coffee"
+    assert out["items"][0]["tags"] == {"name": "Drop Coffee"}
     assert out["items"][0]["distance_m"] == 84.0
     assert out["items"][0]["lon"] == 18.075
     assert "items_truncated" not in out
     exported = session.export_geojson("fc_1")
     assert exported["features"][0]["geometry"]["coordinates"] == [18.075, 59.316]
+    assert exported["features"][0]["properties"]["distance_m"] == 84.0
+    assert exported["search_origin"] == {"lat": 59.316, "lng": 18.075}
+    stored = session.get("fc_1")
+    assert stored["search_origin"] == {"lat": 59.316, "lng": 18.075}
+    assert "search_origin" not in client.nearby
+
+
+def test_summaries_include_osm_tags():
+    client = FakeClient()
+    client.search = _fc(
+        _feat(
+            "node/1",
+            18.0702,
+            59.316,
+            name="Pelikan",
+            amenity="restaurant",
+            cuisine="swedish",
+        ),
+        _feat(
+            "node/2",
+            18.071,
+            59.317,
+            name="Hermitage",
+            amenity="restaurant",
+            cuisine="vegetarian",
+            **{"diet:vegan": "yes"},
+        ),
+    )
+    session = GeoAgentSession(client)
+    out = session.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=restaurant"])
+    assert_no_coordinate_arrays(out)
+    assert out["items"][0]["tags"] == {
+        "name": "Pelikan",
+        "amenity": "restaurant",
+        "cuisine": "swedish",
+    }
+    assert out["items"][1]["tags"]["cuisine"] == "vegetarian"
+    assert out["items"][1]["tags"]["diet:vegan"] == "yes"
+    stored = session.get(out["collection_id"])["features"][0]["properties"]["tags"]
+    out["items"][0]["tags"]["cuisine"] = "mutated"
+    assert stored["cuisine"] == "swedish"
 
 
 def test_vegan_count_and_names():
@@ -187,15 +258,28 @@ def test_places_search_rejects_bbox_and_location_or_neither():
 def test_restaurants_near_stations_pairs():
     client = FakeClient()
     session = GeoAgentSession(client)
-    client.search = _fc(_feat("node/r1", 18.0702, 59.316, name="Pelikan"))
+    client.search = _fc(
+        _feat("node/r1", 18.0702, 59.316, name="Pelikan", amenity="restaurant", cuisine="swedish")
+    )
     restaurants = session.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=restaurant"])
-    client.search = _fc(_feat("node/s1", 18.07, 59.316, name="Medborgarplatsen"))
+    client.search = _fc(
+        _feat("node/s1", 18.07, 59.316, name="Medborgarplatsen", railway="station")
+    )
     stations = session.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["railway=station"])
     pairs = session.nearest_within(restaurants["collection_id"], stations["collection_id"], max_distance_m=150)
     assert_no_coordinate_arrays(pairs)
     assert pairs["count"] == 1
     assert pairs["items"][0]["name"] == "Pelikan"
+    assert pairs["items"][0]["tags"] == {
+        "name": "Pelikan",
+        "amenity": "restaurant",
+        "cuisine": "swedish",
+    }
     assert pairs["items"][0]["nearest_name"] == "Medborgarplatsen"
+    assert pairs["items"][0]["nearest_tags"] == {
+        "name": "Medborgarplatsen",
+        "railway": "station",
+    }
     assert pairs["items"][0]["distance_m"] < 150
     assert pairs["items"][0]["lon"] == 18.0702
     assert pairs["items"][0]["lat"] == 59.316
@@ -282,6 +366,7 @@ def test_filter_open_keeps_nearby_distance():
     exported = session.export_geojson(opened["collection_id"])
     assert exported["features"][0]["properties"]["distance_m"] == 84.0
     assert exported["features"][1]["properties"]["distance_m"] == 210.0
+    assert exported["search_origin"] == {"lat": 59.316, "lng": 18.075}
 
 
 def test_walk_time_yes_no():
@@ -303,6 +388,9 @@ def test_walk_time_yes_no():
     assert far["inside"] is False
     exported = session.export_geojson(iso["collection_id"])
     assert exported["features"][0]["geometry"]["type"] == "Polygon"
+    assert exported["search_origin"] == {"lat": 59.316, "lng": 18.075}
+    assert "search_origin" not in exported["features"][0]["properties"]
+    assert "search_origin" not in client.isochrone
 
 
 def test_path_and_optimized_route_summary():
@@ -389,6 +477,8 @@ def test_points_in_polygon_filters_search():
     assert_no_coordinate_arrays(inside)
     assert inside["count"] == 1
     assert inside["items"][0]["name"] == "Inside Cafe"
+    exported = session.export_geojson(inside["collection_id"])
+    assert exported["search_origin"] == {"lat": 59.316, "lng": 18.075}
 
 
 def test_points_in_polygon_keeps_nearby_distance():
@@ -412,6 +502,7 @@ def test_points_in_polygon_keeps_nearby_distance():
     assert inside["items"][0]["distance_m"] == 84.0
     exported = session.export_geojson(inside["collection_id"])
     assert exported["features"][0]["properties"]["distance_m"] == 84.0
+    assert exported["search_origin"] == {"lat": 59.316, "lng": 18.075}
 
 
 def test_query_and_details_summaries():
@@ -432,6 +523,7 @@ def test_query_and_details_summaries():
     detail = session.places_details("node", 1)
     assert_no_coordinate_arrays(detail)
     assert detail["item"]["name"] == "Drop Coffee"
+    assert detail["item"]["tags"] == {"name": "Drop Coffee"}
     assert detail["evaluated_at"] == "2026-08-10T16:00:00Z"
     assert detail["timezone"] == "Europe/Stockholm"
     assert detail["estimated_units"] == 1

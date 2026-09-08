@@ -51,14 +51,61 @@ def _context_fields(
     return out
 
 
-def opening_status(feat: dict[str, Any]) -> str:
-    hours = ((feat.get("properties") or {}).get("openingHours") or {})
-    return hours.get("status") or "unknown"
+def normalize_search_origin(point: dict[str, float] | None) -> dict[str, float] | None:
+    """``{lat, lng}`` from a places/routes point (accepts ``lon`` as ``lng``)."""
+    if not isinstance(point, dict):
+        return None
+    lat = point.get("lat")
+    lng = point.get("lng", point.get("lon"))
+    if lat is None or lng is None:
+        return None
+    return {"lat": float(lat), "lng": float(lng)}
+
+
+def with_search_origin(payload: Any, point: dict[str, float] | None) -> Any:
+    """Attach ``search_origin`` for map preview without mutating the client payload."""
+    origin = normalize_search_origin(point)
+    if origin is None:
+        return payload
+    if isinstance(payload, OSMFeatureCollection):
+        # Copy foreign members (evaluated_at, etc.); to_dict() would drop them.
+        out = dict(payload)
+        out["features"] = [dict(f) for f in (payload.get("features") or [])]
+        out["search_origin"] = origin
+        return out
+    if isinstance(payload, dict):
+        out = dict(payload)
+        out["search_origin"] = origin
+        return out
+    return payload
+
+
+def copy_search_origin(src: Any, dest: dict[str, Any]) -> None:
+    """Propagate ``search_origin`` onto a derived collection payload."""
+    if isinstance(src, dict) and isinstance(src.get("search_origin"), dict):
+        origin = normalize_search_origin(src["search_origin"])
+        if origin is not None:
+            dest["search_origin"] = origin
+
+
+def search_origin_of(payload: Any) -> dict[str, float] | None:
+    if isinstance(payload, dict):
+        return normalize_search_origin(payload.get("search_origin"))
+    return None
+
+
+def is_open_now(feat: dict[str, Any]) -> bool:
+    return (feat.get("properties") or {}).get("openNow") is True
+
+
+def feature_tags(feat: dict[str, Any]) -> dict[str, Any]:
+    """Copy OSM ``properties.tags``. Planner summaries include this for ad-hoc questions."""
+    tags = ((feat.get("properties") or {}).get("tags") or {})
+    return dict(tags) if isinstance(tags, dict) else {}
 
 
 def feature_name(feat: dict[str, Any]) -> str | None:
-    tags = ((feat.get("properties") or {}).get("tags") or {})
-    name = tags.get("name")
+    name = feature_tags(feat).get("name")
     return str(name) if name else None
 
 
@@ -71,6 +118,15 @@ def _as_fc_dict(payload: Any) -> dict[str, Any]:
             "features": list(payload.get("features") or []),
         }
     raise TypeError("expected a GeoJSON FeatureCollection")
+
+
+def _fc_with_origin(payload: Any, features: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build a FeatureCollection, preserving ``search_origin`` when stored."""
+    fc: dict[str, Any] = {"type": "FeatureCollection", "features": features}
+    origin = search_origin_of(payload)
+    if origin is not None:
+        fc["search_origin"] = origin
+    return fc
 
 
 def _features_from_payload(payload: Any) -> list[dict[str, Any]]:
@@ -186,15 +242,14 @@ def _stop_item(stop: Any, index: int) -> dict[str, Any]:
 
 
 def _place_item(feat: dict[str, Any], *, distance_m: float | None = None) -> dict[str, Any]:
-    hours = ((feat.get("properties") or {}).get("openingHours") or {})
     item: dict[str, Any] = {
         "id": feat.get("id"),
         "name": feature_name(feat),
-        "openingHours": {
-            "status": hours.get("status") or "unknown",
-            "openNow": hours.get("openNow"),
-        },
+        "tags": feature_tags(feat),
     }
+    open_now = (feat.get("properties") or {}).get("openNow")
+    if isinstance(open_now, bool):
+        item["openNow"] = open_now
     pt = _lon_lat(feat)
     if pt is not None:
         item["lon"], item["lat"] = pt
@@ -328,15 +383,18 @@ class GeoAgentSession:
         as_of: str | None = None,
     ) -> dict[str, Any]:
         require_places_search_spatial(bbox, location)
-        payload = self._client.places_search(
-            bbox=bbox,
-            location=location,
-            radius=radius,
-            tags=tags,
-            or_tags=or_tags,
-            limit=limit,
-            open_now=open_now,
-            as_of=as_of,
+        payload = with_search_origin(
+            self._client.places_search(
+                bbox=bbox,
+                location=location,
+                radius=radius,
+                tags=tags,
+                or_tags=or_tags,
+                limit=limit,
+                open_now=open_now,
+                as_of=as_of,
+            ),
+            location,
         )
         cid = self._put(payload)
         return self._summarize_places(cid, payload)
@@ -352,14 +410,17 @@ class GeoAgentSession:
         open_now: bool = False,
         as_of: str | None = None,
     ) -> dict[str, Any]:
-        payload = self._client.places_nearby(
-            location=location,
-            radius=radius,
-            tags=tags,
-            or_tags=or_tags,
-            limit=limit,
-            open_now=open_now,
-            as_of=as_of,
+        payload = with_search_origin(
+            self._client.places_nearby(
+                location=location,
+                radius=radius,
+                tags=tags,
+                or_tags=or_tags,
+                limit=limit,
+                open_now=open_now,
+                as_of=as_of,
+            ),
+            location,
         )
         cid = self._put(payload)
         return self._summarize_places(cid, payload)
@@ -382,12 +443,15 @@ class GeoAgentSession:
         search_buffer_m: float | None = None,
         travel_mode: str | None = None,
     ) -> dict[str, Any]:
-        payload = self._client.routes_isochrone(
-            origin=origin,
-            max_distance_m=max_distance_m,
-            duration_s=duration_s,
-            search_buffer_m=search_buffer_m,
-            travel_mode=travel_mode,
+        payload = with_search_origin(
+            self._client.routes_isochrone(
+                origin=origin,
+                max_distance_m=max_distance_m,
+                duration_s=duration_s,
+                search_buffer_m=search_buffer_m,
+                travel_mode=travel_mode,
+            ),
+            origin,
         )
         cid = self._put(payload)
         out = {
@@ -535,9 +599,11 @@ class GeoAgentSession:
             item: dict[str, Any] = {
                 "id": feat.get("id"),
                 "name": feature_name(feat),
+                "tags": feature_tags(feat),
                 "distance_m": pair["distance_m"],
                 "nearest_id": near.get("id"),
                 "nearest_name": feature_name(near),
+                "nearest_tags": feature_tags(near),
             }
             pt = _lon_lat(feat)
             if pt is not None:
@@ -556,15 +622,16 @@ class GeoAgentSession:
                 if not isinstance(item, dict):
                     continue
                 feat = item.get("feature")
-                if isinstance(feat, dict) and opening_status(feat) == "open":
+                if isinstance(feat, dict) and is_open_now(feat):
                     opened_items.append(item)
             payload: dict[str, Any] = {"items": opened_items}
         else:
-            opened = [f for f in _features_from_payload(src) if opening_status(f) == "open"]
+            opened = [f for f in _features_from_payload(src) if is_open_now(f)]
             payload = {"type": "FeatureCollection", "features": opened}
         hours = _context_fields(src, keys=_HOURS_KEYS)
         if hours:
             payload["metadata"] = hours
+        copy_search_origin(src, payload)
         cid = self._put(payload)
         return self._summarize_places(cid, payload)
 
@@ -603,6 +670,7 @@ class GeoAgentSession:
         hours = _context_fields(src, keys=_HOURS_KEYS)
         if hours:
             payload["metadata"] = hours
+        copy_search_origin(src, payload)
         cid = self._put(payload)
         return self._summarize_places(cid, payload)
 
@@ -618,7 +686,7 @@ class GeoAgentSession:
                 props["nearest_id"] = near.get("id")
                 feat["properties"] = props
                 features.append(feat)
-            return {"type": "FeatureCollection", "features": features}
+            return _fc_with_origin(payload, features)
         if isinstance(payload, dict) and isinstance(payload.get("items"), list):
             features = []
             for item in payload["items"]:
@@ -630,28 +698,28 @@ class GeoAgentSession:
                     props["distance_m"] = item["distance_m"]
                 feat["properties"] = props
                 features.append(feat)
-            return {"type": "FeatureCollection", "features": features}
+            return _fc_with_origin(payload, features)
         geom = _geometry_from_payload(payload)
         if geom is not None and not _features_from_payload(payload):
             props = {
                 k: v
                 for k, v in (payload.items() if isinstance(payload, dict) else [])
-                if k != "geometry"
+                if k not in ("geometry", "search_origin")
             }
-            return {
-                "type": "FeatureCollection",
-                "features": [{"type": "Feature", "geometry": geom, "properties": props}],
-            }
+            return _fc_with_origin(
+                payload,
+                [{"type": "Feature", "geometry": geom, "properties": props}],
+            )
         if isinstance(payload, dict) and payload.get("type") == "Feature":
-            return {"type": "FeatureCollection", "features": [payload]}
+            return _fc_with_origin(payload, [payload])
         if isinstance(payload, OSMFeatureCollection) or (
             isinstance(payload, dict) and payload.get("type") == "FeatureCollection"
         ):
-            return _as_fc_dict(payload)
+            return _fc_with_origin(payload, _as_fc_dict(payload)["features"])
         feats = _features_from_payload(payload)
         if feats:
-            return {"type": "FeatureCollection", "features": feats}
-        return _as_fc_dict(payload)
+            return _fc_with_origin(payload, feats)
+        return _fc_with_origin(payload, _as_fc_dict(payload)["features"])
 
     def export_geojson_file(
         self,

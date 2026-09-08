@@ -204,7 +204,7 @@ Add real geospatial intelligence to your Artificial Intelligence agents. Use Map
 
 The MCP server is the agent surface. Your LLM is the planner: it chooses OSM tags, a bbox or location+radius, a time, a travel mode, and the next tool. The tools compute metres, ranks, opening-hours status, and walk/bike paths. You do not compute haversine, parse `opening_hours` strings, or invent coordinates.
 
-Results come back as summaries (ids, names, lon/lat scalars, `distance_m`, `openingHours.status`) plus a `collection_id`. They never include GeoJSON coordinate arrays. Call `preview_map(collection_id)` to draw: a local page loads [OpenFreeMap](https://openfreemap.org/) (Liberty) in MapLibre and fetches GeoJSON from localhost, so coordinates never enter the model. Call `export_geojson` only when the user asked for a raw file: it writes GeoJSON to disk and returns a path, not coordinates.
+Results come back as summaries (ids, names, OSM tags, lon/lat scalars, `distance_m`, `openNow`) plus a `collection_id`. They never include GeoJSON coordinate arrays. Call `preview_map(collection_id)` to draw: a local page loads [OpenFreeMap](https://openfreemap.org/) (Liberty) in MapLibre and fetches GeoJSON from localhost, so coordinates never enter the model. Call `export_geojson` only when the user asked for a raw file: it writes GeoJSON to disk and returns a path, not coordinates.
 
 There is no geocode tool yet: pass a bbox or lat/lng as "here". For a large bbox, call `query_all` with `bbox_tiles` (power of 2; `1` disables tiling), not page `query` by hand. MCP `query_all` defaults to `max_features=10000` (raise it if `has_more`); the SDK default remains 55_000. Do not invent `places_near_to` or `places_open_after`. The server ships these rules as `instructions`.
 
@@ -316,10 +316,7 @@ Response: `{status, feature, estimated_units, evaluated_at, timezone}`. Hours ar
 
 ### Opening hours
 
-Every place feature includes `properties.openingHours`:
-
-- `status`: `open`, `closed`, or `unknown`
-- `openNow`: `true` / `false`, or `null` when unknown
+Every place feature includes `properties.openNow` (`true` / `false`) when hours are evaluable. The field is omitted when hours are missing or unparseable.
 
 Hours use each place's IANA timezone from its coordinates. There is no request `timezone` field.
 

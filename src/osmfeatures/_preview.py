@@ -44,7 +44,13 @@ def geojson_for_map(fc: dict[str, Any]) -> dict[str, Any]:
             props["name"] = name
         out["properties"] = props
         features.append(out)
-    return {"type": "FeatureCollection", "features": features}
+    mapped: dict[str, Any] = {"type": "FeatureCollection", "features": features}
+    origin = fc.get("search_origin")
+    if isinstance(origin, dict) and origin.get("lat") is not None:
+        lng = origin.get("lng", origin.get("lon"))
+        if lng is not None:
+            mapped["search_origin"] = {"lat": float(origin["lat"]), "lng": float(lng)}
+    return mapped
 
 
 def validate_collection_id(collection_id: str) -> str:
@@ -72,6 +78,23 @@ def preview_html(collection_id: str) -> str:
       font: 13px/1.4 system-ui, sans-serif; background: #fff; padding: 6px 10px;
       border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,.15);
     }}
+    .ml-popup {{
+      font: 12px/1.35 system-ui, sans-serif;
+      max-width: 320px; max-height: 360px; overflow: auto;
+    }}
+    .ml-popup-tags {{ border-collapse: collapse; width: 100%; }}
+    .ml-popup-tags th, .ml-popup-tags td {{
+      text-align: left; vertical-align: top; padding: 2px 0;
+    }}
+    .ml-popup-tags th {{
+      color: #555; font-weight: 600; padding-right: 12px; white-space: nowrap;
+    }}
+    .ml-popup-tags td {{ word-break: break-word; }}
+    .ml-origin-marker {{
+      width: 16px; height: 16px; border-radius: 50%;
+      background: #c2410c; border: 2px solid #fff;
+      box-shadow: 0 0 0 2px #c2410c;
+    }}
   </style>
 </head>
 <body>
@@ -80,6 +103,7 @@ def preview_html(collection_id: str) -> str:
   <script src="{_MAPLIBRE_JS}"></script>
   <script>
   const COLLECTION_ID = {cid_js};
+  const SKIP_PROP_KEYS = new Set(["tags", "centroid"]);
   const map = new maplibregl.Map({{
     container: "map",
     style: {_MAP_STYLE!r},
@@ -102,6 +126,12 @@ def preview_html(collection_id: str) -> str:
         minX = Math.min(minX, c[0]); minY = Math.min(minY, c[1]);
         maxX = Math.max(maxX, c[0]); maxY = Math.max(maxY, c[1]);
       }});
+    }}
+    const origin = fc.search_origin;
+    if (origin && origin.lng != null && origin.lat != null) {{
+      n += 1;
+      minX = Math.min(minX, origin.lng); minY = Math.min(minY, origin.lat);
+      maxX = Math.max(maxX, origin.lng); maxY = Math.max(maxY, origin.lat);
     }}
     return n ? [[minX, minY], [maxX, maxY]] : null;
   }}
@@ -140,23 +170,113 @@ def preview_html(collection_id: str) -> str:
         "circle-stroke-color": "#fff"
       }}
     }});
+    function escapeHtml(s) {{
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }}
+    if (fc.search_origin && fc.search_origin.lng != null && fc.search_origin.lat != null) {{
+      const el = document.createElement("div");
+      el.className = "ml-origin-marker";
+      el.title = "Search origin";
+      const originRows =
+        "<tr><th>" + escapeHtml("label") + "</th><td>" + escapeHtml("Search origin") + "</td></tr>" +
+        "<tr><th>" + escapeHtml("lon") + "</th><td>" + escapeHtml(fc.search_origin.lng) + "</td></tr>" +
+        "<tr><th>" + escapeHtml("lat") + "</th><td>" + escapeHtml(fc.search_origin.lat) + "</td></tr>";
+      new maplibregl.Marker({{ element: el }})
+        .setLngLat([fc.search_origin.lng, fc.search_origin.lat])
+        .setPopup(new maplibregl.Popup({{ maxWidth: "240px" }}).setHTML(
+          '<div class="ml-popup"><table class="ml-popup-tags">' + originRows + "</table></div>"
+        ))
+        .addTo(map);
+      document.getElementById("bar").textContent = "MapLark " + COLLECTION_ID + " · origin marked";
+    }}
     const b = boundsOf(fc);
     if (b) map.fitBounds(b, {{ padding: 48, maxZoom: 16 }});
-    function popupLabel(hit) {{
-      const props = (hit && hit.properties) || {{}};
-      let tags = props.tags;
+    function parseTags(props) {{
+      let tags = props && props.tags;
       if (typeof tags === "string") {{
         try {{ tags = JSON.parse(tags); }} catch (err) {{ tags = null; }}
       }}
-      const fromTags = tags && typeof tags === "object" ? tags.name : undefined;
-      return fromTags || props.name || props.id || hit.id || COLLECTION_ID;
+      if (!tags || typeof tags !== "object" || Array.isArray(tags)) return null;
+      return tags;
+    }}
+    function formatPropValue(v) {{
+      if (v === null || v === undefined) return "";
+      if (typeof v === "object") return JSON.stringify(v);
+      return String(v);
+    }}
+    function propPriority(k) {{
+      if (k === "name") return 0;
+      if (k === "openNow") return 1;
+      if (k === "distance_m") return 2;
+      if (k === "lon" || k === "lng") return 3;
+      if (k === "lat") return 4;
+      return 5;
+    }}
+    function pointLonLat(hit) {{
+      const g = hit && hit.geometry;
+      if (!g || g.type !== "Point" || !Array.isArray(g.coordinates)) return null;
+      const lon = g.coordinates[0], lat = g.coordinates[1];
+      if (typeof lon !== "number" || typeof lat !== "number") return null;
+      return {{ lon, lat }};
+    }}
+    function popupHtml(hit) {{
+      const props = (hit && hit.properties) || {{}};
+      const tags = parseTags(props);
+      const rows = [];
+      const seen = new Set();
+      const flatKeys = Object.keys(props).filter((k) =>
+        !SKIP_PROP_KEYS.has(k) && props[k] !== undefined && props[k] !== null
+      );
+      flatKeys.sort((a, b) => {{
+        const d = propPriority(a) - propPriority(b);
+        return d !== 0 ? d : a.localeCompare(b);
+      }});
+      for (const k of flatKeys) {{
+        rows.push([k, formatPropValue(props[k])]);
+        seen.add(k);
+      }}
+      if (!seen.has("lon") && !seen.has("lng") && !seen.has("lat")) {{
+        const pt = pointLonLat(hit);
+        if (pt) {{
+          rows.push(["lon", formatPropValue(pt.lon)]);
+          rows.push(["lat", formatPropValue(pt.lat)]);
+          seen.add("lon");
+          seen.add("lat");
+        }}
+      }}
+      if (tags) {{
+        const tagKeys = Object.keys(tags).filter((k) => !seen.has(k));
+        tagKeys.sort((a, b) => {{
+          if (a === "name") return -1;
+          if (b === "name") return 1;
+          return a.localeCompare(b);
+        }});
+        for (const k of tagKeys) {{
+          rows.push([k, formatPropValue(tags[k])]);
+        }}
+      }}
+      if (rows.length) {{
+        const htmlRows = rows.map((pair) =>
+          "<tr><th>" + escapeHtml(pair[0]) + "</th><td>" + escapeHtml(pair[1]) + "</td></tr>"
+        );
+        return '<div class="ml-popup"><table class="ml-popup-tags">' + htmlRows.join("") + "</table></div>";
+      }}
+      const fallback = props.id || hit.id || COLLECTION_ID;
+      return "<div class=\\"ml-popup\\">" + escapeHtml(fallback) + "</div>";
     }}
     map.on("click", (e) => {{
       const hit = map.queryRenderedFeatures(e.point, {{
         layers: ["overlay-fill", "overlay-line", "overlay-point"]
       }})[0];
       if (!hit) return;
-      new maplibregl.Popup().setLngLat(e.lngLat).setText(String(popupLabel(hit))).addTo(map);
+      new maplibregl.Popup({{ maxWidth: "360px" }})
+        .setLngLat(e.lngLat)
+        .setHTML(popupHtml(hit))
+        .addTo(map);
     }});
   }});
   </script>
