@@ -387,6 +387,7 @@ def test_walk_time_yes_no():
     assert near["inside"] is True
     assert far["inside"] is False
     exported = session.export_geojson(iso["collection_id"])
+    assert len(exported["features"]) == 1
     assert exported["features"][0]["geometry"]["type"] == "Polygon"
     assert exported["search_origin"] == {"lat": 59.316, "lng": 18.075}
     assert "search_origin" not in exported["features"][0]["properties"]
@@ -461,6 +462,63 @@ def test_optimized_route_summary_keeps_id_and_lon_lat():
     assert opt["ordered_stops"][0]["id"] == "start"
     assert opt["ordered_stops"][1]["name"] == "Bar A"
     assert opt["ordered_stops"][1]["lon"] == 18.08
+
+
+def test_export_route_pins_matching_places():
+    client = FakeClient()
+    client.search = _fc(
+        _feat("node/1", 18.07, 59.316, name="Akkurat", amenity="pub"),
+        _feat("node/2", 18.08, 59.318, name="Oliver Twist", amenity="pub"),
+        _feat("node/3", 18.09, 59.32, name="Not on crawl", amenity="pub"),
+    )
+    client.optimized = {
+        "status": "ok",
+        "distance_m": 1800.0,
+        "duration_s": 1286.0,
+        "ordered_stops": [
+            {"lon": 18.07, "lat": 59.316},
+            {"lon": 18.08, "lat": 59.318},
+            {"lon": 18.07, "lat": 59.316},
+        ],
+        "geometry": {"type": "LineString", "coordinates": [[18.07, 59.316], [18.08, 59.318]]},
+    }
+    session = GeoAgentSession(client)
+    session.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=pub"])
+    opt = session.routes_optimized_path(
+        start={"lon": 18.07, "lat": 59.316},
+        stops=[{"lon": 18.08, "lat": 59.318}],
+        loop=True,
+    )
+    exported = session.export_geojson(opt["collection_id"])
+    geoms = [f["geometry"]["type"] for f in exported["features"]]
+    assert geoms.count("LineString") == 1
+    points = [f for f in exported["features"] if f["geometry"]["type"] == "Point"]
+    assert [f["id"] for f in points] == ["node/1", "node/2"]
+    assert [f["properties"]["tags"]["name"] for f in points] == ["Akkurat", "Oliver Twist"]
+    assert "ordered_stops" not in exported["features"][0]["properties"]
+    assert "Not on crawl" not in [f["properties"]["tags"]["name"] for f in points]
+
+
+def test_export_route_stop_points_without_places():
+    client = FakeClient()
+    client.path = {
+        "status": "ok",
+        "distance_m": 640.0,
+        "duration_s": 457.0,
+        "ordered_stops": [
+            {"id": "start", "lon": 18.07, "lat": 59.316},
+            {"id": "node/1", "name": "Bar A", "lon": 18.08, "lat": 59.318},
+        ],
+        "geometry": {"type": "LineString", "coordinates": [[18.07, 59.316], [18.08, 59.318]]},
+    }
+    session = GeoAgentSession(client)
+    path = session.routes_path(stops=[{"lon": 18.07, "lat": 59.316}, {"lon": 18.08, "lat": 59.318}])
+    exported = session.export_geojson(path["collection_id"])
+    points = [f for f in exported["features"] if f["geometry"]["type"] == "Point"]
+    assert len(points) == 2
+    assert points[1]["id"] == "node/1"
+    assert points[1]["properties"]["name"] == "Bar A"
+    assert points[1]["properties"]["tags"]["name"] == "Bar A"
 
 
 def test_points_in_polygon_filters_search():

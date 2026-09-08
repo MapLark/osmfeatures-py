@@ -157,3 +157,40 @@ def test_preview_unknown_collection(preview):
     _session, server = preview
     with pytest.raises(KeyError):
         server.open("fc_9", open_browser=False)
+
+
+def test_http_route_geojson_pins_places_like_cafe_search():
+    client = type("C", (), {})()
+    session = GeoAgentSession(client)
+    session._put(
+        {
+            "type": "FeatureCollection",
+            "features": [
+                _feat("node/1", 18.07, 59.316, name="Akkurat", amenity="pub"),
+                _feat("node/2", 18.08, 59.318, name="Oliver Twist", amenity="pub"),
+            ],
+        }
+    )
+    session._put(
+        {
+            "status": "ok",
+            "distance_m": 640.0,
+            "ordered_stops": [
+                {"lon": 18.07, "lat": 59.316},
+                {"lon": 18.08, "lat": 59.318},
+            ],
+            "geometry": {"type": "LineString", "coordinates": [[18.07, 59.316], [18.08, 59.318]]},
+        }
+    )
+    server = PreviewServer(session)
+    try:
+        with urlopen(f"{server.base_url}/collections/fc_2.geojson", timeout=2) as resp:
+            body = json.loads(resp.read())
+        points = [f for f in body["features"] if f["geometry"]["type"] == "Point"]
+        assert len(points) == 2
+        assert points[0]["properties"]["name"] == "Akkurat"
+        assert points[0]["properties"]["tags"]["amenity"] == "pub"
+        assert points[1]["properties"]["name"] == "Oliver Twist"
+        assert any(f["geometry"]["type"] == "LineString" for f in body["features"])
+    finally:
+        server.close()

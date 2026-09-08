@@ -241,6 +241,80 @@ def _stop_item(stop: Any, index: int) -> dict[str, Any]:
     return item
 
 
+def _stop_lon_lat(stop: Any) -> tuple[float, float] | None:
+    if not isinstance(stop, dict):
+        return None
+    lon = stop.get("lon", stop.get("lng"))
+    lat = stop.get("lat")
+    if lon is None or lat is None:
+        return None
+    try:
+        return float(lon), float(lat)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coord_key(lon: float, lat: float) -> tuple[int, int]:
+    """~0.1 m grid so route stops match the places they were taken from."""
+    return (round(lon * 1_000_000), round(lat * 1_000_000))
+
+
+def _copy_feature(feat: dict[str, Any]) -> dict[str, Any]:
+    out = dict(feat)
+    props = feat.get("properties")
+    if isinstance(props, dict):
+        out["properties"] = dict(props)
+        tags = props.get("tags")
+        if isinstance(tags, dict):
+            out["properties"]["tags"] = dict(tags)
+    return out
+
+
+def _bare_stop_feature(stop: dict[str, Any], lon: float, lat: float) -> dict[str, Any]:
+    """Point pin when no stored place matches this stop."""
+    props: dict[str, Any] = {}
+    name = stop.get("name")
+    if name is not None:
+        props["name"] = str(name)
+        props["tags"] = {"name": str(name)}
+    feat: dict[str, Any] = {
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [lon, lat]},
+        "properties": props,
+    }
+    if stop.get("id") is not None:
+        feat["id"] = stop["id"]
+    return feat
+
+
+def _ordered_stop_point_features(
+    payload: dict[str, Any],
+    place_by_coord: dict[tuple[int, int], dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Map pins for ``ordered_stops``: stored places when coords match, else lon/lat."""
+    ordered = payload.get("ordered_stops")
+    if not isinstance(ordered, list):
+        return []
+    seen: set[tuple[int, int]] = set()
+    out: list[dict[str, Any]] = []
+    for stop in ordered:
+        pt = _stop_lon_lat(stop)
+        if pt is None:
+            continue
+        key = _coord_key(*pt)
+        if key in seen:
+            continue
+        seen.add(key)
+        place = place_by_coord.get(key)
+        if place is not None:
+            out.append(_copy_feature(place))
+        elif isinstance(stop, dict):
+            out.append(_bare_stop_feature(stop, pt[0], pt[1]))
+        else:
+            out.append(_bare_stop_feature({}, pt[0], pt[1]))
+    return out
+
+
 def _place_item(feat: dict[str, Any], *, distance_m: float | None = None) -> dict[str, Any]:
     item: dict[str, Any] = {
         "id": feat.get("id"),
@@ -674,6 +748,22 @@ class GeoAgentSession:
         cid = self._put(payload)
         return self._summarize_places(cid, payload)
 
+    def _place_features_by_coord(self) -> dict[tuple[int, int], dict[str, Any]]:
+        """Index stored Point places so a route preview can pin the same features."""
+        index: dict[tuple[int, int], dict[str, Any]] = {}
+        for stored in self._store.values():
+            for feat in _features_from_payload(stored):
+                if not isinstance(feat, dict):
+                    continue
+                geom = feat.get("geometry") or {}
+                if not isinstance(geom, dict) or geom.get("type") != "Point":
+                    continue
+                pt = _lon_lat(feat)
+                if pt is None:
+                    continue
+                index[_coord_key(*pt)] = feat
+        return index
+
     def export_geojson(self, collection_id: str) -> dict[str, Any]:
         payload = self.get(collection_id)
         if isinstance(payload, dict) and payload.get("type") == "PairList":
@@ -704,12 +794,14 @@ class GeoAgentSession:
             props = {
                 k: v
                 for k, v in (payload.items() if isinstance(payload, dict) else [])
-                if k not in ("geometry", "search_origin")
+                if k not in ("geometry", "search_origin", "ordered_stops")
             }
-            return _fc_with_origin(
-                payload,
-                [{"type": "Feature", "geometry": geom, "properties": props}],
-            )
+            features = [{"type": "Feature", "geometry": geom, "properties": props}]
+            if isinstance(payload, dict):
+                features.extend(
+                    _ordered_stop_point_features(payload, self._place_features_by_coord())
+                )
+            return _fc_with_origin(payload, features)
         if isinstance(payload, dict) and payload.get("type") == "Feature":
             return _fc_with_origin(payload, [payload])
         if isinstance(payload, OSMFeatureCollection) or (
