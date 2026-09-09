@@ -1,6 +1,6 @@
 # MapLark OSM Features API
 
-Official Python client for the [MapLark OSM Features API](https://maplark.com) (GeoJSON, FlatGeobuf, GeoParquet, CSV).
+Official Python client for the [MapLark OSM Features API](https://maplark.com) with GeoJSON, FlatGeobuf, GeoParquet, CSV formats. Hosted OSM APIs as a Service for using OSM in applications at scale.
 
 ## Contents
 
@@ -204,9 +204,7 @@ Add real geospatial intelligence to your Artificial Intelligence agents. Use Map
 
 The [Maplark MCP Server](https://maplark.com/products/mcp-server) is the agent surface. Your LLM is the planner: it chooses OSM tags, a bbox or location+radius, a time, a travel mode, and the next tool. The tools compute metres, ranks, opening-hours status, and walk/bike paths. You do not compute haversine, parse `opening_hours` strings, or invent coordinates.
 
-Results come back as summaries (ids, names, OSM tags, lon/lat scalars, `distance_m`, `openNow`) plus a `collection_id`. They never include GeoJSON coordinate arrays. Call `preview_map(collection_id)` to draw: a local page loads [OpenFreeMap](https://openfreemap.org/) (Liberty) in MapLibre and fetches GeoJSON from localhost, so coordinates never enter the model. Call `export_geojson` only when the user asked for a raw file: it writes GeoJSON to disk and returns a path, not coordinates.
-
-Named places go through `geocode` (Nominatim until MapLark `/v1/geocode` is public). For a large bbox, call `query_all` with `bbox_tiles` (power of 2; `1` disables tiling), not page `query` by hand. MCP `query_all` defaults to `max_features=10000` (raise it if `has_more`); the SDK default remains 55_000. Do not invent `places_near_to` or `places_open_after`. The server ships these rules as `instructions` from [`src/osmfeatures/mcp/AGENT_INSTRUCTIONS.md`](src/osmfeatures/mcp/AGENT_INSTRUCTIONS.md).
+Results come back as summaries (ids, names, OSM tags, lon/lat scalars, `distance_m`, `openNow`) plus a `collection_id`. They never include GeoJSON coordinate arrays. Call `preview_map(collection_id)` to draw: a local page loads [OpenFreeMap](https://openfreemap.org/) in MapLibre and fetches GeoJSON from localhost, so coordinates never enter the model. Call `export_geojson` only when the user asked for a raw file: it writes GeoJSON to disk and returns a path, not coordinates.
 
 #### Tools
 
@@ -233,7 +231,7 @@ First install [uv](https://docs.astral.sh/uv/) for one-click server start.
     "maplark": {
       "command": "uvx",
       "args": ["--from", "osmfeatures[mcp]", "osmfeatures", "mcp"],
-      "env": { "MAPLARK_API_KEY": "YOUR_KEY" }
+      "env": { "MAPLARK_API_KEY": "sk-..." }
     }
   }
 }
@@ -245,18 +243,17 @@ Planner rules: you pick tags, bbox or location+radius, budgets, `openNow`/`asOf`
 
 | Prompt | MCP tools |
 |------|-----|
-| "Cafes near me" | `places_nearby` or `places_search` with location+radius / bbox (hours only for staffed amenities) |
-| "Waste baskets / EV chargers / hotels in the area" | `places_search` with no `as_of` / `open_now` |
-| "Restaurants within 150 m of a station" | two `places_search`, then `nearest_within` |
-| "Bars open at 20:00" | `places_search` with `as_of` (no `open_now` so closed hits stay), then `filter_open`; if empty, retry with no hours |
-| "Cafes within a 10-minute bike ride" | `routes_isochrone` + `places_search` in a covering radius + `points_in_polygon` |
-| "A walking bar crawl in Stockholm" / "cafes on a tour of Gamla Stan" | `places_search` (now, or retry `as_of` if all closed; drop hours if still empty), then `filter_open` + `routes_optimized_path` (`loop=true`) |
-| "Walk from my hotel to the cafe, then the office" | `routes_path` with those stops in listed order |
+| "Open cafes near me" | `places_nearby` or `places_search` with bbox and `openNow=true`|
+| "Vegan restaurants open after 6pm on a walk from T Centralen to Sodermalm in Stockholm" | `geocode`, `routes_path` , `places_search`, `filter_open`, `nearest_within`, `preview_map` |
+| "Open restaurants within 150 m of a station" | two `places_search`, then `nearest_within` |
+| "Pubs open at 20:00 in Toronto, Canada" | `places_search` with `as_of` (no `open_now` so closed hits stay), then `filter_open`; if empty, retry with no hours |
+| "Open cafes within a 10-minute bike ride" | `routes_isochrone` + `places_search` in a covering radius + `points_in_polygon` |
+| "A bar crawl in Stockholm" / "cafes on a tour of Gamla Stan" | `places_search`, `filter_open` + `routes_optimized_path` (`loop=true`) |
 | "Suggest a walk to a bar, a restaurant, and a cafe, no particular order" | `routes_optimized_path` with `loop=false` |
 | "Is the office a 20-minute walk from the apartment?" | `routes_isochrone` from A, `point_in_polygon` for B |
 | "Show this on a map" | `preview_map(collection_id)` after a search or route |
 
-The same operations exist on `OSMFeaturesClient` when you are not going through an LLM (see [Places and routes](#places-and-routes)). Full HTTP reference: [https://maplark.com/developer](https://maplark.com/developer).
+The same operations exist on `OSMFeaturesClient` when you are not going through an LLM (see [Places and routes](#places-and-routes)).
 
 
 ## Places and routes
@@ -436,3 +433,5 @@ Run one example app:
 pytest tests/example_apps/test_restaurant_guide.py -v
 ```
 
+
+Full HTTP reference: [https://maplark.com/developer](https://maplark.com/developer).
