@@ -10,13 +10,13 @@ pytest.importorskip("mcp")
 
 from mcp.server.fastmcp.exceptions import ToolError
 
-from osmfeatures._mcp_session import (
+from osmfeatures.mcp._mcp_session import (
     QUERY_ALL_MAX_FEATURES,
     SUMMARY_ITEM_CAP,
     GeoAgentSession,
     assert_no_coordinate_arrays,
 )
-from osmfeatures.mcp_server import INSTRUCTIONS, build_server, places_search_point
+from osmfeatures.mcp.mcp_server import INSTRUCTIONS, build_server, places_search_point
 from osmfeatures.nearest import MAX_COMPARISONS
 
 _EXPECTED_TOOLS = frozenset(
@@ -35,6 +35,7 @@ _EXPECTED_TOOLS = frozenset(
         "points_in_polygon",
         "preview_map",
         "export_geojson",
+        "geocode",
     }
 )
 
@@ -119,10 +120,12 @@ class FakeClient:
 
 
 class _FakePreview:
-    def open(self, collection_id: str, *, open_browser: bool = True) -> dict:
+    def open(self, collection_ids: str | list[str], *, open_browser: bool = True) -> dict:
+        ids = list(collection_ids) if not isinstance(collection_ids, str) else [collection_ids]
+        path = ",".join(ids)
         return {
-            "collection_id": collection_id,
-            "preview_url": f"http://127.0.0.1:9/preview/{collection_id}",
+            "collection_ids": ids,
+            "preview_url": f"http://127.0.0.1:9/preview/{path}",
             "opened": False,
         }
 
@@ -154,6 +157,8 @@ async def test_build_server_wires_instructions_and_tools():
     assert mcp.name == "maplark"
     assert mcp.instructions == INSTRUCTIONS
     assert "preview_map" in mcp.instructions
+    assert "collection_ids" in mcp.instructions
+    assert "one preview per collection" in mcp.instructions
     assert "export_geojson" in mcp.instructions
     assert "writes a file" in mcp.instructions
     assert f"max_features is {QUERY_ALL_MAX_FEATURES}" in mcp.instructions
@@ -161,6 +166,17 @@ async def test_build_server_wires_instructions_and_tools():
     assert "items_truncated" in mcp.instructions
     assert "OSM tags" in mcp.instructions
     assert "tags.cuisine" in mcp.instructions
+    assert "travel_mode is WALK" in mcp.instructions
+    assert 'numeric "lat,lng"' in mcp.instructions
+    assert "start=one of those items" in mcp.instructions
+    assert "Opening hours:" in mcp.instructions
+    assert "Treat hotels as always open" in mcp.instructions
+    assert "tour,\ncrawl, or loop" in mcp.instructions
+    assert "walk, bike, route, path, or loop" not in mcp.instructions
+    assert "if still empty drop hours" in mcp.instructions
+    assert "{lon, lat}" in mcp.instructions
+    assert "{SUMMARY_ITEM_CAP}" not in mcp.instructions
+    assert "call geocode" in mcp.instructions
     assert f"over {MAX_COMPARISONS} comparisons" in mcp.instructions
     tools = await mcp.list_tools()
     names = {tool.name for tool in tools}
@@ -176,6 +192,8 @@ async def test_build_server_wires_instructions_and_tools():
     assert "keep every match" not in (nearest.description or "")
     assert "count is complete" in (nearest.description or "")
     assert "250000 comparisons" in (nearest.description or "")
+    geocode = next(t for t in tools if t.name == "geocode")
+    assert "Nominatim" in (geocode.description or "")
 
 
 def test_run_stdio_closes_client_and_preview(monkeypatch):
@@ -206,7 +224,7 @@ def test_run_stdio_closes_client_and_preview(monkeypatch):
             assert transport == "stdio"
 
     import osmfeatures.client as client_mod
-    import osmfeatures.mcp_server as mcp_server
+    import osmfeatures.mcp.mcp_server as mcp_server
 
     monkeypatch.setattr(client_mod, "OSMFeaturesClient", FakeClient)
     monkeypatch.setattr(mcp_server, "PreviewServer", FakePreview)
@@ -331,6 +349,27 @@ async def test_call_tool_places_nearby_details_and_filter_open(stack):
 
 
 @pytest.mark.asyncio
+async def test_call_tool_geocode(stack, monkeypatch):
+    _client, mcp = stack
+    monkeypatch.setattr(
+        "osmfeatures.mcp._mcp_session.nominatim_geocode",
+        lambda q: {
+            "status": "ok",
+            "place": {
+                "label": "Södermalm, Stockholm",
+                "lon": 18.0697558,
+                "lat": 59.3123782,
+                "bbox": "18.0260682,59.3032122,18.1071724,59.3213931",
+            },
+        },
+    )
+    out = await _call(mcp, "geocode", q="Södermalm, Stockholm")
+    assert out["status"] == "ok"
+    assert out["place"]["bbox"].startswith("18.026")
+    assert out["place"]["lat"] == pytest.approx(59.3123782)
+
+
+@pytest.mark.asyncio
 async def test_call_tool_points_in_polygon_keeps_nearby_distance(stack):
     client, mcp = stack
     client.nearby = {
@@ -423,7 +462,7 @@ async def test_call_tool_nearest_within_flags_truncated_items(stack):
 
 @pytest.mark.asyncio
 async def test_call_tool_nearest_within_rejects_over_comparison_cap(stack, monkeypatch):
-    monkeypatch.setattr("osmfeatures._mcp_session.MAX_COMPARISONS", 20)
+    monkeypatch.setattr("osmfeatures.mcp._mcp_session.MAX_COMPARISONS", 20)
     client, mcp = stack
     client.search = _fc(*[_feat(f"node/r{i}", 18.0702, 59.316, name=f"R{i}") for i in range(5)])
     restaurants = await _call(
@@ -492,7 +531,9 @@ async def test_call_tool_routes_containment_and_preview(stack):
         mcp,
         "routes_path",
         stops=[{"lon": 18.07, "lat": 59.316}, {"lon": 18.08, "lat": 59.318}],
+        travel_mode="walk",
     )
+    assert client.calls[-1][1]["travel_mode"] == "WALK"
     assert path["ordered_stops"] == [
         {"lon": 18.07, "lat": 59.316},
         {"lon": 18.08, "lat": 59.318},
@@ -506,15 +547,16 @@ async def test_call_tool_routes_containment_and_preview(stack):
     )
     assert opt["ordered_stops"][0]["lon"] == 18.075
     assert opt["ordered_stops"][1]["lat"] == 59.32
-    preview = await _call(mcp, "preview_map", collection_id=iso["collection_id"], open_browser=False)
+    preview = await _call(mcp, "preview_map", collection_ids=[iso["collection_id"]], open_browser=False)
     assert preview["preview_url"].endswith("/preview/" + iso["collection_id"])
+    assert preview["collection_ids"] == [iso["collection_id"]]
     assert "coordinates" not in preview
 
 
 @pytest.mark.asyncio
 async def test_call_tool_query_query_all_and_export(stack, tmp_path, monkeypatch):
     client, mcp = stack
-    monkeypatch.setattr("osmfeatures._mcp_session.tempfile.gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr("osmfeatures.mcp._mcp_session.tempfile.gettempdir", lambda: str(tmp_path))
     client.query_result = _fc(_feat("way/1", 18.07, 59.32, name="Tantolunden"))
     client.query_all_result = _fc(
         _feat("way/1", 18.07, 59.32, name="Park A"),

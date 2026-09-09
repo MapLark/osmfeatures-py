@@ -5,17 +5,18 @@ Requires ``pip install 'osmfeatures[mcp]'``. Auth is ``MAPLARK_API_KEY``.
 
 from __future__ import annotations
 
+from importlib.resources import files
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from ..nearest import MAX_COMPARISONS
 from ._mcp_session import (
     QUERY_ALL_MAX_FEATURES,
     SUMMARY_ITEM_CAP,
     GeoAgentSession,
     require_places_search_spatial,
 )
-from .nearest import MAX_COMPARISONS
 from ._preview import PreviewServer
 
 
@@ -39,55 +40,18 @@ def places_search_point(
         )
     return {"lat": float(lat), "lng": float(lng)}
 
-INSTRUCTIONS = f"""You are a geo-agent planner over MapLark tools. You choose *what* to ask
-(OSM tags, a bbox or location+radius, a distance budget, a travel mode, which tool
-next). Code computes every metre.
 
-You must not: compute haversine, decide which place is nearest another set, parse
-opening_hours strings, invent coordinates, distances, or walk times.
+def _load_instructions() -> str:
+    # replace, not str.format: the markdown uses {lon, lat} as prose.
+    raw = files(__package__).joinpath("AGENT_INSTRUCTIONS.md").read_text(encoding="utf-8")
+    return (
+        raw.replace("{SUMMARY_ITEM_CAP}", str(SUMMARY_ITEM_CAP))
+        .replace("{MAX_COMPARISONS}", str(MAX_COMPARISONS))
+        .replace("{QUERY_ALL_MAX_FEATURES}", str(QUERY_ALL_MAX_FEATURES))
+    )
 
-Spatial default: if the user did not name a place, they must give a viewport bbox
-or location+radius as "here". There is no geocode tool yet — do not invent a
-lon/lat for a named city. Ask for a bbox, a lat/lng, or use a point the user
-supplied.
 
-Tool results are summaries (ids, names, OSM tags, lon/lat scalars, distance_m,
-openNow) plus a collection_id. count is the full hit total; items
-lists at most {SUMMARY_ITEM_CAP} (items_truncated is true when more were stored).
-Do not treat len(items) as the total. When presenting a table, show only tag
-keys that answer the question (e.g. cuisine), not every key. They never include
-GeoJSON coordinate arrays. Call preview_map(collection_id) to draw on a
-basemap (the browser fetches GeoJSON; you only get a URL). Call export_geojson only
-when the user asked for a raw GeoJSON file: it writes a file and returns a filesystem
-path. Do not read that file or paste coordinate arrays.
-
-Local tools (no HTTP): nearest_within(primary_id, secondary_id, max_distance_m),
-filter_open(collection_id), point_in_polygon / points_in_polygon.
-nearest_within is O(n×m) and refuses joins over {MAX_COMPARISONS} comparisons;
-shrink with places_search/nearby limit, not query_all.
-Do not invent places_near_to or places_open_after.
-
-Prompt shapes:
-- cafes near me → places_nearby or places_search with location+radius / bbox
-- how many vegan restaurants → places_search, report count (items may be a prefix)
-- list restaurants by cuisine → places_search, group the items prefix by tags.cuisine
-  (not the full count if items_truncated)
-- restaurants within 150 m of a station → two places_search + nearest_within
-- bars open past midnight / cafes open at 8pm → places_search with as_of
-  (no open_now so closed hits stay), then filter_open; if short of N and the
-  page was full, raise limit and search again
-- is A a 20-minute walk from B → routes_isochrone from A, point_in_polygon for B
-- walk from hotel to office → routes_path (listed order, lon/lat from the user
-  or from a prior search summary)
-- walking loop of bars → places_search + routes_optimized_path (loop true)
-- show this on a map → preview_map(collection_id) after a search or route
-
-query is one page of generic OSM (parks, highways), not place/route primitives.
-For a larger bbox, call query_all with bbox_tiles (power of 2; default 2, use 1 to
-disable tiling) and limit_per_page. Default max_features is {QUERY_ALL_MAX_FEATURES}; raise it if
-has_more is true. That is CLI --all-pages --bbox-tiles. Do not page with query +
-cursor yourself.
-"""
+INSTRUCTIONS = _load_instructions()
 
 
 def build_server(session: GeoAgentSession, preview: PreviewServer | None = None) -> FastMCP:
@@ -148,6 +112,11 @@ def build_server(session: GeoAgentSession, preview: PreviewServer | None = None)
         return session.places_details(osm_type, osm_id)
 
     @mcp.tool()
+    def geocode(q: str) -> dict[str, Any]:
+        """Place name to lon/lat and bbox (Nominatim until MapLark geocode ships). Use bbox for places_search."""
+        return session.geocode(q)
+
+    @mcp.tool()
     def routes_isochrone(
         lon: float,
         lat: float,
@@ -156,7 +125,7 @@ def build_server(session: GeoAgentSession, preview: PreviewServer | None = None)
         search_buffer_m: float | None = None,
         travel_mode: str | None = None,
     ) -> dict[str, Any]:
-        """Walk/bike reach polygon. Provide exactly one of max_distance_m or duration_s."""
+        """Walk/bike reach polygon. Provide exactly one of max_distance_m or duration_s. travel_mode is WALK or BICYCLE."""
         return session.routes_isochrone(
             origin={"lon": lon, "lat": lat},
             max_distance_m=max_distance_m,
@@ -171,7 +140,7 @@ def build_server(session: GeoAgentSession, preview: PreviewServer | None = None)
         search_buffer_m: float | None = None,
         travel_mode: str | None = None,
     ) -> dict[str, Any]:
-        """Given-order walk/bike path. Each stop is {lon, lat}. Does not reorder."""
+        """Given-order walk/bike path. Each stop is {lon, lat}. travel_mode is WALK or BICYCLE. Does not reorder."""
         return session.routes_path(
             stops=stops,
             search_buffer_m=search_buffer_m,
@@ -186,7 +155,7 @@ def build_server(session: GeoAgentSession, preview: PreviewServer | None = None)
         search_buffer_m: float | None = None,
         travel_mode: str | None = None,
     ) -> dict[str, Any]:
-        """TSP from start (not in stops). loop=true returns to start."""
+        """TSP from start (not in stops). loop=true returns to start. Start from a searched place. travel_mode is WALK or BICYCLE."""
         return session.routes_optimized_path(
             start=start,
             stops=stops,
@@ -208,7 +177,7 @@ def build_server(session: GeoAgentSession, preview: PreviewServer | None = None)
         limit: int | None = None,
         zoom: float | None = None,
     ) -> dict[str, Any]:
-        """Generic OSM features (parks, highways). Non-points include centroids for local joins."""
+        """Generic OSM features (parks, highways). location is numeric lat,lng, not a place name. Non-points include centroids for local joins."""
         return session.query(
             bbox=bbox,
             location=location,
@@ -279,9 +248,9 @@ def build_server(session: GeoAgentSession, preview: PreviewServer | None = None)
         return session.points_in_polygon(points_id, polygon_id)
 
     @mcp.tool()
-    def preview_map(collection_id: str, open_browser: bool = True) -> dict[str, Any]:
-        """Open MapLibre + OpenFreeMap for a stored collection. Returns a URL, not geometry."""
-        return preview_server.open(collection_id, open_browser=open_browser)
+    def preview_map(collection_ids: list[str], open_browser: bool = True) -> dict[str, Any]:
+        """Open MapLibre + OpenFreeMap for one or more stored collections on the same map. Returns a URL, not geometry."""
+        return preview_server.open(collection_ids, open_browser=open_browser)
 
     @mcp.tool()
     def export_geojson(collection_id: str) -> dict[str, Any]:
@@ -292,8 +261,8 @@ def build_server(session: GeoAgentSession, preview: PreviewServer | None = None)
 
 
 def run_stdio(*, api_key: str, base_url: str | None = None) -> None:
-    from ._http import DEFAULT_BASE_URL
-    from .client import OSMFeaturesClient
+    from .._http import DEFAULT_BASE_URL
+    from ..client import OSMFeaturesClient
 
     with OSMFeaturesClient(api_key=api_key, base_url=base_url or DEFAULT_BASE_URL) as client:
         session = GeoAgentSession(client)

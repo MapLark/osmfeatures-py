@@ -242,7 +242,7 @@ def test_mcp_missing_extra(monkeypatch):
     import builtins
     import sys
 
-    monkeypatch.delitem(sys.modules, "osmfeatures.mcp_server", raising=False)
+    monkeypatch.delitem(sys.modules, "osmfeatures.mcp.mcp_server", raising=False)
     for key in list(sys.modules):
         if key == "mcp" or key.startswith("mcp."):
             monkeypatch.delitem(sys.modules, key, raising=False)
@@ -264,8 +264,22 @@ def test_mcp_import_error_is_not_missing_extra(monkeypatch):
     import sys
     import types
 
-    monkeypatch.setitem(sys.modules, "osmfeatures.mcp_server", types.ModuleType("osmfeatures.mcp_server"))
+    monkeypatch.setitem(sys.modules, "osmfeatures.mcp.mcp_server", types.ModuleType("osmfeatures.mcp.mcp_server"))
     result = CliRunner().invoke(cli, ["mcp", "--api-key", "sk-test"])
     assert result.exit_code != 0
     assert "osmfeatures[mcp]" not in result.output
     assert result.exception is not None
+
+
+def test_mcp_missing_instructions_is_not_missing_extra(monkeypatch):
+    import sys
+
+    class Boom:
+        def __getattr__(self, name):
+            raise FileNotFoundError("AGENT_INSTRUCTIONS.md missing")
+
+    monkeypatch.setitem(sys.modules, "osmfeatures.mcp.mcp_server", Boom())
+    result = CliRunner().invoke(cli, ["mcp", "--api-key", "sk-test"])
+    assert result.exit_code != 0
+    assert "osmfeatures[mcp]" not in result.output
+    assert "AGENT_INSTRUCTIONS.md" in result.output

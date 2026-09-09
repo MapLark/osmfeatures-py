@@ -13,9 +13,11 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
-from .geometry import point_in_geometry
-from .models import OSMFeatureCollection
-from .nearest import MAX_COMPARISONS, nearest_within
+from .._geo_agent import normalize_travel_mode
+from ..geometry import point_in_geometry
+from ..models import OSMFeatureCollection
+from ..nearest import MAX_COMPARISONS, nearest_within
+from ._geocode import nominatim_geocode
 from ._preview import validate_collection_id
 
 # Planner summaries list at most this many items; ``count`` is still the full total.
@@ -25,6 +27,15 @@ QUERY_ALL_MAX_FEATURES = 10000
 _STORE_MAX_COLLECTIONS = 64
 _CONTEXT_KEYS = ("evaluated_at", "timezone", "estimated_units")
 _HOURS_KEYS = ("evaluated_at", "timezone")
+# Router 200-body diagnostics. Planner summaries used to drop these, so a
+# no_path_within_area looked identical to a snap miss.
+_ROUTE_HINT_KEYS = (
+    "reason",
+    "search_buffer_m",
+    "snap_radius_m",
+    "nearest_edge_distance_m",
+    "estimated_units",
+)
 
 
 def _context_fields(
@@ -429,12 +440,39 @@ class GeoAgentSession:
         summary.update(_context_fields(payload))
         return summary
 
+    def _route_hint_fields(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return {key: payload[key] for key in _ROUTE_HINT_KEYS if payload.get(key) is not None}
+
+    def _enrich_stop(
+        self,
+        stop: Any,
+        index: int,
+        place_by_coord: dict[tuple[int, int], dict[str, Any]],
+    ) -> dict[str, Any]:
+        item = _stop_item(stop, index)
+        if item.get("id") is not None and item.get("name") is not None:
+            return item
+        pt = _stop_lon_lat(stop)
+        if pt is None:
+            return item
+        place = place_by_coord.get(_coord_key(*pt))
+        if place is None:
+            return item
+        if item.get("id") is None and place.get("id") is not None:
+            item["id"] = place["id"]
+        if item.get("name") is None:
+            name = feature_name(place)
+            if name is not None:
+                item["name"] = name
+        return item
+
     def _summarize_route(self, collection_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         ordered = payload.get("ordered_stops") or []
         stops: list[dict[str, Any]] = []
         if isinstance(ordered, list):
-            stops = [_stop_item(stop, i) for i, stop in enumerate(ordered)]
-        return {
+            place_by_coord = self._place_features_by_coord()
+            stops = [self._enrich_stop(stop, i, place_by_coord) for i, stop in enumerate(ordered)]
+        out = {
             "collection_id": collection_id,
             "status": payload.get("status"),
             "distance_m": payload.get("distance_m"),
@@ -443,6 +481,8 @@ class GeoAgentSession:
             "ordered_stop_count": len(stops),
             "ordered_stops": stops,
         }
+        out.update(self._route_hint_fields(payload))
+        return out
 
     def places_search(
         self,
@@ -508,6 +548,10 @@ class GeoAgentSession:
         out.update(_context_fields(payload))
         return out
 
+    def geocode(self, q: str) -> dict[str, Any]:
+        """Place name to lon/lat + bbox. Nominatim until MapLark geocode ships."""
+        return nominatim_geocode(q)
+
     def routes_isochrone(
         self,
         *,
@@ -523,7 +567,7 @@ class GeoAgentSession:
                 max_distance_m=max_distance_m,
                 duration_s=duration_s,
                 search_buffer_m=search_buffer_m,
-                travel_mode=travel_mode,
+                travel_mode=normalize_travel_mode(travel_mode),
             ),
             origin,
         )
@@ -537,6 +581,8 @@ class GeoAgentSession:
             if isinstance(payload, dict)
             else None,
         }
+        if isinstance(payload, dict):
+            out.update(self._route_hint_fields(payload))
         return out
 
     def routes_path(
@@ -549,7 +595,7 @@ class GeoAgentSession:
         payload = self._client.routes_path(
             stops=stops,
             search_buffer_m=search_buffer_m,
-            travel_mode=travel_mode,
+            travel_mode=normalize_travel_mode(travel_mode),
         )
         cid = self._put(payload)
         return self._summarize_route(cid, payload if isinstance(payload, dict) else {})
@@ -568,7 +614,7 @@ class GeoAgentSession:
             stops=stops,
             search_buffer_m=search_buffer_m,
             loop=loop,
-            travel_mode=travel_mode,
+            travel_mode=normalize_travel_mode(travel_mode),
         )
         cid = self._put(payload)
         return self._summarize_route(cid, payload if isinstance(payload, dict) else {})

@@ -248,7 +248,7 @@ def mcp_cmd(api_key: str | None, base_url: str | None) -> None:
         )
         sys.exit(1)
     try:
-        from .mcp_server import run_stdio
+        from .mcp.mcp_server import run_stdio
     except ModuleNotFoundError as exc:
         if exc.name != "mcp" and not (exc.name or "").startswith("mcp."):
             raise
@@ -256,6 +256,9 @@ def mcp_cmd(api_key: str | None, base_url: str | None) -> None:
             "Error: MCP extra not installed. pip install 'osmfeatures[mcp]'",
             err=True,
         )
+        sys.exit(1)
+    except FileNotFoundError as exc:
+        click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
     run_stdio(api_key=resolved_key, base_url=base_url)
 

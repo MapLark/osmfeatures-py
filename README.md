@@ -27,7 +27,7 @@ Official Python client for the [MapLark OSM Features API](https://maplark.com) (
 - [CLI](#cli)
 - [Example apps](#example-apps)
 
-Query OpenStreetMap features such as buildings, streets, and Points of Interest easily. Search for OSM features by bounding box, tags, and geometry shape and get GeoJSON back within less than 250ms (dependent on query size). No converting between formats manually. The API keeps OpenStreetMap semantics intact, like tags and ways, and returns GeoJSON Features you can feed straight into Leaflet, MapLibre, OpenLayers, or any geospatial toolchain. It is backed by postgis with tiered API keys and rate limiting to keep noisy neighbours out to give you predictable latency for real traffic. It also has self-host path for those willing to host complex infrastructure themselves.
+Query OpenStreetMap features such as buildings, streets, and Points of Interest easily. Search for OSM features by bounding box, tags, and geometry shape and get GeoJSON back within less than 250ms (dependent on query size). No converting between formats manually. The API keeps OpenStreetMap semantics intact, like tags and ways, and returns GeoJSON Features you can feed straight into Leaflet, MapLibre, OpenLayers, or any geospatial toolchain. It is backed by postgis with tiered API keys and rate limiting to keep noisy neighbours out to give you predictable latency for real traffic.
 
 The postgis translation layer is very simple:
 
@@ -206,11 +206,12 @@ The [Maplark MCP Server](https://maplark.com/products/mcp-server) is the agent s
 
 Results come back as summaries (ids, names, OSM tags, lon/lat scalars, `distance_m`, `openNow`) plus a `collection_id`. They never include GeoJSON coordinate arrays. Call `preview_map(collection_id)` to draw: a local page loads [OpenFreeMap](https://openfreemap.org/) (Liberty) in MapLibre and fetches GeoJSON from localhost, so coordinates never enter the model. Call `export_geojson` only when the user asked for a raw file: it writes GeoJSON to disk and returns a path, not coordinates.
 
-There is no geocode tool yet: pass a bbox or lat/lng as "here". For a large bbox, call `query_all` with `bbox_tiles` (power of 2; `1` disables tiling), not page `query` by hand. MCP `query_all` defaults to `max_features=10000` (raise it if `has_more`); the SDK default remains 55_000. Do not invent `places_near_to` or `places_open_after`. The server ships these rules as `instructions`.
+Named places go through `geocode` (Nominatim until MapLark `/v1/geocode` is public). For a large bbox, call `query_all` with `bbox_tiles` (power of 2; `1` disables tiling), not page `query` by hand. MCP `query_all` defaults to `max_features=10000` (raise it if `has_more`); the SDK default remains 55_000. Do not invent `places_near_to` or `places_open_after`. The server ships these rules as `instructions` from [`src/osmfeatures/mcp/AGENT_INSTRUCTIONS.md`](src/osmfeatures/mcp/AGENT_INSTRUCTIONS.md).
 
 #### Tools
 
 - Places: `places_search`, `places_nearby`, `places_details`
+- Geocode: `geocode` (Nominatim interim)
 - Routes: `routes_isochrone`, `routes_path`, `routes_optimized_path`
 - Generic OSM: `query` (one page), `query_all` (tiled pages)
 - Local (no HTTP): `nearest_within`, `filter_open`, `point_in_polygon`, `points_in_polygon`
@@ -244,11 +245,12 @@ Planner rules: you pick tags, bbox or location+radius, budgets, `openNow`/`asOf`
 
 | Prompt | MCP tools |
 |------|-----|
-| "Cafes near me" | `places_nearby` or `places_search` with location+radius / bbox |
+| "Cafes near me" | `places_nearby` or `places_search` with location+radius / bbox (hours only for staffed amenities) |
+| "Waste baskets / EV chargers / hotels in the area" | `places_search` with no `as_of` / `open_now` |
 | "Restaurants within 150 m of a station" | two `places_search`, then `nearest_within` |
-| "Bars open at 20:00" | `places_search` with `as_of` (no `open_now` so closed hits stay), then `filter_open` |
+| "Bars open at 20:00" | `places_search` with `as_of` (no `open_now` so closed hits stay), then `filter_open`; if empty, retry with no hours |
 | "Cafes within a 10-minute bike ride" | `routes_isochrone` + `places_search` in a covering radius + `points_in_polygon` |
-| "A walking bar crawl in Stockholm" | `places_search` + `routes_optimized_path` (`loop=true`) |
+| "A walking bar crawl in Stockholm" / "cafes on a tour of Gamla Stan" | `places_search` (now, or retry `as_of` if all closed; drop hours if still empty), then `filter_open` + `routes_optimized_path` (`loop=true`) |
 | "Walk from my hotel to the cafe, then the office" | `routes_path` with those stops in listed order |
 | "Suggest a walk to a bar, a restaurant, and a cafe, no particular order" | `routes_optimized_path` with `loop=false` |
 | "Is the office a 20-minute walk from the apartment?" | `routes_isochrone` from A, `point_in_polygon` for B |

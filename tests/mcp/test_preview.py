@@ -8,10 +8,12 @@ from urllib.request import urlopen
 
 import pytest
 
-from osmfeatures._mcp_session import GeoAgentSession, assert_no_coordinate_arrays
-from osmfeatures._preview import (
+from osmfeatures.mcp._mcp_session import GeoAgentSession, assert_no_coordinate_arrays
+from osmfeatures.mcp._preview import (
     PreviewServer,
     geojson_for_map,
+    geojson_for_map_many,
+    parse_collection_ids,
     preview_html,
     validate_collection_id,
 )
@@ -51,6 +53,16 @@ def test_validate_collection_id():
         validate_collection_id("../secret")
     with pytest.raises(ValueError):
         validate_collection_id("fc_1/extra")
+
+
+def test_parse_collection_ids():
+    assert parse_collection_ids("fc_1") == ["fc_1"]
+    assert parse_collection_ids("fc_2,fc_1,fc_2") == ["fc_2", "fc_1"]
+    assert parse_collection_ids(["fc_3", "fc_4"]) == ["fc_3", "fc_4"]
+    with pytest.raises(ValueError):
+        parse_collection_ids("")
+    with pytest.raises(ValueError):
+        parse_collection_ids("fc_1,../secret")
 
 
 def test_preview_html_uses_openfreemap_and_relative_geojson():
@@ -97,10 +109,10 @@ def test_geojson_for_map_promotes_tags_name():
 
 def test_preview_open_returns_url_without_geometry(preview, monkeypatch):
     session, server = preview
-    monkeypatch.setattr("osmfeatures._preview.webbrowser.open", lambda url: True)
+    monkeypatch.setattr("osmfeatures.mcp._preview.webbrowser.open", lambda url: True)
     out = server.open("fc_1", open_browser=True)
     assert_no_coordinate_arrays(out)
-    assert out["collection_id"] == "fc_1"
+    assert out["collection_ids"] == ["fc_1"]
     assert out["preview_url"] == f"{server.base_url}/preview/fc_1"
     assert out["opened"] is True
 
@@ -194,3 +206,48 @@ def test_http_route_geojson_pins_places_like_cafe_search():
         assert any(f["geometry"]["type"] == "LineString" for f in body["features"])
     finally:
         server.close()
+
+
+def test_geojson_for_map_many_concatenates_and_keeps_first_origin():
+    places = {
+        "type": "FeatureCollection",
+        "features": [_feat("node/1", 18.075, 59.316, name="Drop Coffee")],
+        "search_origin": {"lat": 59.316, "lng": 18.075},
+    }
+    route = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": [[18.07, 59.316], [18.08, 59.318]]},
+                "properties": {"name": "walk"},
+            }
+        ],
+    }
+    out = geojson_for_map_many([places, route])
+    assert [f["geometry"]["type"] for f in out["features"]] == ["Point", "LineString"]
+    assert out["features"][0]["properties"]["name"] == "Drop Coffee"
+    assert out["search_origin"] == {"lat": 59.316, "lng": 18.075}
+
+
+def test_http_combined_places_and_route(preview):
+    session, server = preview
+    session._put(
+        {
+            "status": "ok",
+            "distance_m": 640.0,
+            "geometry": {"type": "LineString", "coordinates": [[18.07, 59.316], [18.08, 59.318]]},
+        }
+    )
+    with urlopen(f"{server.base_url}/preview/fc_1,fc_2", timeout=2) as resp:
+        html = resp.read().decode()
+        assert '"fc_1,fc_2"' in html
+    with urlopen(f"{server.base_url}/collections/fc_1,fc_2.geojson", timeout=2) as resp:
+        body = json.loads(resp.read())
+    kinds = {f["geometry"]["type"] for f in body["features"]}
+    assert kinds == {"Point", "LineString"}
+    names = [f["properties"].get("name") for f in body["features"]]
+    assert "Drop Coffee" in names
+    combined = server.open(["fc_1", "fc_2"], open_browser=False)
+    assert combined["collection_ids"] == ["fc_1", "fc_2"]
+    assert combined["preview_url"].endswith("/preview/fc_1,fc_2")

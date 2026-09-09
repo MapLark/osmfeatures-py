@@ -59,7 +59,7 @@ Repository = "https://github.com/MapLark/osmfeatures-python"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/osmfeatures"]
-include = ["src/osmfeatures/py.typed"]
+include = ["src/osmfeatures/py.typed", "src/osmfeatures/mcp/AGENT_INSTRUCTIONS.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

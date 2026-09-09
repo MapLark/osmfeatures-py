@@ -5,6 +5,18 @@ from __future__ import annotations
 from typing import Any, Literal
 
 RouteTravelMode = Literal["WALK", "BICYCLE"]
+_TRAVEL_MODES = frozenset({"WALK", "BICYCLE"})
+
+
+def normalize_travel_mode(travel_mode: str | None) -> RouteTravelMode | None:
+    """Planner/SDK often send ``walk``; the API only accepts ``WALK`` or ``BICYCLE``."""
+    if travel_mode is None:
+        return None
+    mode = str(travel_mode).strip().upper()
+    if mode not in _TRAVEL_MODES:
+        raise ValueError("travel_mode must be WALK or BICYCLE")
+    return mode  # type: ignore[return-value]
+
 
 PLACES_SEARCH_PATH = "/v1/places/search"
 PLACES_NEARBY_PATH = "/v1/places/nearby"
@@ -131,7 +143,7 @@ def routes_isochrone_body(
     if search_buffer_m is not None:
         body["search_buffer_m"] = search_buffer_m
     if travel_mode is not None:
-        body["travelMode"] = travel_mode
+        body["travelMode"] = normalize_travel_mode(travel_mode)
     return body
 
 
@@ -145,7 +157,7 @@ def routes_path_body(
     if search_buffer_m is not None:
         body["search_buffer_m"] = search_buffer_m
     if travel_mode is not None:
-        body["travelMode"] = travel_mode
+        body["travelMode"] = normalize_travel_mode(travel_mode)
     return body
 
 
@@ -166,6 +178,6 @@ def routes_optimized_path_body(
     if search_buffer_m is not None:
         body["search_buffer_m"] = search_buffer_m
     if travel_mode is not None:
-        body["travelMode"] = travel_mode
+        body["travelMode"] = normalize_travel_mode(travel_mode)
     return body
 

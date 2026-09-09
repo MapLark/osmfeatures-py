@@ -8,7 +8,12 @@ import pytest
 import responses as rsps
 
 from osmfeatures import OSMFeaturesClient
-from osmfeatures._geo_agent import parse_place_ref, places_details_path
+from osmfeatures._geo_agent import (
+    normalize_travel_mode,
+    parse_place_ref,
+    places_details_path,
+    routes_optimized_path_body,
+)
 from tests.conftest import BASE_URL, FAKE_API_KEY
 
 
@@ -81,6 +86,20 @@ def test_routes_isochrone_and_optimized_path(client: OSMFeaturesClient):
     path_body = json.loads(rsps.calls[2].request.body)
     assert path_body["stops"][0] == {"lon": 18.075, "lat": 59.316}
     assert "travelMode" not in path_body
+
+
+def test_normalize_travel_mode():
+    assert normalize_travel_mode(None) is None
+    assert normalize_travel_mode("walk") == "WALK"
+    assert normalize_travel_mode("BICYCLE") == "BICYCLE"
+    with pytest.raises(ValueError, match="WALK or BICYCLE"):
+        normalize_travel_mode("drive")
+    body = routes_optimized_path_body(
+        start={"lon": 18.075, "lat": 59.316},
+        stops=[{"lng": 18.08, "lat": 59.318}],
+        travel_mode="walk",
+    )
+    assert body["travelMode"] == "WALK"
 
 
 @rsps.activate

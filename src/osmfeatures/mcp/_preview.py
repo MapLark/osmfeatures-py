@@ -53,6 +53,23 @@ def geojson_for_map(fc: dict[str, Any]) -> dict[str, Any]:
     return mapped
 
 
+def geojson_for_map_many(fcs: list[dict[str, Any]]) -> dict[str, Any]:
+    """Concatenate collections so one MapLibre overlay can show places and a route."""
+    if len(fcs) == 1:
+        return geojson_for_map(fcs[0])
+    features: list[dict[str, Any]] = []
+    origin: dict[str, float] | None = None
+    for fc in fcs:
+        mapped = geojson_for_map(fc)
+        features.extend(mapped["features"])
+        if origin is None and mapped.get("search_origin") is not None:
+            origin = mapped["search_origin"]
+    out: dict[str, Any] = {"type": "FeatureCollection", "features": features}
+    if origin is not None:
+        out["search_origin"] = origin
+    return out
+
+
 def validate_collection_id(collection_id: str) -> str:
     cid = (collection_id or "").strip()
     if not _COLLECTION_ID.match(cid):
@@ -60,9 +77,28 @@ def validate_collection_id(collection_id: str) -> str:
     return cid
 
 
-def preview_html(collection_id: str) -> str:
-    """MapLibre page that loads ``/collections/{id}.geojson`` on a street basemap."""
-    cid = validate_collection_id(collection_id)
+def parse_collection_ids(raw: str | list[str]) -> list[str]:
+    """One or more ``fc_N`` ids. URLs use a comma-separated path segment."""
+    parts = raw.split(",") if isinstance(raw, str) else list(raw)
+    ids = [validate_collection_id(str(p)) for p in parts if str(p).strip()]
+    if not ids:
+        raise ValueError("expected at least one collection_id")
+    seen: set[str] = set()
+    unique: list[str] = []
+    for cid in ids:
+        if cid not in seen:
+            seen.add(cid)
+            unique.append(cid)
+    return unique
+
+
+def collection_ids_path(collection_ids: str | list[str]) -> str:
+    return ",".join(parse_collection_ids(collection_ids))
+
+
+def preview_html(collection_ids: str | list[str]) -> str:
+    """MapLibre page that loads ``/collections/{ids}.geojson`` on a street basemap."""
+    cid = collection_ids_path(collection_ids)
     cid_js = json.dumps(cid)
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -300,31 +336,34 @@ class PreviewServer:
         host, port = self._httpd.server_address[:2]
         return f"http://{host}:{port}"
 
-    def preview_url(self, collection_id: str) -> str:
-        cid = validate_collection_id(collection_id)
-        self._session.get(cid)
-        return f"{self.base_url}/preview/{cid}"
+    def preview_url(self, collection_ids: str | list[str]) -> str:
+        ids = parse_collection_ids(collection_ids)
+        for cid in ids:
+            self._session.get(cid)
+        return f"{self.base_url}/preview/{','.join(ids)}"
 
-    def geojson_url(self, collection_id: str) -> str:
-        cid = validate_collection_id(collection_id)
-        self._session.get(cid)
-        return f"{self.base_url}/collections/{cid}.geojson"
+    def geojson_url(self, collection_ids: str | list[str]) -> str:
+        ids = parse_collection_ids(collection_ids)
+        for cid in ids:
+            self._session.get(cid)
+        return f"{self.base_url}/collections/{','.join(ids)}.geojson"
 
     def open(
         self,
-        collection_id: str,
+        collection_ids: str | list[str],
         *,
         open_browser: bool = True,
     ) -> dict[str, Any]:
         """Return preview URLs. Does not include geometry."""
-        cid = validate_collection_id(collection_id)
-        self._session.get(cid)
-        preview_url = f"{self.base_url}/preview/{cid}"
+        ids = parse_collection_ids(collection_ids)
+        for cid in ids:
+            self._session.get(cid)
+        preview_url = f"{self.base_url}/preview/{','.join(ids)}"
         opened = False
         if open_browser:
             opened = bool(webbrowser.open(preview_url))
         return {
-            "collection_id": cid,
+            "collection_ids": ids,
             "preview_url": preview_url,
             "opened": opened,
         }
@@ -345,17 +384,22 @@ def _handler_for(session: Any) -> type[BaseHTTPRequestHandler]:
             if path.startswith("/preview/"):
                 cid = path[len("/preview/") :]
                 try:
-                    session.get(validate_collection_id(cid))
+                    ids = parse_collection_ids(cid)
+                    for item in ids:
+                        session.get(item)
                 except (KeyError, ValueError):
                     self._send(404, b"unknown collection\n", "text/plain; charset=utf-8")
                     return
-                body = preview_html(cid).encode("utf-8")
+                body = preview_html(ids).encode("utf-8")
                 self._send(200, body, "text/html; charset=utf-8")
                 return
             if path.startswith("/collections/") and path.endswith(".geojson"):
                 cid = path[len("/collections/") : -len(".geojson")]
                 try:
-                    payload = geojson_for_map(session.export_geojson(validate_collection_id(cid)))
+                    ids = parse_collection_ids(cid)
+                    payload = geojson_for_map_many(
+                        [session.export_geojson(item) for item in ids]
+                    )
                 except (KeyError, ValueError, TypeError):
                     self._send(404, b"unknown collection\n", "text/plain; charset=utf-8")
                     return

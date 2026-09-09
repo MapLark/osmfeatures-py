@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from osmfeatures._mcp_session import (
+from osmfeatures.mcp._mcp_session import (
     GeoAgentSession,
     QUERY_ALL_MAX_FEATURES,
     SUMMARY_ITEM_CAP,
@@ -305,7 +305,7 @@ def test_nearest_within_keeps_every_primary_and_caps_items():
 
 
 def test_nearest_within_rejects_over_comparison_cap(monkeypatch):
-    monkeypatch.setattr("osmfeatures._mcp_session.MAX_COMPARISONS", 20)
+    monkeypatch.setattr("osmfeatures.mcp._mcp_session.MAX_COMPARISONS", 20)
     client = FakeClient()
     session = GeoAgentSession(client)
     client.search = _fc(*[_feat(f"node/r{i}", 18.0702, 59.316, name=f"R{i}") for i in range(5)])
@@ -464,6 +464,50 @@ def test_optimized_route_summary_keeps_id_and_lon_lat():
     assert opt["ordered_stops"][1]["lon"] == 18.08
 
 
+def test_route_failure_summary_keeps_reason():
+    client = FakeClient()
+    client.optimized = {
+        "status": "no_path_within_area",
+        "reason": "Could not form a complete distance matrix between stops. Retry with a larger search_buffer_m (used 500.0).",
+        "search_buffer_m": 500.0,
+        "estimated_units": 7,
+        "geometry": {"type": "LineString", "coordinates": []},
+    }
+    client.isochrone = {
+        "status": "start_unreachable",
+        "reason": "Start has no walkable edge within snap radius.",
+        "snap_radius_m": 75.0,
+        "nearest_edge_distance_m": 210.0,
+        "search_buffer_m": 500.0,
+    }
+    session = GeoAgentSession(client)
+    opt = session.routes_optimized_path(
+        start={"lon": 18.075, "lat": 59.316},
+        stops=[{"lon": 18.08, "lat": 59.32}],
+        travel_mode="walk",
+    )
+    assert_no_coordinate_arrays(opt)
+    assert opt["status"] == "no_path_within_area"
+    assert "search_buffer_m" in opt["reason"]
+    assert opt["search_buffer_m"] == 500.0
+    assert opt["estimated_units"] == 7
+    assert client.calls[-1][1]["travel_mode"] == "WALK"
+    iso = session.routes_isochrone(origin={"lon": 18.075, "lat": 59.316}, max_distance_m=800)
+    assert iso["status"] == "start_unreachable"
+    assert iso["reason"] == "Start has no walkable edge within snap radius."
+    assert iso["snap_radius_m"] == 75.0
+    assert iso["nearest_edge_distance_m"] == 210.0
+
+
+def test_travel_mode_rejects_unknown():
+    session = GeoAgentSession(FakeClient())
+    with pytest.raises(ValueError, match="WALK or BICYCLE"):
+        session.routes_path(
+            stops=[{"lon": 18.07, "lat": 59.316}, {"lon": 18.08, "lat": 59.318}],
+            travel_mode="drive",
+        )
+
+
 def test_export_route_pins_matching_places():
     client = FakeClient()
     client.search = _fc(
@@ -497,6 +541,8 @@ def test_export_route_pins_matching_places():
     assert [f["properties"]["tags"]["name"] for f in points] == ["Akkurat", "Oliver Twist"]
     assert "ordered_stops" not in exported["features"][0]["properties"]
     assert "Not on crawl" not in [f["properties"]["tags"]["name"] for f in points]
+    assert opt["ordered_stops"][0]["name"] == "Akkurat"
+    assert opt["ordered_stops"][1]["id"] == "node/2"
 
 
 def test_export_route_stop_points_without_places():
