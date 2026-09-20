@@ -20,6 +20,8 @@ class RetryConfig:
         backoff_max: Maximum delay cap in seconds.
         jitter: Add +/-25% random jitter to the backoff delay.
         retry_on_status: HTTP status codes that trigger a retry.
+            Defaults omit 504: a gateway timeout means the first query is
+            still holding an OSM pool slot.
     """
 
     max_retries: int = 3
@@ -27,7 +29,7 @@ class RetryConfig:
     backoff_max: float = 60.0
     jitter: bool = True
     retry_on_status: frozenset[int] = field(
-        default_factory=lambda: frozenset({429, 500, 502, 503, 504})
+        default_factory=lambda: frozenset({429, 500, 502, 503})
     )
 
 

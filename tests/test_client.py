@@ -17,6 +17,7 @@ from osmfeatures import (
 from tests.conftest import (
     FEATURES_URL,
     COST_URL,
+    STATS_URL,
     make_test_feature,
     make_feature_collection,
     add_features_response,
@@ -117,6 +118,43 @@ def test_query_forwards_deprecated_shape_as_way_shape(client):
     parsed = parse_qs(urlsplit(rsps.calls[0].request.url).query)
     assert parsed["way_shape"] == ["all"]
     assert "shape" not in parsed
+
+
+@rsps.activate
+def test_query_forwards_within_and_numeric_tag(client):
+    rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection([]))
+
+    client.query(within="relation/155790", type="node", tags=["ele>500"])
+
+    parsed = parse_qs(urlsplit(rsps.calls[0].request.url).query)
+    assert parsed["within"] == ["relation/155790"]
+    assert parsed["tags"] == ["ele>500"]
+
+
+@rsps.activate
+def test_stats_forwards_group_by(client):
+    rsps.add(
+        rsps.GET,
+        STATS_URL,
+        json={"groups": [{"value": "cafe", "count": 12}], "total": 12, "truncated": False},
+    )
+    out = client.stats(group_by="amenity", bbox="18.06,59.32,18.09,59.34", tags=["amenity"])
+    assert out["total"] == 12
+    parsed = parse_qs(urlsplit(rsps.calls[0].request.url).query)
+    assert parsed["group_by"] == ["amenity"]
+    assert parsed["tags"] == ["amenity"]
+
+
+@rsps.activate
+def test_query_all_within_does_not_tile(client):
+    add_features_response([], has_more=False)
+
+    client.query_all(within="relation/155790", type="node", tags=["amenity"], bbox_tiles=4)
+
+    assert len(rsps.calls) == 1
+    parsed = parse_qs(urlsplit(rsps.calls[0].request.url).query)
+    assert parsed["within"] == ["relation/155790"]
+    assert "bbox" not in parsed
 
 
 @rsps.activate

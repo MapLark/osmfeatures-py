@@ -14,6 +14,7 @@ from .models import (
 
 DEFAULT_BASE_URL = "https://api.maplark.com"
 GEOJSON_ACCEPT = "application/geo+json"
+DEFAULT_TIMEOUT = 60.0
 
 ElementType = Literal["node", "way", "relation"]
 ShapeType = Literal["line", "polygon", "all"]

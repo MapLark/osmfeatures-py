@@ -17,6 +17,7 @@ FAKE_API_KEY = "sk-test-1234"
 BASE_URL = "http://testserver"
 FEATURES_URL = f"{BASE_URL}/v2/osm_features"
 COST_URL = f"{BASE_URL}/v2/osm_features/cost"
+STATS_URL = f"{BASE_URL}/v2/osm_features/stats"
 
 
 def make_test_feature(fid: str = "way/1", tags: dict[str, str] | None = None) -> dict[str, Any]:

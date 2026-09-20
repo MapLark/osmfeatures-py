@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from osmfeatures import nearest_within
+from osmfeatures import nearest_within, pairs_within
 from osmfeatures.nearest import MAX_COMPARISONS
 
 
@@ -128,3 +128,53 @@ def test_missing_point_raises():
     }
     with pytest.raises(ValueError, match="centroid"):
         nearest_within([poly], [_point("node/1", 0, 0)], max_distance_m=100)
+
+
+def test_pairs_within_two_set_join():
+    primary = [_point("node/1", 18.07, 59.33)]
+    close = _point("node/10", 18.0705, 59.33)
+    far = _point("node/11", 18.09, 59.33)
+    out = pairs_within(primary, [far, close], max_distance_m=500)
+    assert len(out) == 1
+    assert out[0]["nearest"]["id"] == "node/10"
+
+
+def test_pairs_within_min_distance_band():
+    a = [_point("node/1", 18.07, 59.33)]
+    near = _point("node/2", 18.0701, 59.33)
+    mid = _point("node/3", 18.072, 59.33)
+    out = pairs_within(a, [near, mid], max_distance_m=500, min_distance_m=50)
+    assert len(out) == 1
+    assert out[0]["nearest"]["id"] == "node/3"
+    assert out[0]["distance_m"] >= 50
+
+
+def test_pairs_within_self_join_unordered_once():
+    pts = [
+        _point("node/1", 18.07, 59.33),
+        _point("node/2", 18.0705, 59.33),
+        _point("node/3", 18.071, 59.33),
+    ]
+    out = pairs_within(pts, pts, max_distance_m=2000, limit=None)
+    ids = {(p["feature"]["id"], p["nearest"]["id"]) for p in out}
+    assert ("node/1", "node/1") not in ids
+    assert ("node/2", "node/1") not in ids
+    assert ("node/1", "node/2") in ids
+    assert len(out) == 3
+
+
+def test_pairs_within_over_comparison_cap_raises():
+    primaries = [_point(f"node/p{i}", 18.07, 59.33) for i in range(5)]
+    secondaries = [_point(f"node/s{i}", 18.07, 59.33) for i in range(5)]
+    with pytest.raises(ValueError, match=r"5×5 comparisons"):
+        pairs_within(primaries, secondaries, max_distance_m=2000, max_comparisons=20)
+
+
+def test_pairs_within_self_join_caps_triangle_not_square():
+    # 5×5 = 25 > 20, but the self-join is 10 comparisons.
+    pts = [_point(f"node/{i}", 18.07 + i * 0.001, 59.33) for i in range(5)]
+    out = pairs_within(pts, pts, max_distance_m=2000, limit=None, max_comparisons=20)
+    assert len(out) == 10
+    over = [_point(f"node/{i}", 18.07 + i * 0.001, 59.33) for i in range(7)]
+    with pytest.raises(ValueError, match=r"7 self-join comparisons"):
+        pairs_within(over, over, max_distance_m=2000, max_comparisons=20)

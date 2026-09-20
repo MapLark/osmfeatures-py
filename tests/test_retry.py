@@ -6,7 +6,7 @@ import pytest
 import responses as rsps
 
 from osmfeatures import OSMFeaturesRateLimitError, OSMFeaturesAuthError, OSMFeaturesAPIError
-from tests.conftest import FEATURES_URL, make_test_feature, make_feature_collection
+from tests.conftest import FEATURES_URL, STATS_URL, make_test_feature, make_feature_collection
 
 
 @rsps.activate
@@ -89,6 +89,27 @@ def test_500_is_retried(client_with_retries):
 
     result = client_with_retries.query(bbox="18.06,59.32,18.09,59.34")
     assert len(rsps.calls) == 2
+
+
+@rsps.activate
+def test_504_is_not_retried_on_stats(client_with_retries):
+    """Gateway timeout means the first query is still running. Do not fan out."""
+    rsps.add(rsps.GET, STATS_URL, status=504, body="Gateway Timeout")
+    rsps.add(
+        rsps.GET,
+        STATS_URL,
+        json={"groups": [], "total": 0, "truncated": False},
+    )
+
+    with pytest.raises(OSMFeaturesAPIError) as exc_info:
+        client_with_retries.stats(
+            group_by="amenity",
+            bbox="18.06,59.32,18.09,59.34",
+            tags=["amenity"],
+        )
+
+    assert exc_info.value.status_code == 504
+    assert len(rsps.calls) == 1
 
 
 @rsps.activate

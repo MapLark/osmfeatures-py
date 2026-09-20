@@ -28,8 +28,10 @@ _EXPECTED_TOOLS = frozenset(
         "routes_path",
         "routes_optimized_path",
         "query",
+        "stats",
         "query_all",
         "nearest_within",
+        "pairs_within",
         "filter_open",
         "point_in_polygon",
         "points_in_polygon",
@@ -85,6 +87,7 @@ class FakeClient:
         self.optimized: dict | None = None
         self.query_result: dict | None = None
         self.query_all_result: dict | None = None
+        self.stats_result: dict | None = None
 
     def places_search(self, **kwargs):
         self.calls.append(("places_search", kwargs))
@@ -117,6 +120,10 @@ class FakeClient:
     def query_all(self, **kwargs):
         self.calls.append(("query_all", kwargs))
         return self.query_all_result
+
+    def stats(self, **kwargs):
+        self.calls.append(("stats", kwargs))
+        return self.stats_result
 
 
 class _FakePreview:
@@ -177,6 +184,10 @@ async def test_build_server_wires_instructions_and_tools():
     assert "{lon, lat}" in mcp.instructions
     assert "{SUMMARY_ITEM_CAP}" not in mcp.instructions
     assert "call geocode" in mcp.instructions
+    assert "stats" in mcp.instructions
+    assert "how many pubs in Stockholm" in mcp.instructions
+    assert "n(n-1)/2" in mcp.instructions
+    assert "Do not retry\nwith disable_budget_warning" in mcp.instructions
     assert f"over {MAX_COMPARISONS} comparisons" in mcp.instructions
     tools = await mcp.list_tools()
     names = {tool.name for tool in tools}
@@ -191,9 +202,12 @@ async def test_build_server_wires_instructions_and_tools():
     assert (nearest.inputSchema["properties"]["limit"].get("default") or 0) != 20
     assert "keep every match" not in (nearest.description or "")
     assert "count is complete" in (nearest.description or "")
-    assert "250000 comparisons" in (nearest.description or "")
+    assert "500000 comparisons" in (nearest.description or "")
     geocode = next(t for t in tools if t.name == "geocode")
     assert "Nominatim" in (geocode.description or "")
+    band = next(t for t in tools if t.name == "pairs_within")
+    assert "unordered pair" in (band.description or "")
+    assert "500000 comparisons" in (band.description or "")
 
 
 def test_run_stdio_closes_client_and_preview(monkeypatch):
@@ -484,6 +498,29 @@ async def test_call_tool_nearest_within_rejects_over_comparison_cap(stack, monke
 
 
 @pytest.mark.asyncio
+async def test_call_tool_pairs_within_chain(stack):
+    client, mcp = stack
+    client.search = _fc(_feat("node/r1", 18.0702, 59.316, name="Pelikan"))
+    restaurants = await _call(
+        mcp, "places_search", bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=restaurant"]
+    )
+    client.search = _fc(_feat("node/s1", 18.07, 59.316, name="Medborgarplatsen"))
+    stations = await _call(
+        mcp, "places_search", bbox="18.05,59.31,18.10,59.33", or_tags=["railway=station"]
+    )
+    pairs = await _call(
+        mcp,
+        "pairs_within",
+        primary_id=restaurants["collection_id"],
+        secondary_id=stations["collection_id"],
+        max_distance_m=150,
+    )
+    assert pairs["count"] == 1
+    assert pairs["items"][0]["name"] == "Pelikan"
+    assert pairs["items"][0]["nearest_name"] == "Medborgarplatsen"
+
+
+@pytest.mark.asyncio
 async def test_call_tool_routes_containment_and_preview(stack):
     client, mcp = stack
     client.isochrone = {
@@ -551,6 +588,28 @@ async def test_call_tool_routes_containment_and_preview(stack):
     assert preview["preview_url"].endswith("/preview/" + iso["collection_id"])
     assert preview["collection_ids"] == [iso["collection_id"]]
     assert "coordinates" not in preview
+
+
+@pytest.mark.asyncio
+async def test_call_tool_stats(stack):
+    client, mcp = stack
+    client.stats_result = {
+        "groups": [{"value": "pub", "count": 412}],
+        "total": 412,
+        "truncated": False,
+    }
+    out = await _call(
+        mcp,
+        "stats",
+        group_by="amenity",
+        bbox="17.8,59.2,18.2,59.4",
+        tags=["amenity=pub"],
+    )
+    assert out["total"] == 412
+    assert out["groups"] == [{"value": "pub", "count": 412}]
+    assert "collection_id" not in out
+    assert client.calls[-1][0] == "stats"
+    assert client.calls[-1][1]["group_by"] == "amenity"
 
 
 @pytest.mark.asyncio

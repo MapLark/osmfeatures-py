@@ -41,8 +41,10 @@ cannot fulfil the search, retry with no as_of and no open_now. Do not invent
 a clock for "open now".
 
 Local tools (no HTTP): nearest_within(primary_id, secondary_id, max_distance_m),
+pairs_within(primary_id, secondary_id, max_distance_m, min_distance_m=0),
 filter_open(collection_id), point_in_polygon / points_in_polygon.
-nearest_within is O(n×m) and refuses joins over {MAX_COMPARISONS} comparisons;
+nearest_within is O(n×m); pairs_within is O(n×m) or n(n-1)/2 for a same-collection
+call. Both refuse joins over {MAX_COMPARISONS} comparisons;
 shrink with places_search/nearby limit, not query_all.
 Do not invent places_near_to or places_open_after.
 
@@ -50,10 +52,15 @@ Prompt shapes:
 - cafes near me → places_nearby or places_search with location+radius / bbox
 - vegan spots in Bergen / bars in Södermalm → geocode, then places_search with bbox
 - waste baskets / EV chargers / hotels in the area → places_search, no as_of / open_now
-- how many vegan restaurants → places_search, report count (items may be a prefix)
-- list restaurants by cuisine → places_search, group the items prefix by tags.cuisine
-  (not the full count if items_truncated)
+- how many pubs in Stockholm / how many vegan restaurants → geocode if they named a
+  place, then stats (group_by=amenity, tags=amenity=pub or amenity=restaurant plus
+  diet:vegan=yes). Answer is total. Do not count a GeoJSON page.
+- list restaurants by cuisine in a city → stats with group_by=cuisine and
+  tags=amenity=restaurant. Neighborhood name lists still use places_search
+  (items prefix; group that prefix by tags.cuisine, not the full count if
+  items_truncated)
 - restaurants within 150 m of a station → two places_search + nearest_within
+- every restaurant-station pair within 150 m → two places_search + pairs_within
 - bars open past midnight / cafes open at 8pm → places_search with as_of
   (no open_now so closed hits stay), then filter_open; if short of N and the
   page was full, raise limit and search again; if still empty drop hours
@@ -69,8 +76,14 @@ Prompt shapes:
   one call with every collection that belongs together (route + places), not
   one preview per collection
 
+stats is the count/histogram tool (GET /v2/osm_features/stats). Larger spatial
+caps than query or places_search; billed count-only. No collection_id (nothing
+to preview_map). If the unit cap 400s, shrink the bbox or add tags. Do not retry
+with disable_budget_warning. Do not group_by name, ref, or addr:housenumber.
+
 query is one page of generic OSM (parks, highways), not place/route primitives.
-For a larger bbox, call query_all with bbox_tiles (power of 2; default 2, use 1 to
+within=way/<id> or within=relation/<id> is a spatial anchor (ST_Covers, including the boundary); type is the
+result element kind, not the container. For a larger bbox, call query_all with bbox_tiles (power of 2; default 2, use 1 to
 disable tiling) and limit_per_page. Default max_features is {QUERY_ALL_MAX_FEATURES}; raise it if
 has_more is true. That is CLI --all-pages --bbox-tiles. Do not page with query +
 cursor yourself.

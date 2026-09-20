@@ -61,7 +61,7 @@ class AsyncOSMFeaturesClient:
         Retry / backoff settings.  Defaults to 3 retries with exponential
         backoff and jitter.
     timeout:
-        HTTP request timeout in seconds.  Defaults to 30.
+        HTTP request timeout in seconds.  Defaults to 60.
     """
 
     def __init__(
@@ -69,7 +69,7 @@ class AsyncOSMFeaturesClient:
         api_key: str,
         base_url: str = DEFAULT_BASE_URL,
         retry_config: RetryConfig | None = None,
-        timeout: float = 30.0,
+        timeout: float = 60.0,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
@@ -167,6 +167,7 @@ class AsyncOSMFeaturesClient:
         way_shape: ShapeType | None = None,
         shape: ShapeType | None = None,
         osm_ids: str | None = None,
+        within: str | None = None,
         tags: list[str] | str | None = None,
         or_tags: list[str] | str | None = None,
         not_tags: list[str] | str | None = None,
@@ -206,6 +207,8 @@ class AsyncOSMFeaturesClient:
             params["shape"] = shape
         if osm_ids is not None:
             params["osm_ids"] = osm_ids
+        if within is not None:
+            params["within"] = within
         if tags is not None:
             params["tags"] = tags
         if or_tags is not None:
@@ -317,7 +320,11 @@ class AsyncOSMFeaturesClient:
         )
 
     async def estimate_cost_async(self, **params: Any) -> CostEstimate:
-        """Call ``/v2/osm_features/cost`` to preflight the credit cost."""
+        """Call ``/v2/osm_features/cost`` to preflight the credit cost.
+
+        ``within`` loads the container from PostGIS (RPS token spent) so
+        envelope area matches the query.
+        """
         if "geometry" in params:
             geom = params.pop("geometry")
             params["bbox"] = shapely_to_bbox(geom)
@@ -341,6 +348,89 @@ class AsyncOSMFeaturesClient:
         )
         raise_for_response(resp)
         return CostEstimate.from_dict(resp.json())
+
+    async def stats_async(
+        self,
+        *,
+        group_by: str,
+        bbox: str | None = None,
+        location: str | None = None,
+        radius: float | None = None,
+        type: ElementType | list[ElementType] | None = None,  # noqa: A002
+        way_shape: ShapeType | None = None,
+        within: str | None = None,
+        tags: list[str] | str | None = None,
+        or_tags: list[str] | str | None = None,
+        not_tags: list[str] | str | None = None,
+        limit: int | None = None,
+        min_length_m: float | None = None,
+        max_length_m: float | None = None,
+        min_area_m2: float | None = None,
+        max_area_m2: float | None = None,
+        disable_budget_warning: bool = False,
+    ) -> dict[str, Any]:
+        """``GET /v2/osm_features/stats``: count features grouped by a tag key.
+
+        Same as :meth:`OSMFeaturesClient.stats`. Example::
+
+            await client.stats_async(
+                group_by="amenity",
+                bbox="18.05,59.32,18.10,59.34",
+                type="node",
+                tags=["amenity"],
+            )
+        """
+        params: dict[str, Any] = {"group_by": group_by}
+        if bbox is not None:
+            params["bbox"] = bbox
+        if location is not None:
+            params["location"] = location
+        if radius is not None:
+            params["radius"] = radius
+        if type is not None:
+            params["type"] = type
+        if way_shape is not None:
+            params["way_shape"] = way_shape
+        if within is not None:
+            params["within"] = within
+        if tags is not None:
+            params["tags"] = tags
+        if or_tags is not None:
+            params["or_tags"] = or_tags
+        if not_tags is not None:
+            params["not_tags"] = not_tags
+        if limit is not None:
+            params["limit"] = limit
+        if min_length_m is not None:
+            params["min_length_m"] = min_length_m
+        if max_length_m is not None:
+            params["max_length_m"] = max_length_m
+        if min_area_m2 is not None:
+            params["min_area_m2"] = min_area_m2
+        if max_area_m2 is not None:
+            params["max_area_m2"] = max_area_m2
+        if disable_budget_warning:
+            params["disable_budget_warning"] = disable_budget_warning
+
+        param_list = build_params(params)
+        client = await self._get_client()
+
+        async def _do() -> httpx.Response:
+            return await client.get(
+                f"{self._base_url}/v2/osm_features/stats",
+                params=param_list,
+            )
+
+        resp = await retry_async(
+            _do,
+            self._retry,
+            get_status=lambda r: r.status_code,
+            get_headers=lambda r: dict(r.headers),
+            is_rate_limit_error=is_429_retryable,
+            build_rate_limit_error=build_rate_limit_error,
+        )
+        raise_for_response(resp)
+        return resp.json()  # type: ignore[no-any-return]
 
     async def usage_async(self) -> dict[str, Any]:
         """Return this month's unit-budget usage for the authenticated API key."""

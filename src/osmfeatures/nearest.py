@@ -1,7 +1,7 @@
-"""Local nearest-neighbor join over two GeoJSON feature sets.
+"""Local nearest-neighbor and distance-band joins over two GeoJSON feature sets.
 
-No HTTP. The planner picks tags/bbox; this function is the deterministic metre
-join (search + search + nearest_within).
+No HTTP. The planner picks tags/bbox; these functions are the deterministic metre
+join (search + search + nearest_within / pairs_within).
 """
 
 from __future__ import annotations
@@ -104,5 +104,66 @@ def nearest_within(
                 best = (d, s)
         if best is not None and best[0] <= max_distance_m:
             pairs.append({"feature": p, "distance_m": best[0], "nearest": best[1]})
+    pairs.sort(key=lambda item: item["distance_m"])
+    return pairs[:limit]
+
+
+def pairs_within(
+    primary: Any,
+    secondary: Any,
+    max_distance_m: float,
+    min_distance_m: float = 0,
+    limit: int | None = 20,
+    max_comparisons: int | None = MAX_COMPARISONS,
+) -> list[dict[str, Any]]:
+    """All primary/secondary pairs with ``min_distance_m <= d <= max_distance_m``.
+
+    Same point/centroid rules and comparison cap as :func:`nearest_within`.
+    Sorted by ``distance_m``, then sliced to ``limit`` (SDK default 20; pass
+    ``None`` for every pair). Same-collection calls (``primary is secondary``)
+    emit each unordered pair once, skip a feature paired with itself, and
+    count ``n(n-1)/2`` toward the comparison cap.
+    """
+    if limit is not None and limit < 1:
+        raise ValueError("limit must be a positive int")
+    if max_comparisons is not None and max_comparisons < 1:
+        raise ValueError("max_comparisons must be a positive int")
+    if min_distance_m < 0:
+        raise ValueError("min_distance_m must be greater than or equal to 0")
+    if min_distance_m > max_distance_m:
+        raise ValueError("min_distance_m must be less than or equal to max_distance_m")
+
+    same_collection = primary is secondary
+    primaries = _features(primary)
+    secondaries = primaries if same_collection else _features(secondary)
+    if not primaries or not secondaries:
+        return []
+
+    n, m = len(primaries), len(secondaries)
+    comparisons = n * (n - 1) // 2 if same_collection else n * m
+    if max_comparisons is not None and comparisons > max_comparisons:
+        shape = f"{n} self-join" if same_collection else f"{n}×{m}"
+        raise ValueError(
+            f"pairs_within join is {shape} comparisons "
+            f"(cap {max_comparisons}). Shrink the collections "
+            "(places_search/nearby limit, not query_all)."
+        )
+
+    pairs: list[dict[str, Any]] = []
+    if same_collection:
+        pts = [(p, _lon_lat(p)) for p in primaries]
+        for i, (p, (plon, plat)) in enumerate(pts):
+            for s, (slon, slat) in pts[i + 1 :]:
+                d = _haversine_m(plon, plat, slon, slat)
+                if min_distance_m <= d <= max_distance_m:
+                    pairs.append({"feature": p, "distance_m": d, "nearest": s})
+    else:
+        sec_pts = [(s, _lon_lat(s)) for s in secondaries]
+        for p in primaries:
+            plon, plat = _lon_lat(p)
+            for s, (slon, slat) in sec_pts:
+                d = _haversine_m(plon, plat, slon, slat)
+                if min_distance_m <= d <= max_distance_m:
+                    pairs.append({"feature": p, "distance_m": d, "nearest": s})
     pairs.sort(key=lambda item: item["distance_m"])
     return pairs[:limit]

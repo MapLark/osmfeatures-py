@@ -478,3 +478,20 @@ async def test_async_usage():
         out = await client.usage_async()
     assert out["tier"] == "standard"
     assert transport.requests[0].url.path.endswith("/v1/usage")
+
+
+async def test_async_stats_forwards_group_by():
+    from urllib.parse import parse_qs, urlsplit
+
+    transport = _MockTransport(
+        [(200, {"groups": [{"value": "cafe", "count": 12}], "total": 12, "truncated": False})]
+    )
+    client = _make_client(transport)
+    async with client:
+        out = await client.stats_async(
+            group_by="amenity", bbox="18.06,59.32,18.09,59.34", tags=["amenity"]
+        )
+    assert out["total"] == 12
+    parsed = parse_qs(urlsplit(str(transport.requests[0].url)).query)
+    assert parsed["group_by"] == ["amenity"]
+    assert transport.requests[0].url.path.endswith("/v2/osm_features/stats")

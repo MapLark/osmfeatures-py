@@ -1,8 +1,8 @@
 """In-process geo-agent tool session. No MCP dependency.
 
 HTTP tools call :class:`OSMFeaturesClient`. Local tools use ``nearest_within``,
-``point_in_geometry``, and an opening-hours status filter. Results are stored
-by ``fc_N``; planner-facing summaries omit coordinate arrays.
+``pairs_within``, ``point_in_geometry``, and an opening-hours status filter. Results
+are stored by ``fc_N``; planner-facing summaries omit coordinate arrays.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from typing import Any
 from .._geo_agent import normalize_travel_mode
 from ..geometry import point_in_geometry
 from ..models import OSMFeatureCollection
-from ..nearest import MAX_COMPARISONS, nearest_within
+from ..nearest import MAX_COMPARISONS, nearest_within, pairs_within
 from ._geocode import nominatim_geocode
 from ._preview import validate_collection_id
 
@@ -220,6 +220,28 @@ def _require_positive_max_features(max_features: int | None) -> int:
     if max_features < 1:
         raise ValueError("max_features must be a positive int")
     return max_features
+
+
+def _summarize_stats(payload: Any) -> dict[str, Any]:
+    """Planner-facing histogram. No collection_id (nothing to draw).
+
+    Pass every API group through. ``SUMMARY_ITEM_CAP`` is for GeoJSON item
+    lists; ``truncated`` is the server extra-groups flag.
+    """
+    if not isinstance(payload, dict):
+        raise TypeError("expected a stats histogram dict")
+    groups = payload.get("groups") or []
+    if not isinstance(groups, list):
+        groups = []
+    return {
+        "total": payload.get("total", 0),
+        "truncated": bool(payload.get("truncated")),
+        "groups": [
+            {"value": g.get("value"), "count": g.get("count")}
+            for g in groups
+            if isinstance(g, dict)
+        ],
+    }
 
 
 def require_places_search_spatial(
@@ -630,6 +652,7 @@ class GeoAgentSession:
         tags: list[str] | str | None = None,
         or_tags: list[str] | str | None = None,
         not_tags: list[str] | str | None = None,
+        within: str | None = None,
         limit: int | None = None,
         zoom: float | None = None,
     ) -> dict[str, Any]:
@@ -642,12 +665,46 @@ class GeoAgentSession:
             tags=tags,
             or_tags=or_tags,
             not_tags=not_tags,
+            within=within,
             limit=limit,
             zoom=zoom,
             centroid=True,
         )
         cid = self._put(payload)
         return self._summarize_query(cid, payload)
+
+    def stats(
+        self,
+        *,
+        group_by: str,
+        bbox: str | None = None,
+        location: str | None = None,
+        radius: float | None = None,
+        type: str | list[str] | None = None,  # noqa: A002
+        way_shape: str | None = None,
+        tags: list[str] | str | None = None,
+        or_tags: list[str] | str | None = None,
+        not_tags: list[str] | str | None = None,
+        within: str | None = None,
+        limit: int | None = None,
+        disable_budget_warning: bool = False,
+    ) -> dict[str, Any]:
+        """Histogram of tag values. Counts, not geometries. Report ``total``."""
+        payload = self._client.stats(
+            group_by=group_by,
+            bbox=bbox,
+            location=location,
+            radius=radius,
+            type=type,
+            way_shape=way_shape,
+            tags=tags,
+            or_tags=or_tags,
+            not_tags=not_tags,
+            within=within,
+            limit=limit,
+            disable_budget_warning=disable_budget_warning,
+        )
+        return _summarize_stats(payload)
 
     def query_all(
         self,
@@ -660,6 +717,7 @@ class GeoAgentSession:
         tags: list[str] | str | None = None,
         or_tags: list[str] | str | None = None,
         not_tags: list[str] | str | None = None,
+        within: str | None = None,
         zoom: float | None = None,
         limit_per_page: int | None = None,
         bbox_tiles: int = 2,
@@ -676,6 +734,7 @@ class GeoAgentSession:
             tags=tags,
             or_tags=or_tags,
             not_tags=not_tags,
+            within=within,
             zoom=zoom,
             limit_per_page=limit_per_page,
             bbox_tiles=bbox_tiles,
@@ -711,6 +770,31 @@ class GeoAgentSession:
             limit=limit,
             max_comparisons=MAX_COMPARISONS,
         )
+        return self._summarize_pairs(pairs)
+
+    def pairs_within(
+        self,
+        primary_id: str,
+        secondary_id: str,
+        max_distance_m: float,
+        min_distance_m: float = 0,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        feats_a = _features_from_payload(self.get(primary_id))
+        feats_b = feats_a if primary_id == secondary_id else _features_from_payload(
+            self.get(secondary_id)
+        )
+        pairs = pairs_within(
+            feats_a,
+            feats_b,
+            max_distance_m=max_distance_m,
+            min_distance_m=min_distance_m,
+            limit=limit,
+            max_comparisons=MAX_COMPARISONS,
+        )
+        return self._summarize_pairs(pairs)
+
+    def _summarize_pairs(self, pairs: list[dict[str, Any]]) -> dict[str, Any]:
         cid = self._put({"type": "PairList", "pairs": pairs})
         items = []
         for pair in pairs:
@@ -822,6 +906,13 @@ class GeoAgentSession:
                 props["nearest_id"] = near.get("id")
                 feat["properties"] = props
                 features.append(feat)
+                if isinstance(near, dict) and near.get("geometry") is not None:
+                    nfeat = dict(near)
+                    nprops = dict(nfeat.get("properties") or {})
+                    nprops["distance_m"] = pair["distance_m"]
+                    nprops["pair_primary_id"] = feat.get("id")
+                    nfeat["properties"] = nprops
+                    features.append(nfeat)
             return _fc_with_origin(payload, features)
         if isinstance(payload, dict) and isinstance(payload.get("items"), list):
             features = []

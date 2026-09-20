@@ -15,7 +15,7 @@ from .chunking import (
 )
 from .client import OSMFeaturesClient
 from .geometry import point_in_geometry
-from .nearest import nearest_within
+from .nearest import nearest_within, pairs_within
 from .convenience import (
     get_amenities,
     get_barriers,
@@ -85,6 +85,7 @@ __all__ = [
     "tile_count_for_corridor",
     "shapely_to_bbox",
     "nearest_within",
+    "pairs_within",
     "point_in_geometry",
     # Convenience helpers - built environment
     "get_buildings",

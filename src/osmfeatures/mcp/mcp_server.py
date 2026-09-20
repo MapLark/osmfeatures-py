@@ -174,10 +174,11 @@ def build_server(session: GeoAgentSession, preview: PreviewServer | None = None)
         tags: list[str] | None = None,
         or_tags: list[str] | None = None,
         not_tags: list[str] | None = None,
+        within: str | None = None,
         limit: int | None = None,
         zoom: float | None = None,
     ) -> dict[str, Any]:
-        """Generic OSM features (parks, highways). location is numeric lat,lng, not a place name. Non-points include centroids for local joins."""
+        """Generic OSM features (parks, highways). location is numeric lat,lng, not a place name. within is way/<id> or relation/<id>. Non-points include centroids for local joins."""
         return session.query(
             bbox=bbox,
             location=location,
@@ -187,8 +188,40 @@ def build_server(session: GeoAgentSession, preview: PreviewServer | None = None)
             tags=tags,
             or_tags=or_tags,
             not_tags=not_tags,
+            within=within,
             limit=limit,
             zoom=zoom,
+        )
+
+    @mcp.tool()
+    def stats(
+        group_by: str,
+        bbox: str | None = None,
+        location: str | None = None,
+        radius: float | None = None,
+        type: str | None = None,
+        way_shape: str | None = None,
+        tags: list[str] | None = None,
+        or_tags: list[str] | None = None,
+        not_tags: list[str] | None = None,
+        within: str | None = None,
+        limit: int | None = None,
+        disable_budget_warning: bool = False,
+    ) -> dict[str, Any]:
+        """Count features grouped by a tag key. City/country histograms. Report total. Not a GeoJSON page. location is numeric lat,lng."""
+        return session.stats(
+            group_by=group_by,
+            bbox=bbox,
+            location=location,
+            radius=radius,
+            type=type,
+            way_shape=way_shape,
+            tags=tags,
+            or_tags=or_tags,
+            not_tags=not_tags,
+            within=within,
+            limit=limit,
+            disable_budget_warning=disable_budget_warning,
         )
 
     @mcp.tool()
@@ -201,6 +234,7 @@ def build_server(session: GeoAgentSession, preview: PreviewServer | None = None)
         tags: list[str] | None = None,
         or_tags: list[str] | None = None,
         not_tags: list[str] | None = None,
+        within: str | None = None,
         zoom: float | None = None,
         limit_per_page: int | None = None,
         bbox_tiles: int = 2,
@@ -216,6 +250,7 @@ def build_server(session: GeoAgentSession, preview: PreviewServer | None = None)
             tags=tags,
             or_tags=or_tags,
             not_tags=not_tags,
+            within=within,
             zoom=zoom,
             limit_per_page=limit_per_page,
             bbox_tiles=bbox_tiles,
@@ -229,8 +264,21 @@ def build_server(session: GeoAgentSession, preview: PreviewServer | None = None)
         max_distance_m: float,
         limit: int | None = None,
     ) -> dict[str, Any]:
-        """Nearest secondary for each primary within max_distance_m. Omit limit for every pair in the store; count is complete, items lists at most 40. Refuses joins over 250000 comparisons."""
+        """Nearest secondary for each primary within max_distance_m. Omit limit for every pair in the store; count is complete, items lists at most 40. Refuses joins over 500000 comparisons."""
         return session.nearest_within(primary_id, secondary_id, max_distance_m, limit)
+
+    @mcp.tool()
+    def pairs_within(
+        primary_id: str,
+        secondary_id: str,
+        max_distance_m: float,
+        min_distance_m: float = 0,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """All pairs with min_distance_m <= d <= max_distance_m. Same collection_id on both sides emits each unordered pair once. Omit limit for every pair in the store; count is complete, items lists at most 40. Refuses joins over 500000 comparisons."""
+        return session.pairs_within(
+            primary_id, secondary_id, max_distance_m, min_distance_m, limit
+        )
 
     @mcp.tool()
     def filter_open(collection_id: str) -> dict[str, Any]:

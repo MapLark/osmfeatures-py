@@ -283,3 +283,28 @@ def test_mcp_missing_instructions_is_not_missing_extra(monkeypatch):
     assert result.exit_code != 0
     assert "osmfeatures[mcp]" not in result.output
     assert "AGENT_INSTRUCTIONS.md" in result.output
+
+
+def test_stats_forwards_group_by():
+    runner = CliRunner()
+    with patch("osmfeatures.cli.OSMFeaturesClient") as MockClient:
+        MockClient.return_value.stats.return_value = {
+            "groups": [{"value": "cafe", "count": 12}],
+            "total": 12,
+            "truncated": False,
+        }
+        result = runner.invoke(cli, [
+            "stats",
+            "--api-key", "sk-test",
+            "--group-by", "amenity",
+            "--bbox", "18.06,59.32,18.09,59.34",
+            "--tags", "amenity",
+        ])
+    assert result.exit_code == 0, result.output
+    parsed = json.loads(result.output)
+    assert parsed["total"] == 12
+    MockClient.return_value.stats.assert_called_once_with(
+        group_by="amenity",
+        bbox="18.06,59.32,18.09,59.34",
+        tags=["amenity"],
+    )

@@ -120,13 +120,27 @@ Common filters:
 
 - `bbox="min_lon,min_lat,max_lon,max_lat"`
 - `location="lat,lng"` with `radius` in metres
-- `tags=["amenity=restaurant"]` (AND)
+- `within="relation/155790"` or `within="way/123"` (ST_Covers, including the boundary; not with bbox / radius / osm_ids)
+- `tags=["amenity=restaurant"]` or `tags=["ele>500"]` (AND; `>` is URL-encoded by the client)
 - `or_tags=["bicycle=yes", "bicycle=designated"]` (OR)
 - `not_tags=["access=private"]` (exclude)
 - `type="node" | "way" | "relation"`
 - `way_shape="polygon" | "line" | "all"` (omit = both shapes; `all` also means both)
 - `clip_geometry=True | False` (omit for the API default `True`; set `False` to keep full geometry outside bbox)
 - `cursor` (pagination; use SDK `meta.next_cursor` from previous page, sourced from `X-Next-Cursor`)
+
+`client.stats` calls `GET /v2/osm_features/stats`. Example amenity histogram:
+
+```python
+client.stats(
+    group_by="amenity",
+    bbox="18.05,59.32,18.10,59.34",
+    type="node",
+    tags=["amenity"],
+)
+# {"groups": [{"value": "restaurant", "count": 184}, {"value": "cafe", "count": 91},
+#             {"value": "bar", "count": 47}], "total": 412, "truncated": False}
+```
 
 
 
@@ -211,8 +225,8 @@ Results come back as summaries (ids, names, OSM tags, lon/lat scalars, `distance
 - Places: `places_search`, `places_nearby`, `places_details`
 - Geocode: `geocode` (Nominatim interim)
 - Routes: `routes_isochrone`, `routes_path`, `routes_optimized_path`
-- Generic OSM: `query` (one page), `query_all` (tiled pages)
-- Local (no HTTP): `nearest_within`, `filter_open`, `point_in_polygon`, `points_in_polygon`
+- Generic OSM: `query` (one page), `query_all` (tiled pages), `stats` (count/histogram)
+- Local (no HTTP): `nearest_within`, `pairs_within`, `filter_open`, `point_in_polygon`, `points_in_polygon`
 - Draw / export: `preview_map`, `export_geojson`
 
 #### Run MCP server manually
@@ -342,6 +356,8 @@ for pair in pairs:
 
 Each pair is `{"feature": <primary>, "distance_m": <float>, "nearest": <secondary>}`. The point comes from `geometry` when it is a Point, else `properties.centroid`. A feature with neither raises `ValueError`. Empty secondary returns `[]`. Distances are spherical haversine (mean Earth radius 6371000 m). Fine at search `limit` (default 100).
 
+`pairs_within` is the same join with every pair in a distance band (`min_distance_m` to `max_distance_m`), not just the nearest neighbour. Pass the same collection on both sides to emit each unordered pair once.
+
 ### Walk and bike routes
 
 Routing follows the OSM walk or bicycle network (query-time Dijkstra on tiled highways). Omit `travel_mode` to use the API default (`WALK`), or pass `"BICYCLE"`. Walk treats the graph as undirected (oneways ignored). Bicycle is directed and honors OSM oneway, `oneway:bicycle`, contraflow cycleways, and implied roundabout oneway. Car routing (`DRIVE`) is not available.
@@ -390,7 +406,7 @@ print(opt["status"], opt.get("ordered_stops"), opt.get("distance_m"))
 
 Points accept `lon` or `lng`. Places methods send `{lat, lng}`. Route methods send `{lon, lat}`.
 
-Local helpers (no HTTP): `nearest_within(primary, secondary, max_distance_m)` for "X near Y", and `point_in_geometry(lon, lat, geom)` for isochrone containment.
+Local helpers (no HTTP): `nearest_within` / `pairs_within` for "X near Y", and `point_in_geometry(lon, lat, geom)` for isochrone containment.
 
 ## CLI
 

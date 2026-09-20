@@ -95,6 +95,7 @@ class FakeClient:
         self.optimized: dict | None = None
         self.query_result: dict | None = None
         self.query_all_result: dict | None = None
+        self.stats_result: dict | None = None
 
     def places_search(self, **kwargs):
         self.calls.append(("places_search", kwargs))
@@ -127,6 +128,10 @@ class FakeClient:
     def query_all(self, **kwargs):
         self.calls.append(("query_all", kwargs))
         return self.query_all_result
+
+    def stats(self, **kwargs):
+        self.calls.append(("stats", kwargs))
+        return self.stats_result
 
 
 def test_point_in_geometry_square():
@@ -286,8 +291,13 @@ def test_restaurants_near_stations_pairs():
     assert pairs["items"][0]["nearest_lon"] == 18.07
     assert pairs["items"][0]["nearest_lat"] == 59.316
     exported = session.export_geojson(pairs["collection_id"])
-    assert exported["features"][0]["properties"]["nearest_id"] == "node/s1"
-    assert exported["features"][0]["properties"]["distance_m"] < 150
+    ids = {f["id"] for f in exported["features"]}
+    assert ids == {"node/r1", "node/s1"}
+    primary = next(f for f in exported["features"] if f["id"] == "node/r1")
+    secondary = next(f for f in exported["features"] if f["id"] == "node/s1")
+    assert primary["properties"]["nearest_id"] == "node/s1"
+    assert primary["properties"]["distance_m"] < 150
+    assert secondary["properties"]["pair_primary_id"] == "node/r1"
 
 
 def test_nearest_within_keeps_every_primary_and_caps_items():
@@ -314,6 +324,29 @@ def test_nearest_within_rejects_over_comparison_cap(monkeypatch):
     stations = session.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["railway=station"])
     with pytest.raises(ValueError, match=r"5×5 comparisons"):
         session.nearest_within(restaurants["collection_id"], stations["collection_id"], max_distance_m=150)
+
+
+def test_pairs_within_two_sets_and_self_join():
+    client = FakeClient()
+    session = GeoAgentSession(client)
+    client.search = _fc(
+        _feat("node/r1", 18.0702, 59.316, name="Pelikan"),
+        _feat("node/r2", 18.0703, 59.316, name="Other"),
+    )
+    restaurants = session.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=restaurant"])
+    client.search = _fc(_feat("node/s1", 18.07, 59.316, name="Medborgarplatsen"))
+    stations = session.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["railway=station"])
+    pairs = session.pairs_within(
+        restaurants["collection_id"], stations["collection_id"], max_distance_m=150
+    )
+    assert_no_coordinate_arrays(pairs)
+    assert pairs["count"] == 2
+    self_pairs = session.pairs_within(
+        restaurants["collection_id"], restaurants["collection_id"], max_distance_m=150
+    )
+    assert self_pairs["count"] == 1
+    ids = {self_pairs["items"][0]["id"], self_pairs["items"][0]["nearest_id"]}
+    assert ids == {"node/r1", "node/r2"}
 
 
 def test_open_at_clock_filter():
@@ -609,6 +642,47 @@ def test_points_in_polygon_keeps_nearby_distance():
     assert exported["search_origin"] == {"lat": 59.316, "lng": 18.075}
 
 
+def test_stats_summarizes_histogram():
+    extra = [{"value": f"x{i}", "count": 1} for i in range(SUMMARY_ITEM_CAP)]
+    client = FakeClient()
+    client.stats_result = {
+        "groups": [{"value": "pub", "count": 412}] + extra,
+        "total": 412 + SUMMARY_ITEM_CAP,
+        "truncated": False,
+    }
+    session = GeoAgentSession(client)
+    out = session.stats(
+        group_by="amenity",
+        bbox="17.8,59.2,18.2,59.4",
+        tags=["amenity=pub"],
+    )
+    assert_no_coordinate_arrays(out)
+    assert "collection_id" not in out
+    assert "items_truncated" not in out
+    assert out["total"] == 412 + SUMMARY_ITEM_CAP
+    assert out["truncated"] is False
+    assert len(out["groups"]) == 1 + SUMMARY_ITEM_CAP
+    assert out["groups"][0] == {"value": "pub", "count": 412}
+    assert out["groups"][-1] == extra[-1]
+    assert client.calls[0] == (
+        "stats",
+        {
+            "group_by": "amenity",
+            "bbox": "17.8,59.2,18.2,59.4",
+            "location": None,
+            "radius": None,
+            "type": None,
+            "way_shape": None,
+            "tags": ["amenity=pub"],
+            "or_tags": None,
+            "not_tags": None,
+            "within": None,
+            "limit": None,
+            "disable_budget_warning": False,
+        },
+    )
+
+
 def test_query_and_details_summaries():
     client = FakeClient()
     client.query_result = _fc(_feat("way/1", 18.07, 59.32, name="Tantolunden"))
@@ -676,6 +750,20 @@ def test_query_summaries_include_has_more():
     assert drained["has_more"] is True
     assert client.calls[-1][1]["max_features"] == QUERY_ALL_MAX_FEATURES
     assert QUERY_ALL_MAX_FEATURES == 10000
+
+
+def test_query_and_query_all_forward_within():
+    client = FakeClient()
+    fc = _fc(_feat("node/1", 18.07, 59.32, name="Cafe"))
+    client.query_result = fc
+    client.query_all_result = fc
+    session = GeoAgentSession(client)
+    session.query(within="relation/155790", type="node", tags=["amenity"])
+    assert client.calls[0][0] == "query"
+    assert client.calls[0][1]["within"] == "relation/155790"
+    session.query_all(within="relation/155790", tags=["leisure=park"], bbox_tiles=1)
+    assert client.calls[-1][0] == "query_all"
+    assert client.calls[-1][1]["within"] == "relation/155790"
 
 
 def test_query_all_rejects_unlimited_max_features():
