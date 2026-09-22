@@ -13,6 +13,7 @@ from osmfeatures import (
     OSMFeaturesAuthError,
     OSMFeaturesAPIError,
     OSMFeaturesRateLimitError,
+    OSMFeaturesTimeoutError,
     CostEstimate,
     OSMFeatureCollection,
     RetryConfig,
@@ -319,6 +320,24 @@ async def test_async_query_all_default_tiles_two_requests():
 
     assert transport.call_count == 2
     assert {f.id for f in result.features} == {"way/1", "way/2"}
+
+
+async def test_async_query_all_timeout_does_not_fetch_next_page():
+    transport = _MockTransport(
+        [
+            features_page([make_test_feature("way/1")], has_more=True, next_cursor="c1"),
+            features_page([make_test_feature("way/2")], has_more=False),
+        ]
+    )
+    client = _make_client(transport)
+
+    async with client:
+        with pytest.raises(OSMFeaturesTimeoutError, match="timeout"):
+            await client.query_all_async(
+                bbox="18.06,59.32,18.09,59.34", bbox_tiles=1, timeout=0
+            )
+
+    assert transport.call_count == 1
 
 
 # ---------------------------------------------------------------------------

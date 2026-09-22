@@ -9,6 +9,7 @@ Official Python client for the [MapLark OSM Features API](https://maplark.com) w
 - [Basic API usage](#basic-api-usage)
   - [Create a client](#create-a-client)
   - [Query OSM features](#query-osm-features)
+  - [Histogram stats](#histogram-stats)
   - [Auto-pagination and bbox tiling](#auto-pagination-and-bbox-tiling)
   - [Async client](#async-client)
   - [Convenience helpers](#convenience-helpers)
@@ -129,6 +130,10 @@ Common filters:
 - `clip_geometry=True | False` (omit for the API default `True`; set `False` to keep full geometry outside bbox)
 - `cursor` (pagination; use SDK `meta.next_cursor` from previous page, sourced from `X-Next-Cursor`)
 
+
+#### Histogram stats
+Analyze feature counts and stats with a histogram over a very large area - city and country sized bounding boxes allowed. For example, you can find out how many cafes, bars, and restaurants are in different cities or countries.
+
 `client.stats` calls `GET /v2/osm_features/stats`. Example amenity histogram:
 
 ```python
@@ -143,7 +148,6 @@ client.stats(
 ```
 
 
-
 ### Auto-pagination and bbox tiling
 
 Use `query_all()` to fetch all pages and deduplicate by OSM feature id. By default it splits the bbox into 2 tiles (power of 2) so large areas use more requests; pass `bbox_tiles=1` to disable, or raise it (`4`, `8`, …) for bigger areas:
@@ -153,6 +157,7 @@ all_restaurants = client.query_all(
     bbox="18.063,59.322,18.082,59.332",
     tags="amenity=restaurant",
     max_features=55_000,  # client total cap; pass None for no cap
+    timeout=60,  # wall-clock for the whole drain; pass None for no cap
 )
 
 print(all_restaurants.meta.returned)

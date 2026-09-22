@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import requests
@@ -37,9 +38,10 @@ from .models import (
     CostEstimate,
     OSMFeature,
     OSMFeatureCollection,
+    OSMFeaturesTimeoutError,
     ResponseMeta,
 )
-from ._pagination import paginate_all
+from ._pagination import DEFAULT_QUERY_ALL_TIMEOUT_S, paginate_all, query_all_deadline
 from .retry import RetryConfig, retry
 
 
@@ -305,6 +307,7 @@ class OSMFeaturesClient:
         limit_per_page: int | None = None,
         bbox_tiles: int = 2,
         max_features: int | None = 55_000,
+        timeout: float | None = DEFAULT_QUERY_ALL_TIMEOUT_S,
         **params: Any,
     ) -> OSMFeatureCollection:
         """Fetch *all* pages of OSM elements, auto-paginating until complete.
@@ -325,6 +328,13 @@ class OSMFeaturesClient:
         max_features:
             Cap on merged features. Defaults to 55_000. Pass ``None`` for no
             upper limit (API rate limits still apply).
+        timeout:
+            Wall-clock seconds for this call (all pages and tiles). Defaults
+            to 60. Pass ``None`` for no cap. Independent of the per-request
+            HTTP timeout on the client. Raises
+            :class:`~osmfeatures.OSMFeaturesTimeoutError` before starting
+            another page once the budget is spent; a finished last page is
+            returned even if it ran long.
         **params:
             Same as :meth:`query`, except ``limit`` and ``cursor`` (managed
             internally). Non-GeoJSON ``accept`` is not supported here.
@@ -353,7 +363,13 @@ class OSMFeaturesClient:
         feature_lists: list[list[dict[str, Any]]] = []
         count = 0
         truncated = False
-        for tile_bbox in tile_bboxes:
+        deadline = query_all_deadline(timeout)
+        for i, tile_bbox in enumerate(tile_bboxes):
+            if i and deadline is not None and time.monotonic() >= deadline:
+                raise OSMFeaturesTimeoutError(
+                    f"query_all exceeded {timeout}s timeout",
+                    timeout=timeout,
+                )
             if max_features is not None and count >= max_features:
                 truncated = True
                 break
@@ -362,7 +378,11 @@ class OSMFeaturesClient:
                 tile_params["bbox"] = tile_bbox
             tile_features: list[dict[str, Any]] = []
             for page_features in paginate_all(
-                self._raw_query, tile_params, limit_per_page=limit_per_page
+                self._raw_query,
+                tile_params,
+                limit_per_page=limit_per_page,
+                deadline=deadline,
+                timeout=timeout,
             ):
                 if max_features is not None:
                     room = max_features - count

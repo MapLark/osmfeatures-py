@@ -3,7 +3,7 @@
 Each helper is a thin, typed wrapper that pre-fills the correct OSM tag
 filters, geometry shape, and element type.  All accept ``**kwargs`` that
 are forwarded directly to ``client.query_all()`` so you can still pass
-``limit_per_page``, ``max_features``, ``disable_budget_warning``, etc.
+``limit_per_page``, ``max_features``, ``timeout``, ``disable_budget_warning``, etc.
 """
 
 from __future__ import annotations

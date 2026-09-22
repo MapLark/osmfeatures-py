@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import httpx
@@ -37,9 +38,14 @@ from .models import (
     CostEstimate,
     OSMFeature,
     OSMFeatureCollection,
+    OSMFeaturesTimeoutError,
     ResponseMeta,
 )
-from ._pagination import paginate_all_async
+from ._pagination import (
+    DEFAULT_QUERY_ALL_TIMEOUT_S,
+    paginate_all_async,
+    query_all_deadline,
+)
 from .retry import RetryConfig, retry_async
 
 
@@ -247,6 +253,7 @@ class AsyncOSMFeaturesClient:
         limit_per_page: int | None = None,
         bbox_tiles: int = 2,
         max_features: int | None = 55_000,
+        timeout: float | None = DEFAULT_QUERY_ALL_TIMEOUT_S,
         **params: Any,
     ) -> OSMFeatureCollection:
         """Fetch *all* pages of OSM elements asynchronously, auto-paginating.
@@ -257,6 +264,10 @@ class AsyncOSMFeaturesClient:
         disable tiling.
 
         ``max_features`` defaults to 55_000; pass ``None`` for no upper limit.
+        ``timeout`` defaults to 60 seconds for the whole call (all pages and
+        tiles); pass ``None`` for no cap. Raises
+        :class:`~osmfeatures.OSMFeaturesTimeoutError` before starting another
+        page once the budget is spent.
         Do not pass ``limit`` or ``cursor`` (use ``limit_per_page`` / managed
         pagination). Non-GeoJSON ``accept`` is not supported.
         """
@@ -285,7 +296,13 @@ class AsyncOSMFeaturesClient:
         feature_lists: list[list[dict[str, Any]]] = []
         count = 0
         truncated = False
-        for tile_bbox in tile_bboxes:
+        deadline = query_all_deadline(timeout)
+        for i, tile_bbox in enumerate(tile_bboxes):
+            if i and deadline is not None and time.monotonic() >= deadline:
+                raise OSMFeaturesTimeoutError(
+                    f"query_all exceeded {timeout}s timeout",
+                    timeout=timeout,
+                )
             if max_features is not None and count >= max_features:
                 truncated = True
                 break
@@ -294,7 +311,11 @@ class AsyncOSMFeaturesClient:
                 tile_params["bbox"] = tile_bbox
             tile_features: list[dict[str, Any]] = []
             async for page_features in paginate_all_async(
-                self._raw_query, tile_params, limit_per_page=limit_per_page
+                self._raw_query,
+                tile_params,
+                limit_per_page=limit_per_page,
+                deadline=deadline,
+                timeout=timeout,
             ):
                 if max_features is not None:
                     room = max_features - count

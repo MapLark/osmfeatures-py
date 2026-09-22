@@ -7,7 +7,7 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 import responses as rsps
 
-from osmfeatures import split_bbox_tiles
+from osmfeatures import OSMFeaturesTimeoutError, split_bbox_tiles
 from tests.conftest import add_features_response, make_test_feature
 
 
@@ -136,6 +136,47 @@ def test_query_all_max_features_none_has_no_cap(client):
         bbox_tiles=1,
         max_features=None,
     )
+
+    assert len(result.features) == 1
+    assert result.meta.has_more is False
+
+
+@rsps.activate
+def test_query_all_timeout_does_not_fetch_next_page(client):
+    page1 = [make_test_feature("way/1")]
+    page2 = [make_test_feature("way/2")]
+    add_features_response(page1, has_more=True, next_cursor="cursor-1")
+    add_features_response(page2, has_more=False)
+
+    with pytest.raises(OSMFeaturesTimeoutError, match="timeout") as exc_info:
+        client.query_all(bbox="18.06,59.32,18.09,59.34", bbox_tiles=1, timeout=0)
+
+    assert exc_info.value.timeout == 0
+    assert len(rsps.calls) == 1
+
+
+@rsps.activate
+def test_query_all_timeout_none_drains_all_pages(client):
+    page1 = [make_test_feature("way/1")]
+    page2 = [make_test_feature("way/2")]
+    add_features_response(page1, has_more=True, next_cursor="cursor-1")
+    add_features_response(page2, has_more=False)
+
+    result = client.query_all(
+        bbox="18.06,59.32,18.09,59.34",
+        bbox_tiles=1,
+        timeout=None,
+    )
+
+    assert {f.id for f in result.features} == {"way/1", "way/2"}
+    assert len(rsps.calls) == 2
+
+
+@rsps.activate
+def test_query_all_timeout_does_not_raise_when_last_page_finishes(client):
+    add_features_response([make_test_feature("way/1")], has_more=False)
+
+    result = client.query_all(bbox="18.06,59.32,18.09,59.34", bbox_tiles=1, timeout=0)
 
     assert len(result.features) == 1
     assert result.meta.has_more is False

@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import AsyncIterator, Iterator
 from typing import Any, Callable
 
-from osmfeatures.models import OSMFeatureCollection
+from osmfeatures.models import OSMFeatureCollection, OSMFeaturesTimeoutError
 
 
 _MAX_PAGES = 500  # hard safety cap - prevents infinite loops
+DEFAULT_QUERY_ALL_TIMEOUT_S = 60.0
+
+
+def query_all_deadline(timeout: float | None) -> float | None:
+    """Absolute monotonic deadline for a ``query_all`` call, or None if uncapped."""
+    if timeout is None:
+        return None
+    return time.monotonic() + timeout
 
 
 def paginate_all(
@@ -16,6 +25,8 @@ def paginate_all(
     params: dict[str, Any],
     *,
     limit_per_page: int | None = None,
+    deadline: float | None = None,
+    timeout: float | None = None,
 ) -> Iterator[list[dict[str, Any]]]:
     """Yield pages of raw feature dicts until ``X-Has-More`` is false.
 
@@ -64,6 +75,11 @@ def paginate_all(
                 f"API returned has_more=true but next_cursor ({next_cursor!r}) "
                 f"did not advance beyond current cursor ({cursor!r}) on page {page}."
             )
+        if deadline is not None and time.monotonic() >= deadline:
+            raise OSMFeaturesTimeoutError(
+                f"query_all exceeded {timeout}s timeout after {page + 1} page(s)",
+                timeout=timeout,
+            )
         cursor = next_cursor
 
     raise RuntimeError(
@@ -77,6 +93,8 @@ async def paginate_all_async(
     params: dict[str, Any],
     *,
     limit_per_page: int | None = None,
+    deadline: float | None = None,
+    timeout: float | None = None,
 ) -> AsyncIterator[list[dict[str, Any]]]:
     """Async counterpart to :func:`paginate_all` (yields pages)."""
     base = {k: v for k, v in params.items() if k not in ("limit", "cursor")}
@@ -106,6 +124,11 @@ async def paginate_all_async(
             raise RuntimeError(
                 f"API returned has_more=true but next_cursor ({next_cursor!r}) "
                 f"did not advance beyond current cursor ({cursor!r}) on page {page}."
+            )
+        if deadline is not None and time.monotonic() >= deadline:
+            raise OSMFeaturesTimeoutError(
+                f"query_all exceeded {timeout}s timeout after {page + 1} page(s)",
+                timeout=timeout,
             )
         cursor = next_cursor
 

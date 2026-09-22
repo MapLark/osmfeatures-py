@@ -16,6 +16,7 @@ from .models import (
     OSMFeaturesAuthError,
     OSMFeaturesRateLimitError,
     OSMFeaturesAPIError,
+    OSMFeaturesTimeoutError,
 )
 from .retry import RetryConfig
 
@@ -227,6 +228,9 @@ def query_cmd(
         sys.exit(1)
     except OSMFeaturesAPIError as exc:
         click.echo(f"API error (HTTP {exc.status_code}): {exc}", err=True)
+        sys.exit(1)
+    except OSMFeaturesTimeoutError as exc:
+        click.echo(f"Timeout: {exc}", err=True)
         sys.exit(1)
     except ValueError as exc:
         click.echo(f"Error: {exc}", err=True)
