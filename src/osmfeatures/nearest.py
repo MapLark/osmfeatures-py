@@ -90,7 +90,7 @@ def nearest_within(
         raise ValueError(
             f"nearest_within join is {n}×{m} comparisons "
             f"(cap {max_comparisons}). Shrink the collections "
-            "(places_search/nearby limit, not query_all)."
+            "(places_search/nearby limit, not query)."
         )
 
     sec_pts = [(s, _lon_lat(s)) for s in secondaries]
@@ -146,7 +146,7 @@ def pairs_within(
         raise ValueError(
             f"pairs_within join is {shape} comparisons "
             f"(cap {max_comparisons}). Shrink the collections "
-            "(places_search/nearby limit, not query_all)."
+            "(places_search/nearby limit, not query)."
         )
 
     pairs: list[dict[str, Any]] = []

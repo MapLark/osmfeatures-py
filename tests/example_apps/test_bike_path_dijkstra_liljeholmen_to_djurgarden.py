@@ -51,14 +51,12 @@ def test_bike_path_dijkstra_liljeholmen_to_djurgarden(client: OSMFeaturesClient)
 
     for tile_bbox in CORRIDOR_TILES:
         tile_data = client.query_all(
-            limit_per_page=500,
             bbox=tile_bbox,
             type="way",
             way_shape="line",
             clip_geometry=False,
             or_tags=["bicycle", "highway=cycleway"],
             not_tags=["bicycle=no", "bicycle=private", "bicycle=dismount", "bicycle=use_sidepath"],
-            disable_budget_warning=True,
         )
         assert isinstance(tile_data, OSMFeatureCollection)
         for f in tile_data["features"]:

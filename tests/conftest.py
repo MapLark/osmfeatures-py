@@ -15,9 +15,8 @@ from osmfeatures import OSMFeaturesClient, RetryConfig
 
 FAKE_API_KEY = "sk-test-1234"
 BASE_URL = "http://testserver"
-FEATURES_URL = f"{BASE_URL}/v2/osm_features"
-COST_URL = f"{BASE_URL}/v2/osm_features/cost"
-STATS_URL = f"{BASE_URL}/v2/osm_features/stats"
+FEATURES_V3_URL = f"{BASE_URL}/v3/osm_features"
+STATS_URL = f"{BASE_URL}/v2/osm_features/count"
 
 
 def make_test_feature(fid: str = "way/1", tags: dict[str, str] | None = None) -> dict[str, Any]:
@@ -72,11 +71,12 @@ def add_features_response(
     has_more: bool = False,
     next_cursor: str | None = None,
     status: int = 200,
+    url: str = FEATURES_V3_URL,
 ) -> None:
-    """Register a mocked GET /v2/osm_features with body + pagination headers."""
+    """Register a mocked GET features URL with body + pagination headers."""
     rsps.add(
         rsps.GET,
-        FEATURES_URL,
+        url,
         json=make_feature_collection(features),
         headers=pagination_headers(features, has_more=has_more, next_cursor=next_cursor),
         status=status,

@@ -87,7 +87,6 @@ def test_lakeside_ice_cream_hunt(client: OSMFeaturesClient):
         type="node,way",
         tags="amenity=ice_cream",
         max_features=50,
-        disable_budget_warning=True,
     )
     assert isinstance(ice_cream, OSMFeatureCollection)
 

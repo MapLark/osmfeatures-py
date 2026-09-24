@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import time
 from typing import Any
 
 import httpx
 
-from .chunking import merge_features, shapely_to_bbox, split_bbox_tiles
+from .chunking import shapely_to_bbox
 from ._geo_agent import (
     PLACES_NEARBY_PATH,
     PLACES_SEARCH_PATH,
@@ -35,17 +34,11 @@ from ._http import (
 )
 from .models import (
     BinaryQueryResult,
-    CostEstimate,
     OSMFeature,
     OSMFeatureCollection,
-    OSMFeaturesTimeoutError,
     ResponseMeta,
 )
-from ._pagination import (
-    DEFAULT_QUERY_ALL_TIMEOUT_S,
-    paginate_all_async,
-    query_all_deadline,
-)
+from .client import DEFAULT_MAX_FEATURES, _V3_PATH, _resolve_query_limit
 from .retry import RetryConfig, retry_async
 
 
@@ -103,7 +96,7 @@ class AsyncOSMFeaturesClient:
 
         async def _do() -> httpx.Response:
             return await client.get(
-                f"{self._base_url}/v2/osm_features",
+                f"{self._base_url}{_V3_PATH}",
                 params=param_list,
                 headers={"Accept": accept or GEOJSON_ACCEPT},
             )
@@ -177,23 +170,22 @@ class AsyncOSMFeaturesClient:
         tags: list[str] | str | None = None,
         or_tags: list[str] | str | None = None,
         not_tags: list[str] | str | None = None,
-        limit: int | None = None,
-        cursor: str | None = None,
         zoom: float | None = None,
         min_length_m: float | None = None,
         max_length_m: float | None = None,
         min_area_m2: float | None = None,
         max_area_m2: float | None = None,
-        disable_budget_warning: bool = False,
         geometry: Any = None,
         centroid: bool = False,
         clip_geometry: bool | None = None,
+        max_features: int | None = DEFAULT_MAX_FEATURES,
         accept: str | None = None,
+        limit: int | None = None,
     ) -> OSMFeatureCollection | BinaryQueryResult:
-        """Fetch a single page of OSM elements asynchronously.
+        """One ``/v3/osm_features`` call. Same filters as :meth:`OSMFeaturesClient.query`.
 
-        Same parameters as :meth:`OSMFeaturesClient.query`. Non-GeoJSON
-        ``accept`` values return :class:`BinaryQueryResult`.
+        No cursor and no bbox tiling. Use the sync client for ``split_until_fit``.
+        Non-GeoJSON ``accept`` returns :class:`BinaryQueryResult`.
         """
         if geometry is not None:
             bbox = shapely_to_bbox(geometry)
@@ -221,10 +213,9 @@ class AsyncOSMFeaturesClient:
             params["or_tags"] = or_tags
         if not_tags is not None:
             params["not_tags"] = not_tags
-        if limit is not None:
-            params["limit"] = limit
-        if cursor is not None:
-            params["cursor"] = cursor
+        resolved_limit = _resolve_query_limit(limit)
+        if resolved_limit is not None:
+            params["limit"] = resolved_limit
         if zoom is not None:
             params["zoom"] = zoom
         if min_length_m is not None:
@@ -235,142 +226,31 @@ class AsyncOSMFeaturesClient:
             params["min_area_m2"] = min_area_m2
         if max_area_m2 is not None:
             params["max_area_m2"] = max_area_m2
-        if disable_budget_warning:
-            params["disable_budget_warning"] = disable_budget_warning
         if centroid:
             params["centroid"] = True
         if clip_geometry is not None:
             params["clip_geometry"] = clip_geometry
 
-        if is_geojson_accept(accept):
-            return await self._raw_query(params, accept=accept)
-        resp = await self._request(params, accept=accept)
-        return BinaryQueryResult.from_http(resp.content, resp.headers)
+        if not is_geojson_accept(accept):
+            resp = await self._request(params, accept=accept)
+            return BinaryQueryResult.from_http(resp.content, resp.headers)
 
-    async def query_all_async(
-        self,
-        *,
-        limit_per_page: int | None = None,
-        bbox_tiles: int = 2,
-        max_features: int | None = 55_000,
-        timeout: float | None = DEFAULT_QUERY_ALL_TIMEOUT_S,
-        **params: Any,
-    ) -> OSMFeatureCollection:
-        """Fetch *all* pages of OSM elements asynchronously, auto-paginating.
-
-        When ``bbox`` is present, splits it into *bbox_tiles* sub-bboxes
-        (power of 2; default 2), paginates each tile sequentially, then
-        merges and deduplicates by feature ``id``. Use ``bbox_tiles=1`` to
-        disable tiling.
-
-        ``max_features`` defaults to 55_000; pass ``None`` for no upper limit.
-        ``timeout`` defaults to 60 seconds for the whole call (all pages and
-        tiles); pass ``None`` for no cap. Raises
-        :class:`~osmfeatures.OSMFeaturesTimeoutError` before starting another
-        page once the budget is spent.
-        Do not pass ``limit`` or ``cursor`` (use ``limit_per_page`` / managed
-        pagination). Non-GeoJSON ``accept`` is not supported.
-        """
-        if "limit" in params:
-            raise ValueError(
-                "query_all_async does not take limit; use limit_per_page (page size) "
-                "and max_features (total cap)"
-            )
-        if not is_geojson_accept(params.pop("accept", None)):
-            raise TypeError(
-                "query_all_async() only supports GeoJSON; use query_async(accept=...) "
-                "for binary/table encodings"
-            )
-        if "cursor" in params:
-            raise ValueError("query_all_async manages cursors; do not pass cursor")
-
-        if "geometry" in params:
-            geom = params.pop("geometry")
-            params["bbox"] = shapely_to_bbox(geom)
-
-        bbox = params.get("bbox")
-        tile_bboxes = (
-            split_bbox_tiles(bbox, bbox_tiles) if isinstance(bbox, str) else [None]
-        )
-
-        feature_lists: list[list[dict[str, Any]]] = []
-        count = 0
-        truncated = False
-        deadline = query_all_deadline(timeout)
-        for i, tile_bbox in enumerate(tile_bboxes):
-            if i and deadline is not None and time.monotonic() >= deadline:
-                raise OSMFeaturesTimeoutError(
-                    f"query_all exceeded {timeout}s timeout",
-                    timeout=timeout,
-                )
-            if max_features is not None and count >= max_features:
-                truncated = True
-                break
-            tile_params = dict(params)
-            if tile_bbox is not None:
-                tile_params["bbox"] = tile_bbox
-            tile_features: list[dict[str, Any]] = []
-            async for page_features in paginate_all_async(
-                self._raw_query,
-                tile_params,
-                limit_per_page=limit_per_page,
-                deadline=deadline,
-                timeout=timeout,
-            ):
-                if max_features is not None:
-                    room = max_features - count
-                    if room <= 0:
-                        truncated = True
-                        break
-                    if len(page_features) > room:
-                        tile_features.extend(page_features[:room])
-                        count += room
-                        truncated = True
-                        break
-                tile_features.extend(page_features)
-                count += len(page_features)
-            feature_lists.append(tile_features)
-
-        deduped = merge_features(feature_lists)
-        if max_features is not None and len(deduped) > max_features:
-            deduped = deduped[:max_features]
+        collection = await self._raw_query(params)
+        page = list(collection.get("features", []))
+        truncated = collection.meta.has_more
+        if max_features is not None and len(page) > max_features:
+            page = page[:max_features]
             truncated = True
         return OSMFeatureCollection(
-            features=[OSMFeature.from_dict(f) for f in deduped],
-            meta=ResponseMeta(returned=len(deduped), has_more=truncated),
+            features=[OSMFeature.from_dict(f) for f in page],
+            meta=ResponseMeta(returned=len(page), has_more=truncated),
         )
 
-    async def estimate_cost_async(self, **params: Any) -> CostEstimate:
-        """Call ``/v2/osm_features/cost`` to preflight the credit cost.
+    async def query_all_async(self, **kwargs: Any) -> OSMFeatureCollection | BinaryQueryResult:
+        """Same as :meth:`query_async`."""
+        return await self.query_async(**kwargs)
 
-        ``within`` loads the container from PostGIS (RPS token spent) so
-        envelope area matches the query.
-        """
-        if "geometry" in params:
-            geom = params.pop("geometry")
-            params["bbox"] = shapely_to_bbox(geom)
-
-        param_list = build_params(params)
-        client = await self._get_client()
-
-        async def _do() -> httpx.Response:
-            return await client.get(
-                f"{self._base_url}/v2/osm_features/cost",
-                params=param_list,
-            )
-
-        resp = await retry_async(
-            _do,
-            self._retry,
-            get_status=lambda r: r.status_code,
-            get_headers=lambda r: dict(r.headers),
-            is_rate_limit_error=is_429_retryable,
-            build_rate_limit_error=build_rate_limit_error,
-        )
-        raise_for_response(resp)
-        return CostEstimate.from_dict(resp.json())
-
-    async def stats_async(
+    async def count_async(
         self,
         *,
         group_by: str,
@@ -390,11 +270,11 @@ class AsyncOSMFeaturesClient:
         max_area_m2: float | None = None,
         disable_budget_warning: bool = False,
     ) -> dict[str, Any]:
-        """``GET /v2/osm_features/stats``: count features grouped by a tag key.
+        """``GET /v2/osm_features/count``: count features grouped by a tag key.
 
-        Same as :meth:`OSMFeaturesClient.stats`. Example::
+        Same as :meth:`OSMFeaturesClient.count`. Example::
 
-            await client.stats_async(
+            await client.count_async(
                 group_by="amenity",
                 bbox="18.05,59.32,18.10,59.34",
                 type="node",
@@ -438,7 +318,7 @@ class AsyncOSMFeaturesClient:
 
         async def _do() -> httpx.Response:
             return await client.get(
-                f"{self._base_url}/v2/osm_features/stats",
+                f"{self._base_url}/v2/osm_features/count",
                 params=param_list,
             )
 

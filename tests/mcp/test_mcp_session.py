@@ -8,7 +8,6 @@ import pytest
 
 from osmfeatures.mcp._mcp_session import (
     GeoAgentSession,
-    QUERY_ALL_MAX_FEATURES,
     SUMMARY_ITEM_CAP,
     assert_no_coordinate_arrays,
     with_search_origin,
@@ -94,7 +93,6 @@ class FakeClient:
         self.path: dict | None = None
         self.optimized: dict | None = None
         self.query_result: dict | None = None
-        self.query_all_result: dict | None = None
         self.stats_result: dict | None = None
 
     def places_search(self, **kwargs):
@@ -125,12 +123,8 @@ class FakeClient:
         self.calls.append(("query", kwargs))
         return self.query_result
 
-    def query_all(self, **kwargs):
-        self.calls.append(("query_all", kwargs))
-        return self.query_all_result
-
-    def stats(self, **kwargs):
-        self.calls.append(("stats", kwargs))
+    def count(self, **kwargs):
+        self.calls.append(("count", kwargs))
         return self.stats_result
 
 
@@ -665,7 +659,7 @@ def test_stats_summarizes_histogram():
     assert out["groups"][0] == {"value": "pub", "count": 412}
     assert out["groups"][-1] == extra[-1]
     assert client.calls[0] == (
-        "stats",
+        "count",
         {
             "group_by": "amenity",
             "bbox": "17.8,59.2,18.2,59.4",
@@ -710,31 +704,6 @@ def test_query_and_details_summaries():
     assert exported["features"][0]["geometry"]["coordinates"] == [18.075, 59.316]
 
 
-def test_query_all_forwards_bbox_tiles():
-    client = FakeClient()
-    client.query_all_result = _fc(
-        _feat("way/1", 18.07, 59.32, name="Park A"),
-        _feat("way/2", 18.08, 59.32, name="Park B"),
-    )
-    session = GeoAgentSession(client)
-    out = session.query_all(
-        bbox="18.05,59.31,18.12,59.36",
-        tags=["leisure=park"],
-        way_shape="polygon",
-        bbox_tiles=4,
-        limit_per_page=500,
-        max_features=10_000,
-    )
-    assert_no_coordinate_arrays(out)
-    assert out["count"] == 2
-    assert client.calls[-1][0] == "query_all"
-    assert client.calls[-1][1]["bbox_tiles"] == 4
-    assert client.calls[-1][1]["limit_per_page"] == 500
-    assert client.calls[-1][1]["max_features"] == 10_000
-    assert client.calls[-1][1]["centroid"] is True
-    assert "limit" not in client.calls[-1][1]
-
-
 def test_query_summaries_include_has_more():
     client = FakeClient()
     truncated = OSMFeatureCollection(
@@ -742,36 +711,23 @@ def test_query_summaries_include_has_more():
         meta=ResponseMeta(returned=1, has_more=True),
     )
     client.query_result = truncated
-    client.query_all_result = truncated
     session = GeoAgentSession(client)
     page = session.query(bbox="18.05,59.31,18.10,59.33", tags=["leisure=park"])
-    drained = session.query_all(bbox="18.05,59.31,18.12,59.36", tags=["leisure=park"])
     assert page["has_more"] is True
-    assert drained["has_more"] is True
-    assert client.calls[-1][1]["max_features"] == QUERY_ALL_MAX_FEATURES
-    assert QUERY_ALL_MAX_FEATURES == 10000
+    assert client.calls[-1][0] == "query"
 
 
-def test_query_and_query_all_forward_within():
+def test_query_forwards_within():
     client = FakeClient()
     fc = _fc(_feat("node/1", 18.07, 59.32, name="Cafe"))
     client.query_result = fc
-    client.query_all_result = fc
     session = GeoAgentSession(client)
     session.query(within="relation/155790", type="node", tags=["amenity"])
     assert client.calls[0][0] == "query"
     assert client.calls[0][1]["within"] == "relation/155790"
-    session.query_all(within="relation/155790", tags=["leisure=park"], bbox_tiles=1)
-    assert client.calls[-1][0] == "query_all"
-    assert client.calls[-1][1]["within"] == "relation/155790"
-
-
-def test_query_all_rejects_unlimited_max_features():
-    session = GeoAgentSession(FakeClient())
-    with pytest.raises(ValueError, match="cannot be None"):
-        session.query_all(bbox="18.05,59.31,18.12,59.36", max_features=None)
-    with pytest.raises(ValueError, match="positive"):
-        session.query_all(bbox="18.05,59.31,18.12,59.36", max_features=0)
+    assert client.calls[0][1]["limit"] is None
+    session.query(within="relation/155790", type="node", tags=["amenity"], limit=50)
+    assert client.calls[-1][1]["limit"] == 50
 
 
 def test_query_summary_caps_items_not_count():

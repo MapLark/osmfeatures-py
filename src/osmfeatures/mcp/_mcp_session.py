@@ -22,8 +22,6 @@ from ._preview import validate_collection_id
 
 # Planner summaries list at most this many items; ``count`` is still the full total.
 SUMMARY_ITEM_CAP = 40
-# MCP ``query_all`` default cap (SDK ``query_all`` stays 55_000). Raise if ``has_more``.
-QUERY_ALL_MAX_FEATURES = 10000
 _STORE_MAX_COLLECTIONS = 64
 _CONTEXT_KEYS = ("evaluated_at", "timezone", "estimated_units")
 _HOURS_KEYS = ("evaluated_at", "timezone")
@@ -208,18 +206,6 @@ def _lon_lat(feat: dict[str, Any]) -> tuple[float, float] | None:
         if len(coords) >= 2:
             return float(coords[0]), float(coords[1])
     return None
-
-
-def _require_positive_max_features(max_features: int | None) -> int:
-    """MCP must not pass ``None`` through to the SDK (that means no cap)."""
-    if max_features is None:
-        raise ValueError(
-            "max_features cannot be None (unlimited). "
-            f"Omit it to use {QUERY_ALL_MAX_FEATURES}, or pass a positive int."
-        )
-    if max_features < 1:
-        raise ValueError("max_features must be a positive int")
-    return max_features
 
 
 def _summarize_stats(payload: Any) -> dict[str, Any]:
@@ -653,8 +639,8 @@ class GeoAgentSession:
         or_tags: list[str] | str | None = None,
         not_tags: list[str] | str | None = None,
         within: str | None = None,
-        limit: int | None = None,
         zoom: float | None = None,
+        limit: int | None = None,
     ) -> dict[str, Any]:
         payload = self._client.query(
             bbox=bbox,
@@ -666,9 +652,9 @@ class GeoAgentSession:
             or_tags=or_tags,
             not_tags=not_tags,
             within=within,
-            limit=limit,
             zoom=zoom,
             centroid=True,
+            limit=limit,
         )
         cid = self._put(payload)
         return self._summarize_query(cid, payload)
@@ -690,7 +676,7 @@ class GeoAgentSession:
         disable_budget_warning: bool = False,
     ) -> dict[str, Any]:
         """Histogram of tag values. Counts, not geometries. Report ``total``."""
-        payload = self._client.stats(
+        payload = self._client.count(
             group_by=group_by,
             bbox=bbox,
             location=location,
@@ -705,44 +691,6 @@ class GeoAgentSession:
             disable_budget_warning=disable_budget_warning,
         )
         return _summarize_stats(payload)
-
-    def query_all(
-        self,
-        *,
-        bbox: str | None = None,
-        location: str | None = None,
-        radius: float | None = None,
-        type: str | list[str] | None = None,  # noqa: A002
-        way_shape: str | None = None,
-        tags: list[str] | str | None = None,
-        or_tags: list[str] | str | None = None,
-        not_tags: list[str] | str | None = None,
-        within: str | None = None,
-        zoom: float | None = None,
-        limit_per_page: int | None = None,
-        bbox_tiles: int = 2,
-        max_features: int | None = QUERY_ALL_MAX_FEATURES,
-    ) -> dict[str, Any]:
-        """Drain every page (and bbox tiles). Same as CLI ``--all-pages --bbox-tiles``."""
-        cap = _require_positive_max_features(max_features)
-        payload = self._client.query_all(
-            bbox=bbox,
-            location=location,
-            radius=radius,
-            type=type,
-            way_shape=way_shape,
-            tags=tags,
-            or_tags=or_tags,
-            not_tags=not_tags,
-            within=within,
-            zoom=zoom,
-            limit_per_page=limit_per_page,
-            bbox_tiles=bbox_tiles,
-            max_features=cap,
-            centroid=True,
-        )
-        cid = self._put(payload)
-        return self._summarize_query(cid, payload)
 
     def _summarize_query(self, collection_id: str, payload: Any) -> dict[str, Any]:
         feats = _feature_seq(payload)

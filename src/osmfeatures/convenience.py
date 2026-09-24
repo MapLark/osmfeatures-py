@@ -2,8 +2,8 @@
 
 Each helper is a thin, typed wrapper that pre-fills the correct OSM tag
 filters, geometry shape, and element type.  All accept ``**kwargs`` that
-are forwarded directly to ``client.query_all()`` so you can still pass
-``limit_per_page``, ``max_features``, ``timeout``, ``disable_budget_warning``, etc.
+are forwarded directly to ``client.query()`` so you can still pass
+``max_features``, ``timeout``, ``split_until_fit``, ``bbox_tiles``, etc.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ def _q(
     if osm_ids is not None:
         params["osm_ids"] = osm_ids
     params.update(extra)
-    return client.query_all(**params)
+    return client.query(**params)
 
 
 # ---------------------------------------------------------------------------

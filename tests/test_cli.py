@@ -10,7 +10,7 @@ from click.testing import CliRunner
 
 from osmfeatures.cli import cli
 from osmfeatures import OSMFeatureCollection
-from osmfeatures.models import OSMFeature, ResponseMeta
+from osmfeatures.models import BinaryQueryResult, OSMFeature, ResponseMeta
 from tests.conftest import make_test_feature
 
 
@@ -92,6 +92,27 @@ def test_query_output_table():
     assert "id" in result.output
 
 
+def test_query_accept_writes_raw_bytes():
+    raw = BinaryQueryResult(
+        content=b"id,geometry\nway/1,POINT(18 59)\n",
+        meta=ResponseMeta(returned=1, has_more=False),
+    )
+    runner = CliRunner()
+    with patch("osmfeatures.cli.OSMFeaturesClient") as MockClient:
+        MockClient.return_value.query.return_value = raw
+        result = runner.invoke(cli, [
+            "query",
+            "--api-key", "sk-test",
+            "--bbox", "18.06,59.32,18.09,59.34",
+            "--accept", "text/csv",
+        ])
+
+    assert result.exit_code == 0, result.output
+    assert result.output == raw.content.decode()
+    kwargs = MockClient.return_value.query.call_args.kwargs
+    assert kwargs["accept"] == "text/csv"
+
+
 # ---------------------------------------------------------------------------
 # Missing API key
 # ---------------------------------------------------------------------------
@@ -154,83 +175,6 @@ def test_query_forwards_zoom_length_and_area_filters():
     )
 
 
-def test_query_limit_is_forwarded_as_limit_per_page_for_all_pages():
-    fc = make_fc()
-    runner = CliRunner()
-    with patch("osmfeatures.cli.OSMFeaturesClient") as MockClient:
-        MockClient.return_value.query_all.return_value = fc
-        result = runner.invoke(cli, [
-            "query",
-            "--api-key", "sk-test",
-            "--bbox", "18.06,59.32,18.09,59.34",
-            "--all-pages",
-            "--limit", "25",
-        ])
-
-    assert result.exit_code == 0, result.output
-    MockClient.return_value.query_all.assert_called_once_with(
-        bbox="18.06,59.32,18.09,59.34",
-        limit_per_page=25,
-        bbox_tiles=2,
-    )
-
-
-def test_query_all_pages_forwards_bbox_tiles():
-    fc = make_fc()
-    runner = CliRunner()
-    with patch("osmfeatures.cli.OSMFeaturesClient") as MockClient:
-        MockClient.return_value.query_all.return_value = fc
-        result = runner.invoke(cli, [
-            "query",
-            "--api-key", "sk-test",
-            "--bbox", "18.06,59.32,18.09,59.34",
-            "--all-pages",
-            "--bbox-tiles", "4",
-            "--limit", "25",
-        ])
-
-    assert result.exit_code == 0, result.output
-    MockClient.return_value.query_all.assert_called_once_with(
-        bbox="18.06,59.32,18.09,59.34",
-        limit_per_page=25,
-        bbox_tiles=4,
-    )
-
-
-def test_cost_forwards_zoom_length_and_area_filters():
-    runner = CliRunner()
-    with patch("osmfeatures.cli.OSMFeaturesClient") as MockClient:
-        MockClient.return_value.estimate_cost.return_value = type(
-            "Estimate",
-            (),
-            {"estimated_credits": 1, "hints": [], "tier_limits": {}},
-        )()
-        result = runner.invoke(cli, [
-            "cost",
-            "--api-key", "sk-test",
-            "--bbox", "18.06,59.32,18.09,59.34",
-            "--type", "way",
-            "--way-shape", "line",
-            "--zoom", "9",
-            "--min-length-m", "200",
-            "--max-length-m", "2000",
-            "--min-area-m2", "500",
-            "--max-area-m2", "5000",
-        ])
-
-    assert result.exit_code == 0, result.output
-    MockClient.return_value.estimate_cost.assert_called_once_with(
-        bbox="18.06,59.32,18.09,59.34",
-        type=["way"],
-        way_shape="line",
-        zoom=9.0,
-        min_length_m=200.0,
-        max_length_m=2000.0,
-        min_area_m2=500.0,
-        max_area_m2=5000.0,
-    )
-
-
 def test_mcp_missing_api_key(monkeypatch):
     monkeypatch.delenv("MAPLARK_API_KEY", raising=False)
     result = CliRunner().invoke(cli, ["mcp"])
@@ -288,7 +232,7 @@ def test_mcp_missing_instructions_is_not_missing_extra(monkeypatch):
 def test_stats_forwards_group_by():
     runner = CliRunner()
     with patch("osmfeatures.cli.OSMFeaturesClient") as MockClient:
-        MockClient.return_value.stats.return_value = {
+        MockClient.return_value.count.return_value = {
             "groups": [{"value": "cafe", "count": 12}],
             "total": 12,
             "truncated": False,
@@ -303,7 +247,7 @@ def test_stats_forwards_group_by():
     assert result.exit_code == 0, result.output
     parsed = json.loads(result.output)
     assert parsed["total"] == 12
-    MockClient.return_value.stats.assert_called_once_with(
+    MockClient.return_value.count.assert_called_once_with(
         group_by="amenity",
         bbox="18.06,59.32,18.09,59.34",
         tags=["amenity"],

@@ -49,7 +49,7 @@ def test_pedestrian_wavefront_bfs(client: OSMFeaturesClient):
             type="way",
             way_shape="line",
             tags=f"highway={hw}",
-            limit=300,
+            max_features=300,
         )
         assert isinstance(data, OSMFeatureCollection)
         for f in data["features"]:

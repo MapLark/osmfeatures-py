@@ -11,17 +11,14 @@ from osmfeatures import (
     OSMFeaturesAuthError,
     OSMFeaturesAPIError,
     OSMFeaturesRateLimitError,
-    CostEstimate,
     OSMFeatureCollection,
 )
 from tests.conftest import (
-    FEATURES_URL,
-    COST_URL,
+    FEATURES_V3_URL,
     STATS_URL,
     make_test_feature,
     make_feature_collection,
     add_features_response,
-    pagination_headers,
 )
 
 
@@ -33,7 +30,7 @@ from tests.conftest import (
 @rsps.activate
 def test_query_returns_feature_collection(client):
     features = [make_test_feature("way/1"), make_test_feature("way/2")]
-    rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection(features))
+    rsps.add(rsps.GET, FEATURES_V3_URL, json=make_feature_collection(features))
 
     result = client.query(bbox="18.06,59.32,18.09,59.34")
 
@@ -46,7 +43,7 @@ def test_query_returns_feature_collection(client):
 
 @rsps.activate
 def test_query_sends_auth_header(client):
-    rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection([]))
+    rsps.add(rsps.GET, FEATURES_V3_URL, json=make_feature_collection([]))
 
     client.query(bbox="18.06,59.32,18.09,59.34")
 
@@ -55,7 +52,7 @@ def test_query_sends_auth_header(client):
 
 @rsps.activate
 def test_query_repeatable_tags(client):
-    rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection([]))
+    rsps.add(rsps.GET, FEATURES_V3_URL, json=make_feature_collection([]))
 
     client.query(bbox="18.06,59.32,18.09,59.34", tags=["building", "name=City Hall"])
 
@@ -66,7 +63,7 @@ def test_query_repeatable_tags(client):
 
 @rsps.activate
 def test_query_single_type_param(client):
-    rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection([]))
+    rsps.add(rsps.GET, FEATURES_V3_URL, json=make_feature_collection([]))
 
     client.query(bbox="18.06,59.32,18.09,59.34", type="way")
 
@@ -76,7 +73,7 @@ def test_query_single_type_param(client):
 
 @rsps.activate
 def test_query_comma_separated_type_param(client):
-    rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection([]))
+    rsps.add(rsps.GET, FEATURES_V3_URL, json=make_feature_collection([]))
 
     client.query(bbox="18.06,59.32,18.09,59.34", type="way,relation")
 
@@ -87,7 +84,7 @@ def test_query_comma_separated_type_param(client):
 @rsps.activate
 def test_query_type_list_uses_single_comma_separated_query_value(client):
     """Regression: list-valued type must not emit repeated type keys."""
-    rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection([]))
+    rsps.add(rsps.GET, FEATURES_V3_URL, json=make_feature_collection([]))
 
     client.query(bbox="18.06,59.32,18.09,59.34", type=["node", "way"])
 
@@ -101,7 +98,7 @@ def test_query_type_list_uses_single_comma_separated_query_value(client):
 
 @rsps.activate
 def test_query_forwards_shape_all(client):
-    rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection([]))
+    rsps.add(rsps.GET, FEATURES_V3_URL, json=make_feature_collection([]))
 
     client.query(bbox="18.06,59.32,18.09,59.34", type="way", way_shape="all")
 
@@ -111,7 +108,7 @@ def test_query_forwards_shape_all(client):
 
 @rsps.activate
 def test_query_forwards_deprecated_shape_as_way_shape(client):
-    rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection([]))
+    rsps.add(rsps.GET, FEATURES_V3_URL, json=make_feature_collection([]))
 
     client.query(bbox="18.06,59.32,18.09,59.34", type="way", shape="all")
 
@@ -122,7 +119,7 @@ def test_query_forwards_deprecated_shape_as_way_shape(client):
 
 @rsps.activate
 def test_query_forwards_within_and_numeric_tag(client):
-    rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection([]))
+    rsps.add(rsps.GET, FEATURES_V3_URL, json=make_feature_collection([]))
 
     client.query(within="relation/155790", type="node", tags=["ele>500"])
 
@@ -132,13 +129,23 @@ def test_query_forwards_within_and_numeric_tag(client):
 
 
 @rsps.activate
-def test_stats_forwards_group_by(client):
+def test_query_does_not_send_disable_budget_warning(client):
+    rsps.add(rsps.GET, FEATURES_V3_URL, json=make_feature_collection([]))
+
+    client.query(bbox="18.06,59.32,18.09,59.34", disable_budget_warning=True)
+
+    parsed = parse_qs(urlsplit(rsps.calls[0].request.url).query)
+    assert "disable_budget_warning" not in parsed
+
+
+@rsps.activate
+def test_count_forwards_group_by(client):
     rsps.add(
         rsps.GET,
         STATS_URL,
         json={"groups": [{"value": "cafe", "count": 12}], "total": 12, "truncated": False},
     )
-    out = client.stats(group_by="amenity", bbox="18.06,59.32,18.09,59.34", tags=["amenity"])
+    out = client.count(group_by="amenity", bbox="18.06,59.32,18.09,59.34", tags=["amenity"])
     assert out["total"] == 12
     parsed = parse_qs(urlsplit(rsps.calls[0].request.url).query)
     assert parsed["group_by"] == ["amenity"]
@@ -147,9 +154,9 @@ def test_stats_forwards_group_by(client):
 
 @rsps.activate
 def test_query_all_within_does_not_tile(client):
-    add_features_response([], has_more=False)
+    add_features_response([], has_more=False, url=FEATURES_V3_URL)
 
-    client.query_all(within="relation/155790", type="node", tags=["amenity"], bbox_tiles=4)
+    client.query_all(within="relation/155790", type="node", tags=["amenity"])
 
     assert len(rsps.calls) == 1
     parsed = parse_qs(urlsplit(rsps.calls[0].request.url).query)
@@ -159,7 +166,7 @@ def test_query_all_within_does_not_tile(client):
 
 @rsps.activate
 def test_query_forwards_zoom_length_and_area_filters(client):
-    rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection([]))
+    rsps.add(rsps.GET, FEATURES_V3_URL, json=make_feature_collection([]))
 
     client.query(
         bbox="18.06,59.32,18.09,59.34",
@@ -182,7 +189,7 @@ def test_query_forwards_zoom_length_and_area_filters(client):
 
 @rsps.activate
 def test_query_omits_api_defaults(client):
-    rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection([]))
+    rsps.add(rsps.GET, FEATURES_V3_URL, json=make_feature_collection([]))
 
     client.query(bbox="18.06,59.32,18.09,59.34")
 
@@ -194,8 +201,37 @@ def test_query_omits_api_defaults(client):
 
 
 @rsps.activate
+def test_query_binary_accept_returns_bytes(client):
+    body = b"id,geometry\nway/1,POINT(18 59)\n"
+    rsps.add(
+        rsps.GET,
+        FEATURES_V3_URL,
+        body=body,
+        headers={"Content-Type": "text/csv", "X-Returned": "1", "X-Has-More": "false"},
+        status=200,
+    )
+
+    result = client.query(bbox="18.06,59.32,18.09,59.34", accept="text/csv")
+
+    assert isinstance(result, BinaryQueryResult)
+    assert result.content == body
+    assert rsps.calls[0].request.headers["Accept"] == "text/csv"
+
+
+@rsps.activate
+def test_query_binary_rejects_split_until_fit(client):
+    with pytest.raises(ValueError, match="GeoJSON"):
+        client.query(
+            bbox="18.06,59.32,18.09,59.34",
+            accept="application/flatgeobuf",
+            split_until_fit=True,
+        )
+    assert not rsps.calls
+
+
+@rsps.activate
 def test_query_sends_location_and_radius_not_around(client):
-    rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection([]))
+    rsps.add(rsps.GET, FEATURES_V3_URL, json=make_feature_collection([]))
 
     client.query(location="59.334,18.063", radius=500, tags=["amenity=cafe"])
 
@@ -208,7 +244,7 @@ def test_query_sends_location_and_radius_not_around(client):
 
 @rsps.activate
 def test_query_raises_auth_error_on_401(client):
-    rsps.add(rsps.GET, FEATURES_URL, status=401, body="Unauthorized")
+    rsps.add(rsps.GET, FEATURES_V3_URL, status=401, body="Unauthorized")
 
     with pytest.raises(OSMFeaturesAuthError):
         client.query(bbox="18.06,59.32,18.09,59.34")
@@ -216,7 +252,7 @@ def test_query_raises_auth_error_on_401(client):
 
 @rsps.activate
 def test_query_raises_api_error_on_500(client):
-    rsps.add(rsps.GET, FEATURES_URL, status=500, body="Internal Server Error")
+    rsps.add(rsps.GET, FEATURES_V3_URL, status=500, body="Internal Server Error")
 
     with pytest.raises(OSMFeaturesAPIError) as exc_info:
         client.query(bbox="18.06,59.32,18.09,59.34")
@@ -226,138 +262,12 @@ def test_query_raises_api_error_on_500(client):
 
 @rsps.activate
 def test_query_meta_populated(client):
-    add_features_response([make_test_feature()], has_more=True, next_cursor="cursor-1")
+    add_features_response([make_test_feature()], has_more=False, url=FEATURES_V3_URL)
 
     result = client.query(bbox="18.06,59.32,18.09,59.34")
 
-    assert result.meta.has_more is True
-    assert result.meta.next_cursor == "cursor-1"
-
-
-@rsps.activate
-def test_query_binary_format_keeps_pagination_meta(client):
-    body = b"id,name\nway/1,Cafe\n"
-    rsps.add(
-        rsps.GET,
-        FEATURES_URL,
-        body=body,
-        headers={
-            "X-Returned": "1",
-            "X-Has-More": "true",
-            "X-Next-Cursor": "cursor-csv-1",
-            "Content-Type": "text/csv",
-        },
-        status=200,
-    )
-
-    result = client.query(bbox="18.06,59.32,18.09,59.34", accept="text/csv", limit=1)
-
-    assert isinstance(result, BinaryQueryResult)
-    assert result.content == body
-    assert result.meta.returned == 1
-    assert result.meta.has_more is True
-    assert result.meta.next_cursor == "cursor-csv-1"
-    parsed = parse_qs(urlsplit(rsps.calls[0].request.url).query)
-    assert "format" not in parsed
-    assert rsps.calls[0].request.headers["Accept"] == "text/csv"
-
-
-@rsps.activate
-def test_query_binary_format_manual_pagination_uses_cursor(client):
-    page1 = b"id\nway/1\n"
-    page2 = b"id\nway/2\n"
-    rsps.add(
-        rsps.GET,
-        FEATURES_URL,
-        body=page1,
-        headers=pagination_headers([{"id": "1"}], has_more=True, next_cursor="c2"),
-        status=200,
-    )
-    rsps.add(
-        rsps.GET,
-        FEATURES_URL,
-        body=page2,
-        headers=pagination_headers([{"id": "2"}], has_more=False),
-        status=200,
-    )
-
-    first = client.query(bbox="18.06,59.32,18.09,59.34", accept="text/tab-separated-values", limit=1)
-    assert isinstance(first, BinaryQueryResult)
-    assert first.meta.has_more is True
-    second = client.query(
-        bbox="18.06,59.32,18.09,59.34",
-        accept="text/tab-separated-values",
-        limit=1,
-        cursor=first.meta.next_cursor,
-    )
-    assert isinstance(second, BinaryQueryResult)
-    assert second.content == page2
-    assert second.meta.has_more is False
-    assert parse_qs(urlsplit(rsps.calls[1].request.url).query)["cursor"] == ["c2"]
-
-
-# ---------------------------------------------------------------------------
-# estimate_cost()
-# ---------------------------------------------------------------------------
-
-
-@rsps.activate
-def test_estimate_cost_returns_cost_estimate(client):
-    cost_resp = {
-        "estimated_credits": 42,
-        "tier_limits": {"max_bbox_area_tagged": 1.0},
-        "hints": ["Consider narrowing your bbox."],
-    }
-    rsps.add(rsps.GET, COST_URL, json=cost_resp)
-
-    result = client.estimate_cost(bbox="18.06,59.32,18.09,59.34", tags=["building"])
-
-    assert isinstance(result, CostEstimate)
-    assert result.estimated_credits == 42
-    assert result.hints == ["Consider narrowing your bbox."]
-
-
-@rsps.activate
-def test_estimate_cost_forwards_zoom_length_and_area_filters(client):
-    rsps.add(rsps.GET, COST_URL, json={"estimated_credits": 1, "tier_limits": {}, "hints": []})
-
-    client.estimate_cost(
-        bbox="18.06,59.32,18.09,59.34",
-        type="way",
-        way_shape="line",
-        zoom=9,
-        min_length_m=200,
-        max_length_m=2000,
-        min_area_m2=300,
-        max_area_m2=3000,
-    )
-
-    parsed = parse_qs(urlsplit(rsps.calls[0].request.url).query)
-    assert parsed["zoom"] == ["9"]
-    assert parsed["min_length_m"] == ["200"]
-    assert parsed["max_length_m"] == ["2000"]
-    assert parsed["min_area_m2"] == ["300"]
-    assert parsed["max_area_m2"] == ["3000"]
-
-
-@rsps.activate
-def test_estimate_cost_sends_location_and_radius_not_around(client):
-    rsps.add(rsps.GET, COST_URL, json={"estimated_credits": 1, "tier_limits": {}, "hints": []})
-
-    client.estimate_cost(location="59.334,18.063", radius=500, tags=["amenity=cafe"])
-
-    parsed = parse_qs(urlsplit(rsps.calls[0].request.url).query)
-    assert parsed["location"] == ["59.334,18.063"]
-    assert parsed["radius"] == ["500"]
-    assert "around" not in parsed
-
-
-@rsps.activate
-def test_estimate_cost_raises_auth_error_on_401(client):
-    rsps.add(rsps.GET, COST_URL, status=401, body="Unauthorized")
-
-    with pytest.raises(OSMFeaturesAuthError):
-        client.estimate_cost(bbox="18.06,59.32,18.09,59.34")
+    assert result.meta.has_more is False
+    assert result.meta.next_cursor is None
 
 
 # ---------------------------------------------------------------------------
@@ -385,7 +295,7 @@ def test_feature_properties():
 
 @rsps.activate
 def test_client_context_manager(client):
-    rsps.add(rsps.GET, FEATURES_URL, json=make_feature_collection([]))
+    rsps.add(rsps.GET, FEATURES_V3_URL, json=make_feature_collection([]))
 
     with client as c:
         result = c.query(bbox="18.06,59.32,18.09,59.34")

@@ -11,7 +11,6 @@ pytest.importorskip("mcp")
 from mcp.server.fastmcp.exceptions import ToolError
 
 from osmfeatures.mcp._mcp_session import (
-    QUERY_ALL_MAX_FEATURES,
     SUMMARY_ITEM_CAP,
     GeoAgentSession,
     assert_no_coordinate_arrays,
@@ -29,7 +28,6 @@ _EXPECTED_TOOLS = frozenset(
         "routes_optimized_path",
         "query",
         "stats",
-        "query_all",
         "nearest_within",
         "pairs_within",
         "filter_open",
@@ -86,7 +84,6 @@ class FakeClient:
         self.path: dict | None = None
         self.optimized: dict | None = None
         self.query_result: dict | None = None
-        self.query_all_result: dict | None = None
         self.stats_result: dict | None = None
 
     def places_search(self, **kwargs):
@@ -117,12 +114,8 @@ class FakeClient:
         self.calls.append(("query", kwargs))
         return self.query_result
 
-    def query_all(self, **kwargs):
-        self.calls.append(("query_all", kwargs))
-        return self.query_all_result
-
-    def stats(self, **kwargs):
-        self.calls.append(("stats", kwargs))
+    def count(self, **kwargs):
+        self.calls.append(("count", kwargs))
         return self.stats_result
 
 
@@ -168,7 +161,6 @@ async def test_build_server_wires_instructions_and_tools():
     assert "one preview per collection" in mcp.instructions
     assert "export_geojson" in mcp.instructions
     assert "writes a file" in mcp.instructions
-    assert f"max_features is {QUERY_ALL_MAX_FEATURES}" in mcp.instructions
     assert f"at most {SUMMARY_ITEM_CAP}" in mcp.instructions
     assert "items_truncated" in mcp.instructions
     assert "OSM tags" in mcp.instructions
@@ -192,12 +184,15 @@ async def test_build_server_wires_instructions_and_tools():
     tools = await mcp.list_tools()
     names = {tool.name for tool in tools}
     assert names == _EXPECTED_TOOLS
-    query_all = next(t for t in tools if t.name == "query_all")
-    assert f"default {QUERY_ALL_MAX_FEATURES}" in (query_all.description or "")
-    cap = query_all.inputSchema["properties"]["max_features"]
-    assert cap.get("type") == "integer"
-    assert cap.get("default") == QUERY_ALL_MAX_FEATURES
-    assert "null" not in {opt.get("type") for opt in cap.get("anyOf") or []}
+    assert "query_all" not in names
+    query = next(t for t in tools if t.name == "query")
+    assert "v3/osm_features" in (query.description or "")
+    assert "no cursor" in (query.description or "").lower()
+    assert "limit" in query.inputSchema["properties"]
+    assert "GET /v3/osm_features" in mcp.instructions
+    assert "one unsorted tile" in mcp.instructions
+    assert "result_too_large" in mcp.instructions
+    assert "Pass limit" in mcp.instructions
     nearest = next(t for t in tools if t.name == "nearest_within")
     assert (nearest.inputSchema["properties"]["limit"].get("default") or 0) != 20
     assert "keep every match" not in (nearest.description or "")
@@ -608,39 +603,32 @@ async def test_call_tool_stats(stack):
     assert out["total"] == 412
     assert out["groups"] == [{"value": "pub", "count": 412}]
     assert "collection_id" not in out
-    assert client.calls[-1][0] == "stats"
+    assert client.calls[-1][0] == "count"
     assert client.calls[-1][1]["group_by"] == "amenity"
 
 
 @pytest.mark.asyncio
-async def test_call_tool_query_query_all_and_export(stack, tmp_path, monkeypatch):
+async def test_call_tool_query_and_export(stack, tmp_path, monkeypatch):
     client, mcp = stack
     monkeypatch.setattr("osmfeatures.mcp._mcp_session.tempfile.gettempdir", lambda: str(tmp_path))
     client.query_result = _fc(_feat("way/1", 18.07, 59.32, name="Tantolunden"))
-    client.query_all_result = _fc(
-        _feat("way/1", 18.07, 59.32, name="Park A"),
-        _feat("way/2", 18.08, 59.32, name="Park B"),
-    )
     page = await _call(
         mcp, "query", bbox="18.05,59.31,18.10,59.33", tags=["leisure=park"], way_shape="polygon"
     )
     assert page["count"] == 1
+    assert client.calls[-1][0] == "query"
     assert client.calls[-1][1]["centroid"] is True
-    drained = await _call(
-        mcp, "query_all", bbox="18.05,59.31,18.12,59.36", tags=["leisure=park"], way_shape="polygon"
+    assert client.calls[-1][1]["limit"] is None
+    capped = await _call(
+        mcp,
+        "query",
+        bbox="18.05,59.31,18.10,59.33",
+        tags=["leisure=park"],
+        limit=100,
     )
-    assert drained["count"] == 2
-    assert client.calls[-1][1]["max_features"] == QUERY_ALL_MAX_FEATURES
-    assert client.calls[-1][1]["bbox_tiles"] == 2
-    assert client.calls[-1][1]["centroid"] is True
+    assert capped["count"] == 1
+    assert client.calls[-1][1]["limit"] == 100
     exported = await _call(mcp, "export_geojson", collection_id=page["collection_id"])
     assert exported["feature_count"] == 1
     assert exported["path"].endswith(f"maplark-{page['collection_id']}.geojson")
     assert (tmp_path / f"maplark-{page['collection_id']}.geojson").is_file()
-
-
-@pytest.mark.asyncio
-async def test_call_tool_query_all_rejects_null_max_features(stack):
-    _client, mcp = stack
-    with pytest.raises(ToolError, match="valid integer"):
-        await mcp.call_tool("query_all", {"bbox": "18.05,59.31,18.12,59.36", "max_features": None})

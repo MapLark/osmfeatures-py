@@ -9,11 +9,11 @@ Official Python client for the [MapLark OSM Features API](https://maplark.com) w
 - [Basic API usage](#basic-api-usage)
   - [Create a client](#create-a-client)
   - [Query OSM features](#query-osm-features)
-  - [Histogram stats](#histogram-stats)
-  - [Auto-pagination and bbox tiling](#auto-pagination-and-bbox-tiling)
+  - [Query a large bbox](#query-a-large-bbox)
+  - [Count](#count)
   - [Async client](#async-client)
   - [Convenience helpers](#convenience-helpers)
-  - [Cost and usage](#cost-and-usage)
+  - [Usage](#usage)
 - [AI](#ai)
   - [MCP Server](#mcp-server)
   - [Cursor / Claude Desktop](#cursor--claude-desktop)
@@ -54,7 +54,7 @@ Read the full API reference here [https://maplark.com/developer](https://maplark
 
 ## Python SDK
 
-This client library comes with auto-pagination, bbox tiling (enables larger bbox queries), retry/backoff, pandas/geopandas output, async support, convenience methods for common OSM layers (buildings, amenities, bike roads, and so on), a stdio MCP server for Claude / Cursor / Custom agents, and places/routes methods for opening hours and walk/bike routing. 
+This client library comes with complete-tile queries, optional bbox tiling, retry/backoff, pandas/geopandas output, async support, convenience methods for common OSM layers (buildings, amenities, bike roads, and so on), a stdio MCP server for Claude / Cursor / Custom agents, and places/routes methods for opening hours and walk/bike routing. 
 
 ```
 pip install osmfeatures
@@ -102,7 +102,7 @@ with OSMFeaturesClient(api_key="sk-...") as client:
 
 ### Query OSM features
 
-`query()` fetches a single page:
+`query()` calls `GET /v3/osm_features` and returns the whole tile. Omit `limit` for the API default. Paid keys may raise `limit` up to their `max_limit` (enterprise 1000000). A larger match set is truncated (`X-Has-More: true`). Pass `split_until_fit=True` to quarter the bbox until each piece fits. That adds latency. Pass `bbox_tiles=2` (or 4, 8, ...) to split the bbox up front. `query()` does not take `cursor`.
 
 ```python
 fc = client.query(
@@ -110,11 +110,7 @@ fc = client.query(
     type="way",
     way_shape="line",
     tags=["highway=cycleway"],
-    limit=500,
 )
-
-for feature in fc.features:
-    print(feature["id"], feature["geometry"]["type"], feature.tags)
 ```
 
 Common filters:
@@ -127,17 +123,35 @@ Common filters:
 - `not_tags=["access=private"]` (exclude)
 - `type="node" | "way" | "relation"`
 - `way_shape="polygon" | "line" | "all"` (omit = both shapes; `all` also means both)
-- `clip_geometry=True | False` (omit for the API default `True`; set `False` to keep full geometry outside bbox)
-- `cursor` (pagination; use SDK `meta.next_cursor` from previous page, sourced from `X-Next-Cursor`)
+- `clip_geometry=True | False` (omit for the API default; set `False` to keep full geometry outside bbox)
+- `bbox_tiles=2` (power of 2) to split a bbox that exceeds your tier area cap
+- `split_until_fit=True` to split a bbox that exceeds `limit` (or the key's `max_limit`)
+- `accept="text/csv"` / `"application/flatgeobuf"` / `"application/vnd.apache.parquet"` (returns `BinaryQueryResult`)
 
 
-#### Histogram stats
-Analyze feature counts and stats with a histogram over a very large area - city and country sized bounding boxes allowed. For example, you can find out how many cafes, bars, and restaurants are in different cities or countries.
+### Query a large bbox
 
-`client.stats` calls `GET /v2/osm_features/stats`. Example amenity histogram:
+Use this to query a larger bbox than what is allowed by splitting the bbox up into multiple tiles and requests.
 
 ```python
-client.stats(
+all_restaurants = client.query(
+    bbox="18.063,59.322,18.082,59.332",
+    tags="amenity=restaurant",
+    split_until_fit=True,
+    max_features=1_000_000,
+    timeout=60,
+)
+```
+
+
+
+#### Count
+Analyze feature counts with a histogram over a very large area - city and country sized bounding boxes allowed. For example, you can find out how many cafes, bars, and restaurants are in different cities or countries.
+
+`client.count` calls `GET /v2/osm_features/count`. Example amenity histogram:
+
+```python
+client.count(
     group_by="amenity",
     bbox="18.05,59.32,18.10,59.34",
     type="node",
@@ -146,23 +160,6 @@ client.stats(
 # {"groups": [{"value": "restaurant", "count": 184}, {"value": "cafe", "count": 91},
 #             {"value": "bar", "count": 47}], "total": 412, "truncated": False}
 ```
-
-
-### Auto-pagination and bbox tiling
-
-Use `query_all()` to fetch all pages and deduplicate by OSM feature id. By default it splits the bbox into 2 tiles (power of 2) so large areas use more requests; pass `bbox_tiles=1` to disable, or raise it (`4`, `8`, …) for bigger areas:
-
-```python
-all_restaurants = client.query_all(
-    bbox="18.063,59.322,18.082,59.332",
-    tags="amenity=restaurant",
-    max_features=55_000,  # client total cap; pass None for no cap
-    timeout=60,  # wall-clock for the whole drain; pass None for no cap
-)
-
-print(all_restaurants.meta.returned)
-```
-
 
 
 ### Async client
@@ -190,7 +187,7 @@ asyncio.run(main())
 
 ### Convenience helpers
 
-For common datasets, use convenience methods built on top of `query_all()`:
+For common datasets, use convenience methods. They call `query_all()` today:
 
 ```python
 from osmfeatures import OSMFeaturesClient, get_buildings, get_restaurants
@@ -203,15 +200,9 @@ with OSMFeaturesClient(api_key="sk-...") as client:
 
 
 
-### Cost and usage
+### Usage
 
 ```python
-estimate = client.estimate_cost(
-    bbox="18.063,59.322,18.082,59.332",
-    tags=["building"],
-)
-print("estimated credits:", estimate.estimated_credits)
-
 usage = client.usage()
 print("Usage:", usage)
 ```
@@ -230,7 +221,7 @@ Results come back as summaries (ids, names, OSM tags, lon/lat scalars, `distance
 - Places: `places_search`, `places_nearby`, `places_details`
 - Geocode: `geocode` (Nominatim interim)
 - Routes: `routes_isochrone`, `routes_path`, `routes_optimized_path`
-- Generic OSM: `query` (one page), `query_all` (tiled pages), `stats` (count/histogram)
+- Generic OSM: `query`, `stats` (count/histogram)
 - Local (no HTTP): `nearest_within`, `pairs_within`, `filter_open`, `point_in_polygon`, `points_in_polygon`
 - Draw / export: `preview_map`, `export_geojson`
 
@@ -420,7 +411,6 @@ If the package is installed, the CLI is available as `osmfeatures`:
 ```bash
 export MAPLARK_API_KEY="sk-..."
 osmfeatures query --bbox "18.063,59.322,18.082,59.332" --tags building --type way
-osmfeatures query --bbox "18.063,59.322,18.082,59.332" --tags building --all-pages --bbox-tiles 4
 osmfeatures mcp
 ```
 

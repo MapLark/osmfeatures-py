@@ -41,7 +41,6 @@ from .convenience import (
 )
 from .models import (
     BinaryQueryResult,
-    CostEstimate,
     OSMFeature,
     OSMFeatureCollection,
     OSMFeaturesAPIError,
@@ -66,7 +65,6 @@ __all__ = [
     "OSMFeatureCollection",
     "BinaryQueryResult",
     "ResponseMeta",
-    "CostEstimate",
     # Exceptions
     "OSMFeaturesError",
     "OSMFeaturesAuthError",

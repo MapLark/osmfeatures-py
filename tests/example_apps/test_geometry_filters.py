@@ -25,7 +25,7 @@ def test_zoomed_out_large_buildings_only(client: OSMFeaturesClient):
         way_shape="polygon",
         tags="building",
         zoom=11,
-        limit=300,
+        max_features=300,
     )
     assert isinstance(baseline, OSMFeatureCollection)
     assert len(baseline["features"]) > 0, "Expected buildings in central Stockholm"
@@ -37,7 +37,7 @@ def test_zoomed_out_large_buildings_only(client: OSMFeaturesClient):
         tags="building",
         zoom=11,
         min_area_m2=3000,
-        limit=300,
+        max_features=300,
     )
     assert isinstance(large, OSMFeatureCollection)
     assert len(large["features"]) > 0, "Expected at least one large building at zoomed-out level"
@@ -55,7 +55,7 @@ def test_zoomed_out_large_buildings_only(client: OSMFeaturesClient):
         zoom=11,
         min_area_m2=500,
         max_area_m2=2999,
-        limit=300,
+        max_features=300,
     )
     assert isinstance(medium, OSMFeatureCollection)
     assert len(medium["features"]) > 0, "Expected medium buildings in Gamla Stan core"

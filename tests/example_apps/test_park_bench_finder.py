@@ -12,7 +12,7 @@ DJURGARDEN_BBOX = "18.090,59.320,18.170,59.345"
 
 
 def test_park_bench_finder(client: OSMFeaturesClient):
-    data = client.query(bbox=DJURGARDEN_BBOX, type="node", tags="amenity=bench", limit=200)
+    data = client.query(bbox=DJURGARDEN_BBOX, type="node", tags="amenity=bench", max_features=200)
     assert isinstance(data, OSMFeatureCollection)
     assert len(data["features"]) > 0, "Expected bench nodes in Djurgården"
 

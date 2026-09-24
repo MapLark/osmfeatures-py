@@ -13,8 +13,6 @@ from osmfeatures import (
     OSMFeaturesAuthError,
     OSMFeaturesAPIError,
     OSMFeaturesRateLimitError,
-    OSMFeaturesTimeoutError,
-    CostEstimate,
     OSMFeatureCollection,
     RetryConfig,
 )
@@ -22,12 +20,9 @@ from osmfeatures.async_client import AsyncOSMFeaturesClient
 from tests.conftest import (
     BASE_URL,
     FAKE_API_KEY,
-    FEATURES_URL,
-    COST_URL,
     make_test_feature,
     make_feature_collection,
     features_page,
-    pagination_headers,
 )
 
 # ---------------------------------------------------------------------------
@@ -135,6 +130,22 @@ async def test_async_query_sends_auth_header():
     assert transport.requests[0].headers["authorization"] == f"Bearer {FAKE_API_KEY}"
 
 
+async def test_async_query_binary_accept_returns_bytes():
+    body = b"id,geometry\nway/1,POINT(18 59)\n"
+    transport = _MockTransport([(200, body, {"content-type": "text/csv"})])
+    client = _make_client(transport)
+
+    async with client:
+        result = await client.query_async(
+            bbox="18.06,59.32,18.09,59.34",
+            accept="text/csv",
+        )
+
+    assert isinstance(result, BinaryQueryResult)
+    assert result.content == body
+    assert transport.requests[0].headers["accept"] == "text/csv"
+
+
 async def test_async_query_raises_auth_error_on_401():
     transport = _MockTransport([(401, {"error": "unauthorized"})])
     client = _make_client(transport)
@@ -157,41 +168,15 @@ async def test_async_query_raises_api_error_on_500():
 
 async def test_async_query_meta_populated():
     transport = _MockTransport(
-        [features_page([make_test_feature()], has_more=True, next_cursor="cursor-1")]
+        [features_page([make_test_feature()], has_more=False)]
     )
     client = _make_client(transport)
 
     async with client:
         result = await client.query_async(bbox="18.06,59.32,18.09,59.34")
 
-    assert result.meta.has_more is True
-    assert result.meta.next_cursor == "cursor-1"
-
-
-async def test_async_query_binary_format_keeps_pagination_meta():
-    body = b"id,name\nway/1,Cafe\n"
-    transport = _MockTransport(
-        [
-            (
-                200,
-                body,
-                pagination_headers([], has_more=True, next_cursor="cursor-csv-1"),
-            )
-        ]
-    )
-    client = _make_client(transport)
-
-    async with client:
-        result = await client.query_async(
-            bbox="18.06,59.32,18.09,59.34", accept="text/csv", limit=1
-        )
-
-    assert isinstance(result, BinaryQueryResult)
-    assert result.content == body
-    assert result.meta.has_more is True
-    assert result.meta.next_cursor == "cursor-csv-1"
-    assert "format" not in dict(transport.requests[0].url.params)
-    assert transport.requests[0].headers["Accept"] == "text/csv"
+    assert result.meta.has_more is False
+    assert result.meta.next_cursor is None
 
 
 async def test_async_query_forwards_zoom_length_and_area_filters():
@@ -235,179 +220,21 @@ async def test_async_query_sends_location_and_radius_not_around():
 
 
 # ---------------------------------------------------------------------------
-# query_all() — pagination
+# query_all()
 # ---------------------------------------------------------------------------
 
 
-async def test_async_query_all_single_page():
+async def test_async_query_all_forwards_to_query():
     features = [make_test_feature(f"way/{i}") for i in range(3)]
     transport = _MockTransport([features_page(features, has_more=False)])
     client = _make_client(transport)
 
     async with client:
-        result = await client.query_all_async(bbox="18.06,59.32,18.09,59.34", bbox_tiles=1)
+        result = await client.query_all_async(bbox="18.06,59.32,18.09,59.34")
 
     assert len(result.features) == 3
     assert transport.call_count == 1
-
-
-async def test_async_query_all_two_pages():
-    page1 = [make_test_feature(f"way/{i}") for i in range(3)]
-    page2 = [make_test_feature(f"way/{i}") for i in range(3, 6)]
-    transport = _MockTransport(
-        [
-            features_page(page1, has_more=True, next_cursor="cursor-1"),
-            features_page(page2, has_more=False),
-        ]
-    )
-    client = _make_client(transport)
-
-    async with client:
-        result = await client.query_all_async(bbox="18.06,59.32,18.09,59.34", bbox_tiles=1)
-
-    assert len(result.features) == 6
-    assert {f.id for f in result.features} == {f"way/{i}" for i in range(6)}
-    assert transport.call_count == 2
-
-
-async def test_async_query_all_deduplicates_across_pages():
-    f_shared = make_test_feature("way/99")
-    page1 = [make_test_feature("way/1"), f_shared]
-    page2 = [f_shared, make_test_feature("way/2")]
-    transport = _MockTransport(
-        [
-            features_page(page1, has_more=True, next_cursor="cursor-1"),
-            features_page(page2, has_more=False),
-        ]
-    )
-    client = _make_client(transport)
-
-    async with client:
-        result = await client.query_all_async(bbox="18.06,59.32,18.09,59.34", bbox_tiles=1)
-
-    ids = [f.id for f in result.features]
-    assert len(ids) == len(set(ids))
-
-
-async def test_async_query_all_raises_on_empty_page_with_has_more_true():
-    transport = _MockTransport(
-        [
-            features_page([], has_more=True, next_cursor="cursor-1"),
-            # Must never be reached if paginator fails fast.
-            features_page([], has_more=False),
-        ]
-    )
-    client = _make_client(transport)
-
-    async with client:
-        with pytest.raises(RuntimeError, match="empty features page"):
-            await client.query_all_async(bbox="18.06,59.32,18.09,59.34", bbox_tiles=1)
-
-    assert transport.call_count == 1
-
-
-async def test_async_query_all_default_tiles_two_requests():
-    transport = _MockTransport(
-        [
-            features_page([make_test_feature("way/1")], has_more=False),
-            features_page([make_test_feature("way/2")], has_more=False),
-        ]
-    )
-    client = _make_client(transport)
-
-    async with client:
-        result = await client.query_all_async(bbox="18.06,59.32,18.09,59.34")
-
-    assert transport.call_count == 2
-    assert {f.id for f in result.features} == {"way/1", "way/2"}
-
-
-async def test_async_query_all_timeout_does_not_fetch_next_page():
-    transport = _MockTransport(
-        [
-            features_page([make_test_feature("way/1")], has_more=True, next_cursor="c1"),
-            features_page([make_test_feature("way/2")], has_more=False),
-        ]
-    )
-    client = _make_client(transport)
-
-    async with client:
-        with pytest.raises(OSMFeaturesTimeoutError, match="timeout"):
-            await client.query_all_async(
-                bbox="18.06,59.32,18.09,59.34", bbox_tiles=1, timeout=0
-            )
-
-    assert transport.call_count == 1
-
-
-# ---------------------------------------------------------------------------
-# estimate_cost()
-# ---------------------------------------------------------------------------
-
-
-async def test_async_estimate_cost_returns_cost_estimate():
-    cost_resp = {
-        "estimated_credits": 42,
-        "tier_limits": {"max_bbox_area_tagged": 1.0},
-        "hints": ["Consider narrowing your bbox."],
-    }
-    transport = _MockTransport([(200, cost_resp)])
-    client = _make_client(transport)
-
-    async with client:
-        result = await client.estimate_cost_async(bbox="18.06,59.32,18.09,59.34", tags=["building"])
-
-    assert isinstance(result, CostEstimate)
-    assert result.estimated_credits == 42
-    assert result.hints == ["Consider narrowing your bbox."]
-
-
-async def test_async_estimate_cost_forwards_zoom_length_and_area_filters():
-    transport = _MockTransport([(200, {"estimated_credits": 1, "tier_limits": {}, "hints": []})])
-    client = _make_client(transport)
-
-    async with client:
-        await client.estimate_cost_async(
-            bbox="18.06,59.32,18.09,59.34",
-            type="way",
-            way_shape="polygon",
-            zoom=8,
-            min_length_m=250,
-            max_length_m=2500,
-            min_area_m2=500,
-            max_area_m2=5000,
-        )
-
-    params = dict(transport.requests[0].url.params)
-    assert params["zoom"] == "8"
-    assert params["min_length_m"] == "250"
-    assert params["max_length_m"] == "2500"
-    assert params["min_area_m2"] == "500"
-    assert params["max_area_m2"] == "5000"
-
-
-async def test_async_estimate_cost_sends_location_and_radius_not_around():
-    transport = _MockTransport([(200, {"estimated_credits": 1, "tier_limits": {}, "hints": []})])
-    client = _make_client(transport)
-
-    async with client:
-        await client.estimate_cost_async(
-            location="59.334,18.063", radius=500, tags=["amenity=cafe"]
-        )
-
-    params = dict(transport.requests[0].url.params)
-    assert params["location"] == "59.334,18.063"
-    assert params["radius"] == "500"
-    assert "around" not in params
-
-
-async def test_async_estimate_cost_raises_auth_error_on_401():
-    transport = _MockTransport([(401, {"error": "unauthorized"})])
-    client = _make_client(transport)
-
-    async with client:
-        with pytest.raises(OSMFeaturesAuthError):
-            await client.estimate_cost_async(bbox="18.06,59.32,18.09,59.34")
+    assert "/v3/osm_features" in str(transport.requests[0].url)
 
 
 # ---------------------------------------------------------------------------
@@ -499,7 +326,7 @@ async def test_async_usage():
     assert transport.requests[0].url.path.endswith("/v1/usage")
 
 
-async def test_async_stats_forwards_group_by():
+async def test_async_count_forwards_group_by():
     from urllib.parse import parse_qs, urlsplit
 
     transport = _MockTransport(
@@ -507,10 +334,10 @@ async def test_async_stats_forwards_group_by():
     )
     client = _make_client(transport)
     async with client:
-        out = await client.stats_async(
+        out = await client.count_async(
             group_by="amenity", bbox="18.06,59.32,18.09,59.34", tags=["amenity"]
         )
     assert out["total"] == 12
     parsed = parse_qs(urlsplit(str(transport.requests[0].url)).query)
     assert parsed["group_by"] == ["amenity"]
-    assert transport.requests[0].url.path.endswith("/v2/osm_features/stats")
+    assert transport.requests[0].url.path.endswith("/v2/osm_features/count")

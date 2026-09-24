@@ -1,4 +1,4 @@
-"""CLI for osmfeatures - ``osmfeatures query``, ``osmfeatures stats``, ``osmfeatures cost``, and ``osmfeatures mcp``."""
+"""CLI for osmfeatures - ``osmfeatures query``, ``osmfeatures stats``, and ``osmfeatures mcp``."""
 
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ def _apply_output(features: list[Any], output_format: str, fc_dict: dict[str, An
 
 
 # ---------------------------------------------------------------------------
-# Common options shared between query and cost subcommands
+# Common options shared between query and stats subcommands
 # ---------------------------------------------------------------------------
 
 _SPATIAL_OPTIONS = [
@@ -95,23 +95,14 @@ def cli() -> None:
 
 @cli.command("query")
 @_add_options(_SPATIAL_OPTIONS)
-@click.option("--limit", default=None, type=int, help="Max features per page (default: 1000); with --all-pages this is limit_per_page")
-@click.option("--all-pages", is_flag=True, default=False, help="Paginate all pages automatically")
-@click.option(
-    "--bbox-tiles",
-    "bbox_tiles",
-    default=2,
-    type=int,
-    show_default=True,
-    help="Split bbox into N tiles (power of 2) when using --all-pages",
-)
+@click.option("--limit", default=None, type=int, help="Maximum features to return (omit for API default, max 1000000)")
 @click.option(
     "--output",
     "output_format",
     default="geojson",
     type=click.Choice(["geojson", "csv", "table"]),
     show_default=True,
-    help="Client-side display format when Accept is GeoJSON",
+    help="Client-side display format when the response is GeoJSON",
 )
 @click.option(
     "--accept",
@@ -124,14 +115,7 @@ def cli() -> None:
         "application/flatgeobuf",
         "application/vnd.apache.parquet",
     ]),
-    help="Accept media type for server encoding. Non-GeoJSON writes raw bytes to stdout",
-)
-@click.option(
-    "--disable-budget-warning",
-    "disable_budget_warning",
-    is_flag=True,
-    default=False,
-    help="Bypass per-request unit cap (maps to disable_budget_warning=true)",
+    help="Accept media type. Non-GeoJSON writes raw bytes to stdout",
 )
 @click.option("--api-key", default=None, envvar="MAPLARK_API_KEY", help="MapLark API key")
 @click.option("--base-url", default=None, envvar="MAPLARK_BASE_URL", help="API base URL")
@@ -154,11 +138,8 @@ def query_cmd(
     min_area_m2: float | None,
     max_area_m2: float | None,
     limit: int | None,
-    all_pages: bool,
-    bbox_tiles: int,
     output_format: str,
     accept: str | None,
-    disable_budget_warning: bool,
     api_key: str | None,
     base_url: str | None,
     retries: int,
@@ -202,24 +183,14 @@ def query_cmd(
         params["min_area_m2"] = min_area_m2
     if max_area_m2 is not None:
         params["max_area_m2"] = max_area_m2
-    if disable_budget_warning:
-        params["disable_budget_warning"] = True
-    if accept is not None:
-        params["accept"] = accept
-
-    pagination_kwargs: dict[str, Any] = {"bbox_tiles": bbox_tiles}
-    if all_pages:
-        if limit is not None:
-            pagination_kwargs["limit_per_page"] = limit
-    elif limit is not None:
+    if limit is not None:
         params["limit"] = limit
+    if accept:
+        params["accept"] = accept
 
     try:
         with client:
-            if all_pages:
-                fc = client.query_all(**pagination_kwargs, **params)
-            else:
-                fc = client.query(**params)
+            fc = client.query(**params)
     except OSMFeaturesAuthError as exc:
         click.echo(f"Authentication error: {exc}", err=True)
         sys.exit(1)
@@ -281,7 +252,7 @@ def stats_cmd(
     base_url: str | None,
     retries: int,
 ) -> None:
-    """Count OSM features grouped by a tag key (GET /v2/osm_features/stats)."""
+    """Count OSM features grouped by a tag key (GET /v2/osm_features/count)."""
     if osm_ids:
         raise click.UsageError("stats does not take --osm-ids")
     if zoom is not None:
@@ -327,7 +298,7 @@ def stats_cmd(
 
     try:
         with client:
-            out = client.stats(**params)
+            out = client.count(**params)
     except OSMFeaturesAuthError as exc:
         click.echo(f"Authentication error: {exc}", err=True)
         sys.exit(1)
@@ -370,96 +341,3 @@ def mcp_cmd(api_key: str | None, base_url: str | None) -> None:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
     run_stdio(api_key=resolved_key, base_url=base_url)
-
-
-@cli.command("cost")
-@_add_options(_SPATIAL_OPTIONS)
-@click.option("--limit", default=None, type=int, help="Simulated limit parameter")
-@click.option("--api-key", default=None, envvar="MAPLARK_API_KEY", help="MapLark API key")
-@click.option("--base-url", default=None, envvar="MAPLARK_BASE_URL", help="API base URL")
-@click.option("--retries", default=3, show_default=True, type=int, help="Max retry attempts")
-def cost_cmd(
-    bbox: str | None,
-    location: str | None,
-    radius: float | None,
-    osm_ids: str | None,
-    within: str | None,
-    tags: tuple[str, ...],
-    or_tags: tuple[str, ...],
-    not_tags: tuple[str, ...],
-    element_type: str | None,
-    way_shape: str | None,
-    shape: str | None,
-    zoom: float | None,
-    min_length_m: float | None,
-    max_length_m: float | None,
-    min_area_m2: float | None,
-    max_area_m2: float | None,
-    limit: int | None,
-    api_key: str | None,
-    base_url: str | None,
-    retries: int,
-) -> None:
-    """Estimate query cost (credits) without returning features.
-
-    ``--within`` loads the container from PostGIS so envelope area is included.
-    """
-    try:
-        client = _make_client(api_key, base_url, retries)
-    except click.UsageError as exc:
-        click.echo(f"Error: {exc}", err=True)
-        sys.exit(1)
-
-    params: dict[str, Any] = {}
-    if bbox:
-        params["bbox"] = bbox
-    if location:
-        params["location"] = location
-    if radius is not None:
-        params["radius"] = radius
-    if osm_ids:
-        params["osm_ids"] = osm_ids
-    if within:
-        params["within"] = within
-    if tags:
-        params["tags"] = list(tags)
-    if or_tags:
-        params["or_tags"] = list(or_tags)
-    if not_tags:
-        params["not_tags"] = list(not_tags)
-    if element_type:
-        params["type"] = [t.strip() for t in element_type.split(",")]
-    resolved_shape = way_shape or shape
-    if resolved_shape:
-        params["way_shape"] = resolved_shape
-    if zoom is not None:
-        params["zoom"] = zoom
-    if min_length_m is not None:
-        params["min_length_m"] = min_length_m
-    if max_length_m is not None:
-        params["max_length_m"] = max_length_m
-    if min_area_m2 is not None:
-        params["min_area_m2"] = min_area_m2
-    if max_area_m2 is not None:
-        params["max_area_m2"] = max_area_m2
-    if limit:
-        params["limit"] = limit
-
-    try:
-        with client:
-            estimate = client.estimate_cost(**params)
-    except OSMFeaturesAuthError as exc:
-        click.echo(f"Authentication error: {exc}", err=True)
-        sys.exit(1)
-    except OSMFeaturesAPIError as exc:
-        click.echo(f"API error (HTTP {exc.status_code}): {exc}", err=True)
-        sys.exit(1)
-
-    click.echo(f"Estimated credits : {estimate.estimated_credits}")
-    if estimate.hints:
-        click.echo("Hints:")
-        for hint in estimate.hints:
-            click.echo(f"  - {hint}")
-    click.echo("\nTier limits:")
-    for k, v in estimate.tier_limits.items():
-        click.echo(f"  {k}: {v}")

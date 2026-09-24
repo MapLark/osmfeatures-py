@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Mapping
 
 import geojson as _geojson
@@ -55,7 +55,7 @@ class OSMFeature(_geojson.Feature):
 
 @dataclass
 class ResponseMeta:
-    """Pagination from ``X-Returned`` / ``X-Has-More`` / ``X-Next-Cursor``."""
+    """Counts from ``X-Returned`` / ``X-Has-More``. ``has_more`` is a client cap trim."""
 
     returned: int
     has_more: bool
@@ -84,12 +84,10 @@ class ResponseMeta:
 
 @dataclass(frozen=True)
 class BinaryQueryResult:
-    """Non-geojson ``query`` page: raw body bytes plus pagination headers.
+    """Non-GeoJSON ``query`` tile: raw body plus response headers.
 
-    Returned when ``accept`` is a non-GeoJSON media type (``text/csv``,
-    ``text/tab-separated-values``, ``application/flatgeobuf``, or
-    ``application/vnd.apache.parquet``). Use ``meta.next_cursor`` /
-    ``meta.has_more`` to page manually (``query_all`` only supports GeoJSON).
+    Returned when ``accept`` is ``text/csv``, ``text/tab-separated-values``,
+    ``application/flatgeobuf``, or ``application/vnd.apache.parquet``.
     """
 
     content: bytes
@@ -101,10 +99,10 @@ class BinaryQueryResult:
 
 
 class OSMFeatureCollection(_geojson.FeatureCollection):
-    """A GeoJSON FeatureCollection as returned by ``/v2/osm_features``.
+    """A GeoJSON FeatureCollection as returned by ``/v3/osm_features``.
 
-    Subclasses :class:`geojson.FeatureCollection` (a ``dict``). Pagination lives
-    in response headers and is exposed as :attr:`meta` after the HTTP call.
+    Subclasses :class:`geojson.FeatureCollection` (a ``dict``). ``meta`` is
+    from response headers after the HTTP call.
     """
 
     def __init__(
@@ -130,26 +128,6 @@ class OSMFeatureCollection(_geojson.FeatureCollection):
             "type": "FeatureCollection",
             "features": [dict(f) for f in self["features"]],
         }
-
-
-# ---------------------------------------------------------------------------
-# Cost estimate
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class CostEstimate:
-    estimated_credits: int
-    tier_limits: dict[str, Any]
-    hints: list[str] = field(default_factory=list)
-
-    @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "CostEstimate":
-        return cls(
-            estimated_credits=d["estimated_credits"],
-            tier_limits=d.get("tier_limits", {}),
-            hints=d.get("hints", []),
-        )
 
 
 # ---------------------------------------------------------------------------

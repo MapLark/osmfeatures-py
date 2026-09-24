@@ -45,7 +45,7 @@ pairs_within(primary_id, secondary_id, max_distance_m, min_distance_m=0),
 filter_open(collection_id), point_in_polygon / points_in_polygon.
 nearest_within is O(n×m); pairs_within is O(n×m) or n(n-1)/2 for a same-collection
 call. Both refuse joins over {MAX_COMPARISONS} comparisons;
-shrink with places_search/nearby limit, not query_all.
+shrink with places_search/nearby limit, not query.
 Do not invent places_near_to or places_open_after.
 
 Prompt shapes:
@@ -76,14 +76,15 @@ Prompt shapes:
   one call with every collection that belongs together (route + places), not
   one preview per collection
 
-stats is the count/histogram tool (GET /v2/osm_features/stats). Larger spatial
+stats is the count/histogram tool (GET /v2/osm_features/count). Larger spatial
 caps than query or places_search; billed count-only. No collection_id (nothing
 to preview_map). If the unit cap 400s, shrink the bbox or add tags. Do not retry
 with disable_budget_warning. Do not group_by name, ref, or addr:housenumber.
 
-query is one page of generic OSM (parks, highways), not place/route primitives.
-within=way/<id> or within=relation/<id> is a spatial anchor (ST_Covers, including the boundary); type is the
-result element kind, not the container. For a larger bbox, call query_all with bbox_tiles (power of 2; default 2, use 1 to
-disable tiling) and limit_per_page. Default max_features is {QUERY_ALL_MAX_FEATURES}; raise it if
-has_more is true. That is CLI --all-pages --bbox-tiles. Do not page with query +
-cursor yourself.
+query is GET /v3/osm_features: one unsorted tile of generic OSM (parks, highways), not
+place/route primitives. Pass limit to cap the tile. Omit limit for the caller's max_limit.
+has_more means the tile was truncated below max_limit; raise limit or shrink the window.
+A match set larger than max_limit is result_too_large; pass a lower limit, shrink the window,
+or add tags. Non-points include centroids for local joins.
+within=way/<id> or within=relation/<id> is a spatial anchor (ST_Covers, including the
+boundary); type is the result element kind, not the container.

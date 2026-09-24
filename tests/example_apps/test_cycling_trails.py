@@ -22,8 +22,7 @@ def test_cycling_trails(client: OSMFeaturesClient):
         way_shape="line",
         tags="highway=path",
         or_tags=["bicycle=yes", "bicycle=designated"],
-        limit=50,
-        disable_budget_warning=True,
+        max_features=50,
     )
     # Dedicated cycling tracks (unpaved forestry-style)
     tracks = client.query(
@@ -32,8 +31,7 @@ def test_cycling_trails(client: OSMFeaturesClient):
         way_shape="line",
         tags="highway=track",
         or_tags=["bicycle=yes", "bicycle=designated"],
-        limit=50,
-        disable_budget_warning=True,
+        max_features=50,
     )
 
     assert isinstance(paths_cycling, OSMFeatureCollection)

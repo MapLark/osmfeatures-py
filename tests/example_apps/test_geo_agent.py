@@ -73,7 +73,7 @@ _TARGET_STOPS = 3
 _REFRESHMENT_AMENITIES = ("cafe", "restaurant", "bar")
 # Low zoom = server-side geometry simplification — fewer vertices per park.
 _PARK_ZOOM = 15
-# /v2/osm_features orders by osm_id; 20 cuts off Djurgården greens (way/33116358 is #21).
+# Client cap. v3 does not order by osm_id; keep this high enough for the corridor.
 _PARK_LIMIT = 200
 # Documented /v1/routes/* duration→distance conversion.
 _WALK_SPEED_M_PER_S = 1.4  # ~5 km/h
@@ -164,16 +164,10 @@ def _geometry_vertex_count(geom: dict) -> int:
 def _fetch_parks(
     client: OSMFeaturesClient, origin: dict[str, float], radius_m: float
 ) -> list[dict]:
-    """Fetch park polygons via /v2/osm_features, tiled to the key's tagged bbox cap."""
+    """Fetch park polygons via /v3/osm_features, tiled to the key's tagged bbox cap."""
     corridor = around_to_bbox(origin["lon"], origin["lat"], radius_m)
-    cost = client.estimate_cost(
-        bbox=corridor,
-        tags="leisure=park",
-        type="way,relation",
-        way_shape="polygon",
-    )
-    max_area = cost.tier_limits.get("max_bbox_area_tagged")
-    tiles = split_bbox_tiles(corridor, tile_count_for_corridor(corridor, max_area))
+    # Free tagged bbox cap. /v1/tiers if the caller needs their own max.
+    tiles = split_bbox_tiles(corridor, tile_count_for_corridor(corridor, 0.04))
 
     feature_lists: list[list[dict]] = []
     for tile in tiles:
@@ -183,7 +177,7 @@ def _fetch_parks(
             type=["way", "relation"],
             way_shape="polygon",
             zoom=_PARK_ZOOM,
-            limit=_PARK_LIMIT,
+            max_features=_PARK_LIMIT,
             clip_geometry=False,
         )
         feature_lists.append(list(page["features"]))

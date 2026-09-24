@@ -6,15 +6,15 @@ import pytest
 import responses as rsps
 
 from osmfeatures import OSMFeaturesRateLimitError, OSMFeaturesAuthError, OSMFeaturesAPIError
-from tests.conftest import FEATURES_URL, STATS_URL, make_test_feature, make_feature_collection
+from tests.conftest import FEATURES_V3_URL, STATS_URL, make_test_feature, make_feature_collection
 
 
 @rsps.activate
 def test_retries_on_429_then_succeeds(client_with_retries):
     """429 -> 200 on the second attempt should return data normally."""
     fc = make_feature_collection([make_test_feature()])
-    rsps.add(rsps.GET, FEATURES_URL, status=429, json={"error": "too_many_requests", "subtype": "rate_limit_second", "detail": "too fast"})
-    rsps.add(rsps.GET, FEATURES_URL, status=200, json=fc)
+    rsps.add(rsps.GET, FEATURES_V3_URL, status=429, json={"error": "too_many_requests", "subtype": "rate_limit_second", "detail": "too fast"})
+    rsps.add(rsps.GET, FEATURES_V3_URL, status=200, json=fc)
 
     result = client_with_retries.query(bbox="18.06,59.32,18.09,59.34")
     assert len(result.features) == 1
@@ -26,7 +26,7 @@ def test_retries_exhausted_raises_rate_limit_error(client_with_retries):
     """All retries 429 -> OSMFeaturesRateLimitError raised after max_retries+1 attempts."""
     for _ in range(4):  # max_retries=3 -> 4 total attempts
         rsps.add(
-            rsps.GET, FEATURES_URL,
+            rsps.GET, FEATURES_V3_URL,
             status=429,
             json={"error": "too_many_requests", "subtype": "rate_limit_second", "detail": "too fast", "tier": "free"},
         )
@@ -43,22 +43,22 @@ def test_retries_exhausted_raises_rate_limit_error(client_with_retries):
 def test_monthly_limit_not_retried(client_with_retries):
     """rate_limit_monthly subtype (hard cap) should not be retried."""
     rsps.add(
-        rsps.GET, FEATURES_URL,
+        rsps.GET, FEATURES_V3_URL,
         status=429,
         json={"error": "too_many_requests", "subtype": "rate_limit_monthly", "detail": "monthly budget exceeded", "tier": "free"},
     )
     rsps.add(
-        rsps.GET, FEATURES_URL,
+        rsps.GET, FEATURES_V3_URL,
         status=429,
         json={"error": "too_many_requests", "subtype": "rate_limit_monthly", "detail": "monthly budget exceeded", "tier": "free"},
     )
     rsps.add(
-        rsps.GET, FEATURES_URL,
+        rsps.GET, FEATURES_V3_URL,
         status=429,
         json={"error": "too_many_requests", "subtype": "rate_limit_monthly", "detail": "monthly budget exceeded", "tier": "free"},
     )
     rsps.add(
-        rsps.GET, FEATURES_URL,
+        rsps.GET, FEATURES_V3_URL,
         status=429,
         json={"error": "too_many_requests", "subtype": "rate_limit_monthly", "detail": "monthly budget exceeded", "tier": "free"},
     )
@@ -71,7 +71,7 @@ def test_monthly_limit_not_retried(client_with_retries):
 
 @rsps.activate
 def test_401_raises_auth_error_no_retry(client_with_retries):
-    rsps.add(rsps.GET, FEATURES_URL, status=401, body="Unauthorized")
+    rsps.add(rsps.GET, FEATURES_V3_URL, status=401, body="Unauthorized")
 
     with pytest.raises(OSMFeaturesAuthError):
         client_with_retries.query(bbox="18.06,59.32,18.09,59.34")
@@ -84,15 +84,15 @@ def test_401_raises_auth_error_no_retry(client_with_retries):
 def test_500_is_retried(client_with_retries):
     """500 errors should trigger retries."""
     fc = make_feature_collection([])
-    rsps.add(rsps.GET, FEATURES_URL, status=500, body="Internal Server Error")
-    rsps.add(rsps.GET, FEATURES_URL, status=200, json=fc)
+    rsps.add(rsps.GET, FEATURES_V3_URL, status=500, body="Internal Server Error")
+    rsps.add(rsps.GET, FEATURES_V3_URL, status=200, json=fc)
 
     result = client_with_retries.query(bbox="18.06,59.32,18.09,59.34")
     assert len(rsps.calls) == 2
 
 
 @rsps.activate
-def test_504_is_not_retried_on_stats(client_with_retries):
+def test_504_is_not_retried_on_count(client_with_retries):
     """Gateway timeout means the first query is still running. Do not fan out."""
     rsps.add(rsps.GET, STATS_URL, status=504, body="Gateway Timeout")
     rsps.add(
@@ -102,7 +102,7 @@ def test_504_is_not_retried_on_stats(client_with_retries):
     )
 
     with pytest.raises(OSMFeaturesAPIError) as exc_info:
-        client_with_retries.stats(
+        client_with_retries.count(
             group_by="amenity",
             bbox="18.06,59.32,18.09,59.34",
             tags=["amenity"],
@@ -119,8 +119,8 @@ def test_retry_after_header_respected(client_with_retries, monkeypatch):
     monkeypatch.setattr("time.sleep", lambda s: sleeps.append(s))
 
     fc = make_feature_collection([make_test_feature()])
-    rsps.add(rsps.GET, FEATURES_URL, status=429, json={"error": "too_many_requests", "subtype": "rate_limit_second"}, headers={"Retry-After": "2.5"})
-    rsps.add(rsps.GET, FEATURES_URL, status=200, json=fc)
+    rsps.add(rsps.GET, FEATURES_V3_URL, status=429, json={"error": "too_many_requests", "subtype": "rate_limit_second"}, headers={"Retry-After": "2.5"})
+    rsps.add(rsps.GET, FEATURES_V3_URL, status=200, json=fc)
 
     client_with_retries.query(bbox="18.06,59.32,18.09,59.34")
     assert sleeps == [2.5]

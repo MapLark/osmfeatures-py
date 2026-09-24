@@ -12,7 +12,6 @@ from mcp.server.fastmcp import FastMCP
 
 from ..nearest import MAX_COMPARISONS
 from ._mcp_session import (
-    QUERY_ALL_MAX_FEATURES,
     SUMMARY_ITEM_CAP,
     GeoAgentSession,
     require_places_search_spatial,
@@ -47,7 +46,6 @@ def _load_instructions() -> str:
     return (
         raw.replace("{SUMMARY_ITEM_CAP}", str(SUMMARY_ITEM_CAP))
         .replace("{MAX_COMPARISONS}", str(MAX_COMPARISONS))
-        .replace("{QUERY_ALL_MAX_FEATURES}", str(QUERY_ALL_MAX_FEATURES))
     )
 
 
@@ -175,10 +173,10 @@ def build_server(session: GeoAgentSession, preview: PreviewServer | None = None)
         or_tags: list[str] | None = None,
         not_tags: list[str] | None = None,
         within: str | None = None,
-        limit: int | None = None,
         zoom: float | None = None,
+        limit: int | None = None,
     ) -> dict[str, Any]:
-        """Generic OSM features (parks, highways). location is numeric lat,lng, not a place name. within is way/<id> or relation/<id>. Non-points include centroids for local joins."""
+        """One GET /v3/osm_features tile (omit limit for the key's max_limit, no cursor). Pass limit to cap the tile. location is numeric lat,lng, not a place name. within is way/<id> or relation/<id>. Non-points include centroids for local joins."""
         return session.query(
             bbox=bbox,
             location=location,
@@ -189,8 +187,8 @@ def build_server(session: GeoAgentSession, preview: PreviewServer | None = None)
             or_tags=or_tags,
             not_tags=not_tags,
             within=within,
-            limit=limit,
             zoom=zoom,
+            limit=limit,
         )
 
     @mcp.tool()
@@ -222,39 +220,6 @@ def build_server(session: GeoAgentSession, preview: PreviewServer | None = None)
             within=within,
             limit=limit,
             disable_budget_warning=disable_budget_warning,
-        )
-
-    @mcp.tool()
-    def query_all(
-        bbox: str | None = None,
-        location: str | None = None,
-        radius: float | None = None,
-        type: str | None = None,
-        way_shape: str | None = None,
-        tags: list[str] | None = None,
-        or_tags: list[str] | None = None,
-        not_tags: list[str] | None = None,
-        within: str | None = None,
-        zoom: float | None = None,
-        limit_per_page: int | None = None,
-        bbox_tiles: int = 2,
-        max_features: int = QUERY_ALL_MAX_FEATURES,
-    ) -> dict[str, Any]:
-        """All pages of generic OSM features. Splits bbox into bbox_tiles (power of 2). Caps at max_features (default 10000). Centroids included."""
-        return session.query_all(
-            bbox=bbox,
-            location=location,
-            radius=radius,
-            type=type,
-            way_shape=way_shape,
-            tags=tags,
-            or_tags=or_tags,
-            not_tags=not_tags,
-            within=within,
-            zoom=zoom,
-            limit_per_page=limit_per_page,
-            bbox_tiles=bbox_tiles,
-            max_features=max_features,
         )
 
     @mcp.tool()

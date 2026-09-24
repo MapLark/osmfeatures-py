@@ -41,7 +41,7 @@ def test_pedestrian_shortest_path(client: OSMFeaturesClient):
             type="way",
             way_shape="line",
             tags=f"highway={highway_type}",
-            limit=300,
+            max_features=300,
         )
         assert isinstance(data, OSMFeatureCollection)
 

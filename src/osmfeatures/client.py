@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import time
+from collections import deque
 from typing import Any
 
 import requests
 
-from .chunking import merge_features, shapely_to_bbox, split_bbox_tiles
+from .chunking import (
+    merge_features,
+    shapely_to_bbox,
+    split_bbox_tiles,
+)
 from ._geo_agent import (
     PLACES_NEARBY_PATH,
     PLACES_SEARCH_PATH,
@@ -35,14 +40,73 @@ from ._http import (
 )
 from .models import (
     BinaryQueryResult,
-    CostEstimate,
     OSMFeature,
     OSMFeatureCollection,
+    OSMFeaturesAPIError,
     OSMFeaturesTimeoutError,
     ResponseMeta,
 )
-from ._pagination import DEFAULT_QUERY_ALL_TIMEOUT_S, paginate_all, query_all_deadline
+from ._pagination import DEFAULT_QUERY_ALL_TIMEOUT_S, query_all_deadline
 from .retry import RetryConfig, retry
+
+_V3_PATH = "/v3/osm_features"
+# split_until_fit when the caller omitted limit. Free max_limit; paid keys allow more.
+_V3_SPLIT_WHEN_LIMIT_OMITTED = 50_000
+# Enterprise TIER_LIMITS max_limit. The API rejects limit_exceeds_tier above the key.
+_V3_MAX_LIMIT = 1_000_000
+
+
+def _resolve_query_limit(limit: Any) -> int | None:
+    """Validate ``limit``. ``None`` omits it so the API uses the key's max_limit."""
+    if limit is None:
+        return None
+    try:
+        value = int(limit)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("limit must be an integer") from exc
+    if value < 1 or value > _V3_MAX_LIMIT:
+        raise ValueError(f"limit must be between 1 and {_V3_MAX_LIMIT}")
+    return value
+
+
+def _with_limit(params: dict[str, Any], limit: int | None) -> dict[str, Any]:
+    out = dict(params)
+    if limit is not None:
+        out["limit"] = limit
+    return out
+
+
+DEFAULT_MAX_FEATURES = 1_000_000
+_V3_SPLIT_DEPTH = 6
+# Same keys /v2/osm_features/count refuses as group_by.
+_COUNT_UNBOUNDED_KEYS = frozenset({"name", "ref", "addr:housenumber"})
+
+
+def _is_result_too_large(exc: BaseException) -> bool:
+    return (
+        isinstance(exc, OSMFeaturesAPIError)
+        and exc.status_code == 400
+        and "result_too_large" in str(exc)
+    )
+
+
+def _count_group_key(tags: Any) -> str | None:
+    """AND-tag key whose count ``total`` is the match count, or None."""
+    if tags is None:
+        return None
+    items = [tags] if isinstance(tags, str) else list(tags)
+    if not items:
+        return None
+    item = str(items[0])
+    key = item
+    for op in (">=", "<=", ">", "<", "="):
+        if op in item:
+            key = item.split(op, 1)[0]
+            break
+    key = key.strip()
+    if not key or key in _COUNT_UNBOUNDED_KEYS:
+        return None
+    return key
 
 
 class OSMFeaturesClient:
@@ -80,13 +144,19 @@ class OSMFeaturesClient:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _request(self, params: dict[str, Any], *, accept: str | None = None) -> requests.Response:
+    def _request(
+        self,
+        params: dict[str, Any],
+        *,
+        accept: str | None = None,
+        path: str = _V3_PATH,
+    ) -> requests.Response:
         """Execute a single HTTP request and return the Response."""
         param_list = build_params(params)
 
         def _do() -> requests.Response:
             return self._session.get(
-                f"{self._base_url}/v2/osm_features",
+                f"{self._base_url}{path}",
                 params=param_list,
                 headers={"Accept": accept or GEOJSON_ACCEPT},
                 timeout=self._timeout,
@@ -103,9 +173,15 @@ class OSMFeaturesClient:
         raise_for_response(resp)
         return resp
 
-    def _raw_query(self, params: dict[str, Any], *, accept: str | None = None) -> OSMFeatureCollection:
-        """Execute a single HTTP request; pagination comes from response headers."""
-        resp = self._request(params, accept=accept)
+    def _raw_query(
+        self,
+        params: dict[str, Any],
+        *,
+        accept: str | None = None,
+        path: str = _V3_PATH,
+    ) -> OSMFeatureCollection:
+        """Execute a single HTTP request and parse a GeoJSON FeatureCollection."""
+        resp = self._request(params, accept=accept, path=path)
         return OSMFeatureCollection.from_http(resp.json(), resp.headers)
 
     def _post_json(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -157,246 +233,190 @@ class OSMFeaturesClient:
     def query(
         self,
         *,
-        bbox: str | None = None,
-        location: str | None = None,
-        radius: float | None = None,
-        type: ElementType | list[ElementType] | None = None,  # noqa: A002
-        way_shape: ShapeType | None = None,
-        shape: ShapeType | None = None,
-        osm_ids: str | None = None,
-        within: str | None = None,
-        tags: list[str] | str | None = None,
-        or_tags: list[str] | str | None = None,
-        not_tags: list[str] | str | None = None,
-        limit: int | None = None,
-        cursor: str | None = None,
-        zoom: float | None = None,
-        min_length_m: float | None = None,
-        max_length_m: float | None = None,
-        min_area_m2: float | None = None,
-        max_area_m2: float | None = None,
-        disable_budget_warning: bool = False,
-        geometry: Any = None,
-        centroid: bool = False,
-        clip_geometry: bool | None = None,
-        accept: str | None = None,
-    ) -> OSMFeatureCollection | BinaryQueryResult:
-        """Fetch a single page of OSM elements.
-
-        Parameters
-        ----------
-        bbox:
-            Spatial filter as ``"min_lon,min_lat,max_lon,max_lat"``.
-        location:
-            Point for a radius search as ``"lat,lng"``. Requires ``radius``.
-        radius:
-            Search radius in metres. Requires ``location``.
-        type:
-            Element type(s) to return: ``"node"``, ``"way"``, or
-            ``"relation"``.  Pass a list to request multiple types.
-        way_shape:
-            Geometry class for ways/relations: ``"polygon"`` or ``"line"``.
-            Omit for both shapes; ``"all"`` also means both.
-        shape:
-            Deprecated alias for ``way_shape``.
-        osm_ids:
-            Comma-separated OSM IDs for direct lookup.  Mutually exclusive
-            with spatial / tag filters.
-        within:
-            Polygon spatial anchor as ``way/<id>`` or ``relation/<id>``.
-            Mutually exclusive with ``bbox``, ``location``/``radius``, and
-            ``osm_ids``. Example: ``within="relation/155790"``.
-        tags:
-            AND-combined tag filters, e.g. ``"building"``, ``"amenity=cafe"``,
-            or ``"ele>500"`` (numeric compare; send ``>`` unescaped, the client
-            URL-encodes it).  Pass a list for multiple filters.
-        or_tags:
-            OR-combined tag filters.  Requires a spatial anchor.
-        not_tags:
-            Exclusion tag filters.  Requires a spatial anchor.
-        limit:
-            Maximum features per page. Omit to use the API default (1000).
-        cursor:
-            Pagination cursor; use ``meta.next_cursor`` (from ``X-Next-Cursor``)
-            of the previous response. Omit to start from the first page.
-        zoom:
-            Map zoom level used to simplify geometry at lower zooms.
-        min_length_m:
-            Minimum line length in metres (inclusive). Applies to line geometry.
-        max_length_m:
-            Maximum line length in metres (inclusive). Applies to line geometry.
-        min_area_m2:
-            Minimum polygon area in square metres (inclusive). Applies to polygon geometry.
-        max_area_m2:
-            Maximum polygon area in square metres (inclusive). Applies to polygon geometry.
-        disable_budget_warning:
-            Bypass the per-request unit cap.  The query runs and credits are
-            still charged.
-        geometry:
-            Shapely geometry object.  Converted to ``bbox`` automatically
-            (requires ``pip install osmfeatures[geo]``).
-        centroid:
-            When True, request ``properties.centroid`` on non-point features.
-            Omit to use the API default (False).
-        clip_geometry:
-            When True, clip returned geometry to the requested bbox.
-            Omit to use the API default (True). Set False to return full
-            geometry for features intersecting the bbox.
-        accept:
-            ``Accept`` media type. Default / ``application/geo+json`` returns
-            ``OSMFeatureCollection``. Other types (``text/csv``,
-            ``text/tab-separated-values``, ``application/flatgeobuf``,
-            ``application/vnd.apache.parquet``) return :class:`BinaryQueryResult`
-            with body bytes and pagination ``meta`` (for manual ``cursor`` paging).
-        """
-        if geometry is not None:
-            bbox = shapely_to_bbox(geometry)
-
-        params: dict[str, Any] = {}
-        if bbox is not None:
-            params["bbox"] = bbox
-        if location is not None:
-            params["location"] = location
-        if radius is not None:
-            params["radius"] = radius
-        if type is not None:
-            params["type"] = type
-        if way_shape is not None:
-            params["way_shape"] = way_shape
-        if shape is not None:
-            params["shape"] = shape
-        if osm_ids is not None:
-            params["osm_ids"] = osm_ids
-        if within is not None:
-            params["within"] = within
-        if tags is not None:
-            params["tags"] = tags
-        if or_tags is not None:
-            params["or_tags"] = or_tags
-        if not_tags is not None:
-            params["not_tags"] = not_tags
-        if limit is not None:
-            params["limit"] = limit
-        if cursor is not None:
-            params["cursor"] = cursor
-        if zoom is not None:
-            params["zoom"] = zoom
-        if min_length_m is not None:
-            params["min_length_m"] = min_length_m
-        if max_length_m is not None:
-            params["max_length_m"] = max_length_m
-        if min_area_m2 is not None:
-            params["min_area_m2"] = min_area_m2
-        if max_area_m2 is not None:
-            params["max_area_m2"] = max_area_m2
-        if disable_budget_warning:
-            params["disable_budget_warning"] = disable_budget_warning
-        if centroid:
-            params["centroid"] = True
-        if clip_geometry is not None:
-            params["clip_geometry"] = clip_geometry
-
-        if is_geojson_accept(accept):
-            return self._raw_query(params, accept=accept)
-        resp = self._request(params, accept=accept)
-        return BinaryQueryResult.from_http(resp.content, resp.headers)
-
-    def query_all(
-        self,
-        *,
-        limit_per_page: int | None = None,
-        bbox_tiles: int = 2,
-        max_features: int | None = 55_000,
+        bbox_tiles: int = 1,
+        split_until_fit: bool = False,
+        max_features: int | None = DEFAULT_MAX_FEATURES,
         timeout: float | None = DEFAULT_QUERY_ALL_TIMEOUT_S,
         **params: Any,
-    ) -> OSMFeatureCollection:
-        """Fetch *all* pages of OSM elements, auto-paginating until complete.
+    ) -> OSMFeatureCollection | BinaryQueryResult:
+        """One ``/v3/osm_features`` call for a tile that fits in ``limit`` features.
 
-        When ``bbox`` is present, splits it into *bbox_tiles* sub-bboxes
-        (power of 2; default 2), paginates each tile sequentially, then
-        merges and deduplicates by feature ``id``. Use ``bbox_tiles=1`` to
-        disable tiling.
+        Omit ``limit`` for the key's ``max_limit``. A lower ``limit`` truncates
+        (``meta.has_more``). A match set larger than the caller's ``max_limit``
+        is HTTP 400 ``result_too_large``. ``split_until_fit=True`` counts first
+        and quarters the bbox before that fetch. That adds latency.
+        ``within``, radius, and ``osm_ids`` cannot be split, so the API error
+        propagates.
 
         Parameters
         ----------
-        limit_per_page:
-            Upstream ``limit`` per HTTP request (page size). Omit to use the
-            API default (1000).
         bbox_tiles:
-            Number of bbox tiles (power of 2). Defaults to 2. Ignored when
-            there is no ``bbox``.
+            Split the requested bbox into this many tiles (power of 2).
+            Default 1 sends the bbox as one request. Use 2, 4, 8, ... to stay
+            under a tier area cap.
+        split_until_fit:
+            Count matches first, then fetch. Quarter until each piece
+            fits. Default False. Avoids a billed result_too_large when
+            count can cover the same rows. Slower: a count per tile.
         max_features:
-            Cap on merged features. Defaults to 55_000. Pass ``None`` for no
-            upper limit (API rate limits still apply).
+            Cap on merged features. Default 1_000_000. ``None`` means no cap.
         timeout:
-            Wall-clock seconds for this call (all pages and tiles). Defaults
-            to 60. Pass ``None`` for no cap. Independent of the per-request
-            HTTP timeout on the client. Raises
-            :class:`~osmfeatures.OSMFeaturesTimeoutError` before starting
-            another page once the budget is spent; a finished last page is
-            returned even if it ran long.
+            Wall-clock seconds for this call. Defaults to 60. ``None`` is no cap.
         **params:
-            Same as :meth:`query`, except ``limit`` and ``cursor`` (managed
-            internally). Non-GeoJSON ``accept`` is not supported here.
+            Filter kwargs: ``bbox``, ``location``, ``radius``, ``type``,
+            ``way_shape``, ``shape``, ``osm_ids``, ``within``, ``tags``,
+            ``or_tags``, ``not_tags``, ``zoom``, size bounds, ``centroid``,
+            ``clip_geometry``, ``geometry``, ``accept``, ``limit``. No
+            ``cursor``. ``disable_budget_warning`` is count-only. An AND
+            ``tags`` key is the count ``group_by``.
+
+            ``limit`` is the maximum features in the response (omit for the
+            key's ``max_limit``, client max 1000000). A lower limit truncates. A match
+            set larger than the caller's ``max_limit`` is HTTP 400
+            ``result_too_large``. ``split_until_fit`` counts first and
+            quarters the bbox before that fetch.
+
+            ``accept`` selects the encoding (default GeoJSON). Non-GeoJSON
+            (CSV, TSV, FlatGeobuf, GeoParquet) is one request and returns
+            :class:`BinaryQueryResult`. Those encodings cannot tile or trim.
         """
-        if "limit" in params:
-            raise ValueError(
-                "query_all does not take limit; use limit_per_page (page size) "
-                "and max_features (total cap)"
-            )
-        if not is_geojson_accept(params.pop("accept", None)):
-            raise TypeError(
-                "query_all() only supports GeoJSON; use query(accept=...) for binary/table encodings"
-            )
         if "cursor" in params:
-            raise ValueError("query_all manages cursors; do not pass cursor")
+            raise ValueError("query does not take cursor")
+        # v3 rejects this; keep it only for count() during split_until_fit.
+        disable_budget_warning = bool(params.pop("disable_budget_warning", False))
+        limit = _resolve_query_limit(params.pop("limit", None))
+        accept = params.pop("accept", None)
+        if not is_geojson_accept(accept):
+            if split_until_fit:
+                raise ValueError("split_until_fit only works with GeoJSON")
+            if bbox_tiles != 1:
+                raise ValueError("bbox_tiles only works with GeoJSON")
+            if "geometry" in params:
+                geom = params.pop("geometry")
+                params["bbox"] = shapely_to_bbox(geom)
+            resp = self._request(
+                _with_limit(params, limit),
+                accept=accept,
+                path=_V3_PATH,
+            )
+            return BinaryQueryResult.from_http(resp.content, resp.headers)
 
         if "geometry" in params:
             geom = params.pop("geometry")
             params["bbox"] = shapely_to_bbox(geom)
 
         bbox = params.get("bbox")
-        tile_bboxes = (
-            split_bbox_tiles(bbox, bbox_tiles) if isinstance(bbox, str) else [None]
-        )
+        deadline = query_all_deadline(timeout)
 
+        def _deadline() -> None:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise OSMFeaturesTimeoutError(
+                    f"query exceeded {timeout}s timeout",
+                    timeout=timeout,
+                )
+
+        api_truncated = False
+
+        def _query_tile(tile: str | None) -> list[dict[str, Any]] | None:
+            nonlocal api_truncated
+            qparams = _with_limit(params, limit)
+            if tile is not None:
+                qparams["bbox"] = tile
+            try:
+                collection = self._raw_query(qparams, path=_V3_PATH)
+            except OSMFeaturesAPIError as exc:
+                if _is_result_too_large(exc) and split_until_fit:
+                    return None
+                raise
+            features = list(collection.get("features", []))
+            if collection.meta.has_more:
+                api_truncated = True
+            return features
+
+        def _match_count(tile: str) -> int | None:
+            """Count total for this tile. None when count cannot cover the same rows."""
+            key = _count_group_key(params.get("tags"))
+            if key is None:
+                return None
+            stat: dict[str, Any] = {"bbox": tile}
+            for name in (
+                "location", "radius", "type", "within", "tags", "or_tags", "not_tags",
+                "min_length_m", "max_length_m", "min_area_m2", "max_area_m2",
+            ):
+                if params.get(name) is not None:
+                    stat[name] = params[name]
+            way_shape = params.get("way_shape", params.get("shape"))
+            if way_shape is not None:
+                stat["way_shape"] = way_shape
+            if disable_budget_warning:
+                stat["disable_budget_warning"] = True
+            body = self.count(group_by=key, limit=1, **stat)
+            return int(body["total"])
+
+        if not isinstance(bbox, str):
+            if bbox_tiles != 1:
+                raise ValueError("bbox_tiles requires bbox")
+            collection = self._raw_query(
+                _with_limit(params, limit),
+                path=_V3_PATH,
+            )
+            page = list(collection.get("features", []))
+            truncated = collection.meta.has_more
+            if max_features is not None and len(page) > max_features:
+                page = page[:max_features]
+                truncated = True
+            return OSMFeatureCollection(
+                features=[OSMFeature.from_dict(f) for f in page],
+                meta=ResponseMeta(returned=len(page), has_more=truncated),
+            )
+
+        tiles: deque[tuple[str, int]] = deque(
+            (t, 0) for t in split_bbox_tiles(bbox, bbox_tiles)
+        )
         feature_lists: list[list[dict[str, Any]]] = []
         count = 0
         truncated = False
-        deadline = query_all_deadline(timeout)
-        for i, tile_bbox in enumerate(tile_bboxes):
-            if i and deadline is not None and time.monotonic() >= deadline:
-                raise OSMFeaturesTimeoutError(
-                    f"query_all exceeded {timeout}s timeout",
-                    timeout=timeout,
+        started = False
+        tile_cap = limit if limit is not None else _V3_SPLIT_WHEN_LIMIT_OMITTED
+
+        def _enqueue_quarters(tile: str, depth: int) -> None:
+            if depth >= _V3_SPLIT_DEPTH:
+                raise RuntimeError(
+                    f"query tile still overflows after "
+                    f"{_V3_SPLIT_DEPTH} splits: {tile}"
                 )
+            for quarter in split_bbox_tiles(tile, 4):
+                tiles.append((quarter, depth + 1))
+
+        while tiles:
+            if started:
+                _deadline()
+            started = True
             if max_features is not None and count >= max_features:
                 truncated = True
                 break
-            tile_params = dict(params)
-            if tile_bbox is not None:
-                tile_params["bbox"] = tile_bbox
-            tile_features: list[dict[str, Any]] = []
-            for page_features in paginate_all(
-                self._raw_query,
-                tile_params,
-                limit_per_page=limit_per_page,
-                deadline=deadline,
-                timeout=timeout,
-            ):
-                if max_features is not None:
-                    room = max_features - count
-                    if room <= 0:
-                        truncated = True
-                        break
-                    if len(page_features) > room:
-                        tile_features.extend(page_features[:room])
-                        count += room
-                        truncated = True
-                        break
-                tile_features.extend(page_features)
-                count += len(page_features)
-            feature_lists.append(tile_features)
+            tile, depth = tiles.popleft()
+            if split_until_fit:
+                total = _match_count(tile)
+                if total is not None and total > tile_cap:
+                    _enqueue_quarters(tile, depth)
+                    continue
+                if total == 0:
+                    continue
+            page = _query_tile(tile)
+            if page is None:
+                _enqueue_quarters(tile, depth)
+                continue
+            if max_features is not None:
+                room = max_features - count
+                if len(page) > room:
+                    if room > 0:
+                        feature_lists.append(page[:room])
+                    count += max(room, 0)
+                    truncated = True
+                    break
+            feature_lists.append(page)
+            count += len(page)
 
         all_features = merge_features(feature_lists)
         if max_features is not None and len(all_features) > max_features:
@@ -404,8 +424,15 @@ class OSMFeaturesClient:
             truncated = True
         return OSMFeatureCollection(
             features=[OSMFeature.from_dict(f) for f in all_features],
-            meta=ResponseMeta(returned=len(all_features), has_more=truncated),
+            meta=ResponseMeta(
+                returned=len(all_features),
+                has_more=truncated or api_truncated,
+            ),
         )
+
+    def query_all(self, **kwargs: Any) -> OSMFeatureCollection | BinaryQueryResult:
+        """Same as :meth:`query`."""
+        return self.query(**kwargs)
 
     def usage(self) -> dict[str, Any]:
         """Return this month's unit-budget usage for the authenticated API key.
@@ -436,38 +463,7 @@ class OSMFeaturesClient:
         raise_for_response(resp)
         return resp.json()  # type: ignore[no-any-return]
 
-    def estimate_cost(self, **params: Any) -> CostEstimate:
-        """Call ``/v2/osm_features/cost`` to preflight the credit cost.
-
-        Returns a :class:`CostEstimate` with ``estimated_credits``,
-        ``tier_limits``, and any ``hints``.  ``within`` loads the container
-        from PostGIS (RPS token spent) so envelope area matches the query.
-        """
-        if "geometry" in params:
-            geom = params.pop("geometry")
-            params["bbox"] = shapely_to_bbox(geom)
-
-        param_list = build_params(params)
-
-        def _do() -> requests.Response:
-            return self._session.get(
-                f"{self._base_url}/v2/osm_features/cost",
-                params=param_list,
-                timeout=self._timeout,
-            )
-
-        resp = retry(
-            _do,
-            self._retry,
-            get_status=lambda r: r.status_code,
-            get_headers=lambda r: dict(r.headers),
-            is_rate_limit_error=is_429_retryable,
-            build_rate_limit_error=build_rate_limit_error,
-        )
-        raise_for_response(resp)
-        return CostEstimate.from_dict(resp.json())
-
-    def stats(
+    def count(
         self,
         *,
         group_by: str,
@@ -487,13 +483,13 @@ class OSMFeaturesClient:
         max_area_m2: float | None = None,
         disable_budget_warning: bool = False,
     ) -> dict[str, Any]:
-        """``GET /v2/osm_features/stats``: count features grouped by a tag key.
+        """``GET /v2/osm_features/count``: count features grouped by a tag key.
 
         Same tag filters as :meth:`query` except ``osm_ids``. Spatial windows are larger
         than :meth:`query` (country-scale on every tier) and billed count-only.
         ``limit`` is max histogram buckets (API default 100, max 10000). Example::
 
-            client.stats(
+            client.count(
                 group_by="amenity",
                 bbox="18.05,59.32,18.10,59.34",
                 type="node",
@@ -540,7 +536,7 @@ class OSMFeaturesClient:
 
         def _do() -> requests.Response:
             return self._session.get(
-                f"{self._base_url}/v2/osm_features/stats",
+                f"{self._base_url}/v2/osm_features/count",
                 params=param_list,
                 timeout=self._timeout,
             )
