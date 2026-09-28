@@ -160,7 +160,7 @@ async def test_build_server_wires_instructions_and_tools():
     assert "collection_ids" in mcp.instructions
     assert "one preview per collection" in mcp.instructions
     assert "export_geojson" in mcp.instructions
-    assert "writes a file" in mcp.instructions
+    assert "download URL" in mcp.instructions
     assert f"at most {SUMMARY_ITEM_CAP}" in mcp.instructions
     assert "items_truncated" in mcp.instructions
     assert "OSM tags" in mcp.instructions

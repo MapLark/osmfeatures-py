@@ -25,8 +25,8 @@ include GeoJSON coordinate arrays. Call preview_map(collection_ids) to draw on a
 basemap (the browser fetches GeoJSON; you only get a URL). Pass every collection
 that belongs on the same map in one call (a walking route plus the restaurants
 along it). Call export_geojson only
-when the user asked for a raw GeoJSON file: it writes a file and returns a filesystem
-path. Do not read that file or paste coordinate arrays.
+when the user asked for a raw GeoJSON file: stdio returns a filesystem path, HTTP
+returns a download URL. Do not fetch that file or paste coordinate arrays.
 
 Opening hours: use as_of / open_now / filter_open only for staffed amenities
 where hours matter (cafe, bar, restaurant, shop). Skip hours for always-on

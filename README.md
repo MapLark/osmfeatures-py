@@ -214,7 +214,7 @@ Add real geospatial intelligence to your Artificial Intelligence agents. Use Map
 
 The [Maplark MCP Server](https://maplark.com/products/mcp-server) is the agent surface. Your LLM is the planner: it chooses OSM tags, a bbox or location+radius, a time, a travel mode, and the next tool. The tools compute metres, ranks, opening-hours status, and walk/bike paths. You do not compute haversine, parse `opening_hours` strings, or invent coordinates.
 
-Results come back as summaries (ids, names, OSM tags, lon/lat scalars, `distance_m`, `openNow`) plus a `collection_id`. They never include GeoJSON coordinate arrays. Call `preview_map(collection_id)` to draw: a local page loads [OpenFreeMap](https://openfreemap.org/) in MapLibre and fetches GeoJSON from localhost, so coordinates never enter the model. Call `export_geojson` only when the user asked for a raw file: it writes GeoJSON to disk and returns a path, not coordinates.
+Results come back as summaries (ids, names, OSM tags, lon/lat scalars, `distance_m`, `openNow`) plus a `collection_id`. They never include GeoJSON coordinate arrays. Call `preview_map(collection_id)` to draw: a page loads [OpenFreeMap](https://openfreemap.org/) in MapLibre and fetches GeoJSON from the preview URL, so coordinates never enter the model. Call `export_geojson` only when the user asked for a raw file: stdio writes a path, HTTP returns a download URL, never coordinates.
 
 #### Tools
 

@@ -69,8 +69,8 @@ def test_preview_html_uses_openfreemap_and_relative_geojson():
     html = preview_html("fc_3")
     assert "tiles.openfreemap.org/styles/liberty" in html
     assert '"fc_3"' in html
-    assert "/collections/" in html
-    assert ".geojson" in html
+    assert 'fetch(COLLECTION_ID + ".geojson")' in html
+    assert "/collections/" not in html
     assert "FeatureCollection" not in html
     assert "JSON.parse(tags)" in html
     assert "popupHtml" in html
@@ -125,6 +125,16 @@ def test_http_preview_and_geojson(preview):
         assert "tiles.openfreemap.org/styles/liberty" in html
         assert "search_origin" in html
         assert "SKIP_PROP_KEYS" in html
+        assert 'fetch(COLLECTION_ID + ".geojson")' in html
+    with urlopen(f"{server.base_url}/preview/fc_1.geojson", timeout=2) as resp:
+        body = json.loads(resp.read())
+        assert body["features"][0]["geometry"]["coordinates"] == [18.075, 59.316]
+        assert body["features"][0]["properties"]["name"] == "Drop Coffee"
+        assert body["features"][0]["properties"]["tags"] == {
+            "name": "Drop Coffee",
+            "amenity": "cafe",
+            "cuisine": "coffee_shop",
+        }
     with urlopen(f"{server.base_url}/collections/fc_1.geojson", timeout=2) as resp:
         body = json.loads(resp.read())
         assert body["features"][0]["geometry"]["coordinates"] == [18.075, 59.316]

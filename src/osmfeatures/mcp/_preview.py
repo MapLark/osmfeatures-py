@@ -173,7 +173,7 @@ def preview_html(collection_ids: str | list[str]) -> str:
   }}
 
   map.on("load", async () => {{
-    const res = await fetch("/collections/" + COLLECTION_ID + ".geojson");
+    const res = await fetch(COLLECTION_ID + ".geojson");
     if (!res.ok) {{
       document.getElementById("bar").textContent = "No geometry for " + COLLECTION_ID;
       return;
@@ -368,10 +368,18 @@ class PreviewServer:
             "opened": opened,
         }
 
+    def export_file(self, collection_id: str) -> dict[str, Any]:
+        return self._session.export_geojson_file(collection_id)
+
     def close(self) -> None:
         self._httpd.shutdown()
         self._httpd.server_close()
         self._thread.join(timeout=2.0)
+
+
+def mapped_geojson(session: Any, collection_ids: str | list[str]) -> dict[str, Any]:
+    ids = parse_collection_ids(collection_ids)
+    return geojson_for_map_many([session.export_geojson(item) for item in ids])
 
 
 def _handler_for(session: Any) -> type[BaseHTTPRequestHandler]:
@@ -382,9 +390,12 @@ def _handler_for(session: Any) -> type[BaseHTTPRequestHandler]:
         def do_GET(self) -> None:
             path = urlparse(self.path).path.rstrip("/")
             if path.startswith("/preview/"):
-                cid = path[len("/preview/") :]
+                rest = path[len("/preview/") :]
+                if rest.endswith(".geojson"):
+                    self._send_geojson(rest[: -len(".geojson")])
+                    return
                 try:
-                    ids = parse_collection_ids(cid)
+                    ids = parse_collection_ids(rest)
                     for item in ids:
                         session.get(item)
                 except (KeyError, ValueError):
@@ -394,19 +405,18 @@ def _handler_for(session: Any) -> type[BaseHTTPRequestHandler]:
                 self._send(200, body, "text/html; charset=utf-8")
                 return
             if path.startswith("/collections/") and path.endswith(".geojson"):
-                cid = path[len("/collections/") : -len(".geojson")]
-                try:
-                    ids = parse_collection_ids(cid)
-                    payload = geojson_for_map_many(
-                        [session.export_geojson(item) for item in ids]
-                    )
-                except (KeyError, ValueError, TypeError):
-                    self._send(404, b"unknown collection\n", "text/plain; charset=utf-8")
-                    return
-                body = json.dumps(payload).encode("utf-8")
-                self._send(200, body, "application/geo+json; charset=utf-8")
+                self._send_geojson(path[len("/collections/") : -len(".geojson")])
                 return
             self._send(404, b"not found\n", "text/plain; charset=utf-8")
+
+        def _send_geojson(self, raw_ids: str) -> None:
+            try:
+                payload = mapped_geojson(session, raw_ids)
+            except (KeyError, ValueError, TypeError):
+                self._send(404, b"unknown collection\n", "text/plain; charset=utf-8")
+                return
+            body = json.dumps(payload).encode("utf-8")
+            self._send(200, body, "application/geo+json; charset=utf-8")
 
         def _send(self, code: int, body: bytes, content_type: str) -> None:
             self.send_response(code)

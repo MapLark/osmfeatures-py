@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 pytest.importorskip("mcp")
@@ -9,7 +11,7 @@ pytest.importorskip("mcp")
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.testclient import TestClient
 
-from osmfeatures.mcp.mcp_server import HttpSessionStore, build_http_app
+from osmfeatures.mcp.mcp_server import HTTP_SESSION_IDLE_TIMEOUT, HttpSessionStore, build_http_app
 
 _MCP_HEADERS = {
     "Authorization": "Bearer sk-a",
@@ -71,6 +73,44 @@ def test_http_session_store_isolates_collections():
         assert b.client.closed is True
 
 
+def test_http_session_store_expires_idle():
+    store = HttpSessionStore(
+        base_url="http://api.test",
+        client_factory=_factory,
+        idle_timeout=60,
+    )
+    try:
+        a = store.get_or_create("sess-a", "sk-a")
+        b = store.get_or_create("sess-b", "sk-b")
+        a.last_used = time.monotonic() - 61
+        store.expire_idle()
+        assert store.peek("sess-a") is None
+        assert a.client.closed is True
+        assert store.peek("sess-b") is b
+        assert b.client.closed is False
+        again = store.get_or_create("sess-a", "sk-a")
+        assert again.session is not a.session
+        assert again.client is not a.client
+    finally:
+        store.close_all()
+
+
+def test_http_session_store_idle_timeout_none_never_expires():
+    store = HttpSessionStore(
+        base_url="http://api.test",
+        client_factory=_factory,
+        idle_timeout=None,
+    )
+    try:
+        a = store.get_or_create("sess-a", "sk-a")
+        a.last_used = time.monotonic() - 10_000
+        store.expire_idle()
+        assert store.peek("sess-a") is a
+        assert a.client.closed is False
+    finally:
+        store.close_all()
+
+
 def test_http_requires_bearer():
     app, store = _app()
     try:
@@ -127,6 +167,9 @@ def _handshake(client: TestClient, api_key: str = "sk-a") -> dict[str, str]:
 def test_http_initialize_and_tools_list():
     app, store = _app()
     try:
+        assert store._idle_timeout == HTTP_SESSION_IDLE_TIMEOUT == 60 * 60
+        assert store._mcp is not None
+        assert store._mcp.settings.session_idle_timeout == HTTP_SESSION_IDLE_TIMEOUT
         with TestClient(app) as client:
             init = client.post(
                 "/mcp",
@@ -161,6 +204,8 @@ def test_http_initialize_and_tools_list():
             names = {tool["name"] for tool in listed.json()["result"]["tools"]}
             assert "places_search" in names
             assert "nearest_within" in names
+            assert "preview_map" in names
+            assert "export_geojson" in names
     finally:
         store.close_all()
 
@@ -226,5 +271,102 @@ def test_http_sessions_do_not_share_collections():
             bound_a.session._put({"type": "FeatureCollection", "features": []})
             assert "fc_1" in bound_a.session._store
             assert bound_b.session._store == {}
+    finally:
+        store.close_all()
+
+
+def _cafe_fc() -> dict:
+    return {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "id": "node/1",
+                "geometry": {"type": "Point", "coordinates": [18.075, 59.316]},
+                "properties": {"tags": {"name": "Drop Coffee"}},
+            }
+        ],
+    }
+
+
+def test_http_preview_and_export_use_public_urls():
+    app, store = _app()
+    try:
+        with TestClient(app) as client:
+            headers = _handshake(client)
+            sid = headers["mcp-session-id"]
+            store.get_or_create(sid, "sk-a").session._put(_cafe_fc())
+            tool_headers = {
+                **headers,
+                "x-forwarded-proto": "https",
+                "x-forwarded-host": "api.maplark.com",
+            }
+            preview = client.post(
+                "/mcp",
+                headers=tool_headers,
+                json=_rpc(
+                    "tools/call",
+                    {
+                        "name": "preview_map",
+                        "arguments": {
+                            "collection_ids": ["fc_1"],
+                            "open_browser": True,
+                        },
+                    },
+                ),
+            )
+            assert preview.status_code == 200, preview.text
+            preview_out = preview.json()["result"]["structuredContent"]
+            assert preview_out["opened"] is False
+            assert preview_out["preview_url"] == (
+                f"https://api.maplark.com/mcp/preview/{sid}/fc_1"
+            )
+
+            page = client.get(f"/mcp/preview/{sid}/fc_1")
+            assert page.status_code == 200
+            assert "text/html" in page.headers["content-type"]
+            assert 'fetch(COLLECTION_ID + ".geojson")' in page.text
+            assert "Drop Coffee" not in page.text
+
+            geo = client.get(f"/mcp/preview/{sid}/fc_1.geojson")
+            assert geo.status_code == 200
+            body = geo.json()
+            assert body["features"][0]["geometry"]["coordinates"] == [18.075, 59.316]
+            assert body["features"][0]["properties"]["name"] == "Drop Coffee"
+
+            exported = client.post(
+                "/mcp",
+                headers=tool_headers,
+                json=_rpc(
+                    "tools/call",
+                    {"name": "export_geojson", "arguments": {"collection_id": "fc_1"}},
+                ),
+            )
+            assert exported.status_code == 200, exported.text
+            export_out = exported.json()["result"]["structuredContent"]
+            assert export_out["url"] == (
+                f"https://api.maplark.com/mcp/preview/{sid}/fc_1.geojson"
+            )
+            assert "path" not in export_out
+            assert export_out["feature_count"] == 1
+    finally:
+        store.close_all()
+
+
+def test_http_preview_is_session_scoped_and_requires_no_bearer():
+    app, store = _app()
+    try:
+        with TestClient(app) as client:
+            headers_a = _handshake(client, "sk-a")
+            headers_b = _handshake(client, "sk-b")
+            sid_a = headers_a["mcp-session-id"]
+            sid_b = headers_b["mcp-session-id"]
+            store.get_or_create(sid_a, "sk-a").session._put(_cafe_fc())
+            missing = client.get(f"/mcp/preview/{sid_b}/fc_1")
+            assert missing.status_code == 404
+            unknown = client.get("/mcp/preview/not-a-session/fc_1")
+            assert unknown.status_code == 404
+            page = client.get(f"/mcp/preview/{sid_a}/fc_1")
+            assert page.status_code == 200
     finally:
         store.close_all()
