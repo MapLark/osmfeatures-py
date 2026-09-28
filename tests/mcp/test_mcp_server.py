@@ -147,13 +147,13 @@ async def _call(mcp, name: str, **arguments: Any) -> dict[str, Any]:
 def stack():
     client = FakeClient()
     session = GeoAgentSession(client)
-    mcp = build_server(session, preview=_FakePreview())
+    mcp = build_server(lambda: session, preview=_FakePreview())
     return client, mcp
 
 
 @pytest.mark.asyncio
 async def test_build_server_wires_instructions_and_tools():
-    mcp = build_server(GeoAgentSession(object()), preview=_FakePreview())
+    mcp = build_server(lambda: GeoAgentSession(object()), preview=_FakePreview())
     assert mcp.name == "maplark"
     assert mcp.instructions == INSTRUCTIONS
     assert "preview_map" in mcp.instructions
@@ -237,7 +237,7 @@ def test_run_stdio_closes_client_and_preview(monkeypatch):
 
     monkeypatch.setattr(client_mod, "OSMFeaturesClient", FakeClient)
     monkeypatch.setattr(mcp_server, "PreviewServer", FakePreview)
-    monkeypatch.setattr(mcp_server, "build_server", lambda session, preview: FakeMCP())
+    monkeypatch.setattr(mcp_server, "build_server", lambda get_session, preview: FakeMCP())
     mcp_server.run_stdio(api_key="sk-test")
     assert closed == ["preview", "client"]
 

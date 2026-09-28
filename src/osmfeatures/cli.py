@@ -318,17 +318,19 @@ def stats_cmd(
 @cli.command("mcp")
 @click.option("--api-key", default=None, envvar="MAPLARK_API_KEY", help="MapLark API key")
 @click.option("--base-url", default=None, envvar="MAPLARK_BASE_URL", help="API base URL")
-def mcp_cmd(api_key: str | None, base_url: str | None) -> None:
-    """Run the MapLark geo-agent MCP server on stdio (requires osmfeatures[mcp])."""
-    resolved_key = api_key or os.environ.get("MAPLARK_API_KEY", "")
-    if not resolved_key:
-        click.echo(
-            "Error: No API key provided. Pass --api-key or set MAPLARK_API_KEY.",
-            err=True,
-        )
-        sys.exit(1)
+@click.option("--http", is_flag=True, help="Serve Streamable HTTP instead of stdio")
+@click.option("--host", default="127.0.0.1", show_default=True, help="HTTP bind host")
+@click.option("--port", default=8081, show_default=True, type=int, help="HTTP bind port")
+def mcp_cmd(
+    api_key: str | None,
+    base_url: str | None,
+    http: bool,
+    host: str,
+    port: int,
+) -> None:
+    """Run the MapLark geo-agent MCP server (requires osmfeatures[mcp])."""
     try:
-        from .mcp.mcp_server import run_stdio
+        from .mcp.mcp_server import run_http, run_stdio
     except ModuleNotFoundError as exc:
         if exc.name != "mcp" and not (exc.name or "").startswith("mcp."):
             raise
@@ -339,5 +341,15 @@ def mcp_cmd(api_key: str | None, base_url: str | None) -> None:
         sys.exit(1)
     except FileNotFoundError as exc:
         click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+    if http:
+        run_http(host=host, port=port, base_url=base_url)
+        return
+    resolved_key = api_key or os.environ.get("MAPLARK_API_KEY", "")
+    if not resolved_key:
+        click.echo(
+            "Error: No API key provided. Pass --api-key or set MAPLARK_API_KEY.",
+            err=True,
+        )
         sys.exit(1)
     run_stdio(api_key=resolved_key, base_url=base_url)

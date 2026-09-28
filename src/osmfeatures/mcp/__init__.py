@@ -1,1 +1,1 @@
-"""MapLark geo-agent MCP server (``osmfeatures[mcp]``)."""
+"""MapLark geo-agent MCP server (stdio and Streamable HTTP)."""

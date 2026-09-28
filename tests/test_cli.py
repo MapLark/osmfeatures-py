@@ -229,6 +229,26 @@ def test_mcp_missing_instructions_is_not_missing_extra(monkeypatch):
     assert "AGENT_INSTRUCTIONS.md" in result.output
 
 
+def test_mcp_http_does_not_require_api_key(monkeypatch):
+    pytest.importorskip("mcp")
+    monkeypatch.delenv("MAPLARK_API_KEY", raising=False)
+    called: dict[str, object] = {}
+
+    def fake_run_http(*, host: str, port: int, base_url: str | None = None) -> None:
+        called["host"] = host
+        called["port"] = port
+        called["base_url"] = base_url
+
+    import osmfeatures.mcp.mcp_server as mcp_server
+
+    monkeypatch.setattr(mcp_server, "run_http", fake_run_http)
+    result = CliRunner().invoke(
+        cli, ["mcp", "--http", "--host", "0.0.0.0", "--port", "9001", "--base-url", "http://api:8080"]
+    )
+    assert result.exit_code == 0, result.output
+    assert called == {"host": "0.0.0.0", "port": 9001, "base_url": "http://api:8080"}
+
+
 def test_stats_forwards_group_by():
     runner = CliRunner()
     with patch("osmfeatures.cli.OSMFeaturesClient") as MockClient:

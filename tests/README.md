@@ -37,9 +37,10 @@ python3 -m pytest tests/test_client.py::test_query_returns_feature_collection -v
 |------|----------------|
 | `test_chunking.py` | `split_bbox_tiles`, `merge_features`, `around_to_bbox`, `parse_bbox` |
 | `test_client.py` | `OSMFeaturesClient` - happy paths, auth header, error responses, cost estimate |
-| `test_cli.py` | CLI `query` / `mcp` - `--output geojson/csv/table`, missing API key or MCP extra |
+| `test_cli.py` | CLI `query` / `mcp` - `--output geojson/csv/table`, missing API key or MCP extra, `--http` |
 | `mcp/test_mcp_session.py` | Geo-agent session summaries, local joins, containment, file export |
 | `mcp/test_mcp_server.py` | `build_server()` tool names, `instructions`, FastMCP `call_tool` wiring |
+| `mcp/test_mcp_http.py` | Streamable HTTP Bearer 401, initialize + tools/list, per-session `fc_N` isolation |
 | `mcp/test_preview.py` | Local MapLibre preview HTTP (OpenFreeMap, no geometry in planner payload) |
 | `mcp/test_geocode.py` | Nominatim geocode tool (bbox remap, empty query, session does not store a collection) |
 | `test_retry.py` | Retry + backoff: 429->200, exhausted retries, monthly limit, `Retry-After` header |

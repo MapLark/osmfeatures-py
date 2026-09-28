@@ -54,12 +54,12 @@ Read the full API reference here [https://maplark.com/developer](https://maplark
 
 ## Python SDK
 
-This client library comes with complete-tile queries, optional bbox tiling, retry/backoff, pandas/geopandas output, async support, convenience methods for common OSM layers (buildings, amenities, bike roads, and so on), a stdio MCP server for Claude / Cursor / Custom agents, and places/routes methods for opening hours and walk/bike routing. 
+This client library comes with complete-tile queries, optional bbox tiling, retry/backoff, pandas/geopandas output, async support, convenience methods for common OSM layers (buildings, amenities, bike roads, and so on), an MCP server (stdio or Streamable HTTP) for Claude / Cursor / Custom agents, and places/routes methods for opening hours and walk/bike routing. 
 
 ```
 pip install osmfeatures
 pip install "osmfeatures[geo]"   # pandas / geopandas / shapely support
-pip install "osmfeatures[mcp]"   # stdio MCP server for Claude / Cursor
+pip install "osmfeatures[mcp]"   # MCP server for Claude / Cursor (stdio or HTTP)
 ```
 
 Official client for the MapLark OSM Features API (GeoJSON, FlatGeobuf, GeoParquet, CSV).
@@ -225,14 +225,35 @@ Results come back as summaries (ids, names, OSM tags, lon/lat scalars, `distance
 - Local (no HTTP): `nearest_within`, `pairs_within`, `filter_open`, `point_in_polygon`, `points_in_polygon`
 - Draw / export: `preview_map`, `export_geojson`
 
-#### Run MCP server manually
+#### Run MCP server locally (stdio)
 ```bash
 pip install "osmfeatures[mcp]"
 export MAPLARK_API_KEY="sk-..."
 osmfeatures mcp
 ```
 
-#### Cursor / Claude Desktop
+#### Hosted HTTP (Cursor / Claude remote)
+
+MapLark serves Streamable HTTP at `https://api.maplark.com/mcp`. Pass your API key per request. Do not put a process-level key on the server.
+
+```json
+{
+  "mcpServers": {
+    "maplark": {
+      "url": "https://api.maplark.com/mcp",
+      "headers": { "Authorization": "Bearer YOUR_KEY" }
+    }
+  }
+}
+```
+
+Self-host the same transport:
+
+```bash
+osmfeatures mcp --http --host 127.0.0.1 --port 8081
+```
+
+#### Cursor / Claude Desktop (local stdio)
 First install [uv](https://docs.astral.sh/uv/) for one-click server start.
 
 ```json
@@ -412,6 +433,7 @@ If the package is installed, the CLI is available as `osmfeatures`:
 export MAPLARK_API_KEY="sk-..."
 osmfeatures query --bbox "18.063,59.322,18.082,59.332" --tags building --type way
 osmfeatures mcp
+osmfeatures mcp --http --host 127.0.0.1 --port 8081
 ```
 
 
