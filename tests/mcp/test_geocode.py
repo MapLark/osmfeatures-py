@@ -58,7 +58,7 @@ def test_nominatim_geocode_empty_and_no_hits():
     assert out["place"] is None
 
 
-def test_session_geocode_does_not_store_a_collection(monkeypatch):
+async def test_session_geocode_does_not_store_a_collection(monkeypatch):
     monkeypatch.setattr(
         "osmfeatures.mcp._mcp_session.nominatim_geocode",
         lambda q: {
@@ -72,7 +72,7 @@ def test_session_geocode_does_not_store_a_collection(monkeypatch):
         },
     )
     session = GeoAgentSession(object())
-    out = session.geocode("Södermalm")
+    out = await session.geocode("Södermalm")
     assert_no_coordinate_arrays(out)
     assert out["place"]["bbox"].startswith("18.02")
     with pytest.raises(KeyError):

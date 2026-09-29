@@ -253,6 +253,8 @@ Self-host the same transport:
 osmfeatures mcp --http --host 127.0.0.1 --port 8081
 ```
 
+`preview_map` returns a public URL (`/mcp/preview/...`). Anyone with the link can open the map until the MCP session goes idle (1 hour, refreshed while the map is used). No API key is required to view it.
+
 #### Cursor / Claude Desktop (local stdio)
 First install [uv](https://docs.astral.sh/uv/) for one-click server start.
 
@@ -274,12 +276,13 @@ Planner rules: you pick tags, bbox or location+radius, budgets, `openNow`/`asOf`
 
 | Prompt | MCP tools |
 |------|-----|
-| "Open cafes near me" | `places_nearby` or `places_search` with bbox and `openNow=true`|
-| "Vegan restaurants open after 6pm on a walk from T Centralen to Sodermalm in Stockholm" | `geocode`, `routes_path` , `places_search`, `filter_open`, `nearest_within`, `preview_map` |
-| "Open restaurants within 150 m of a station" | two `places_search`, then `nearest_within` |
-| "Pubs open at 20:00 in Toronto, Canada" | `places_search` with `as_of` (no `open_now` so closed hits stay), then `filter_open`; if empty, retry with no hours |
+| "Top pubs in Stockholm open after 6pm" | `geocode`, `places_search` with `as_of`, `filter_open`, `preview_map` |
+| "Laptop friendly cafes in Berlin open at 9am" | `places_nearby` or `places_search` with bbox and `openNow=true`|
+| "Open restaurants within 150 m of T-Centralen in Stockholm" | two `places_search`, then `nearest_within` |
+| "Vegan restaurants open after 6pm on a walk from T Centralen to Sodermalm in Stockholm" | `geocode`, `routes_path`, `places_search`, `filter_open`, `nearest_within`, `preview_map` |
+| "Top clubs open late in Toronto, Canada" | `places_search` with `as_of`, then `filter_open` |
 | "Open cafes within a 10-minute bike ride" | `routes_isochrone` + `places_search` in a covering radius + `points_in_polygon` |
-| "A bar crawl in Stockholm" / "cafes on a tour of Gamla Stan" | `places_search`, `filter_open` + `routes_optimized_path` (`loop=true`) |
+| "Cafes on a tour of Gamla Stan" | `places_search`, `filter_open` + `routes_optimized_path` (`loop=true`) |
 | "Suggest a walk to a bar, a restaurant, and a cafe, no particular order" | `routes_optimized_path` with `loop=false` |
 | "Is the office a 20-minute walk from the apartment?" | `routes_isochrone` from A, `point_in_polygon` for B |
 | "Show this on a map" | `preview_map(collection_id)` after a search or route |

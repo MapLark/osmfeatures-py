@@ -13,6 +13,7 @@ from osmfeatures.mcp._preview import (
     PreviewServer,
     geojson_for_map,
     geojson_for_map_many,
+    normalize_save_as,
     parse_collection_ids,
     preview_html,
     validate_collection_id,
@@ -49,16 +50,33 @@ def preview():
 
 def test_validate_collection_id():
     assert validate_collection_id("fc_1") == "fc_1"
+    assert validate_collection_id("pubs") == "pubs"
+    assert validate_collection_id("berlin_pubs") == "berlin_pubs"
     with pytest.raises(ValueError):
         validate_collection_id("../secret")
     with pytest.raises(ValueError):
         validate_collection_id("fc_1/extra")
+    with pytest.raises(ValueError):
+        validate_collection_id("pubs-open")
+    with pytest.raises(ValueError):
+        validate_collection_id("1pubs")
+
+
+def test_normalize_save_as():
+    assert normalize_save_as("pubs") == "pubs"
+    assert normalize_save_as("pubs-open") == "pubs_open"
+    assert normalize_save_as("pubs in Berlin") == "pubs_in_Berlin"
+    with pytest.raises(ValueError):
+        normalize_save_as("../secret")
+    with pytest.raises(ValueError):
+        normalize_save_as("1pubs")
 
 
 def test_parse_collection_ids():
     assert parse_collection_ids("fc_1") == ["fc_1"]
     assert parse_collection_ids("fc_2,fc_1,fc_2") == ["fc_2", "fc_1"]
     assert parse_collection_ids(["fc_3", "fc_4"]) == ["fc_3", "fc_4"]
+    assert parse_collection_ids("pubs,stations") == ["pubs", "stations"]
     with pytest.raises(ValueError):
         parse_collection_ids("")
     with pytest.raises(ValueError):
@@ -83,6 +101,7 @@ def test_preview_html_uses_openfreemap_and_relative_geojson():
     assert "ml-popup-tags" in html
     assert "setHTML" in html
     assert "escapeHtml" in html
+    assert 'name="referrer" content="no-referrer"' in html
     # Origin marker popup escapes lon/lat (same helper as feature popups).
     assert 'escapeHtml(fc.search_origin.lng)' in html
     assert 'escapeHtml(fc.search_origin.lat)' in html

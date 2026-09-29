@@ -10,7 +10,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import urlparse
 
-_COLLECTION_ID = re.compile(r"^fc_[0-9]+$")
+# Planner save_as labels (pubs) or server-minted fc_N. No slashes/commas (URL path).
+_COLLECTION_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
+_SAVE_AS_SEP = re.compile(r"[\s-]+")
 
 # Vector basemap, no API key. Overlay GeoJSON is fetched from this process.
 _MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty"
@@ -77,8 +79,14 @@ def validate_collection_id(collection_id: str) -> str:
     return cid
 
 
+def normalize_save_as(label: str) -> str:
+    """Hyphens and whitespace become ``_``. Other invalid labels still raise."""
+    compact = _SAVE_AS_SEP.sub("_", (label or "").strip()).strip("_")
+    return validate_collection_id(compact)
+
+
 def parse_collection_ids(raw: str | list[str]) -> list[str]:
-    """One or more ``fc_N`` ids. URLs use a comma-separated path segment."""
+    """One or more collection ids. URLs use a comma-separated path segment."""
     parts = raw.split(",") if isinstance(raw, str) else list(raw)
     ids = [validate_collection_id(str(p)) for p in parts if str(p).strip()]
     if not ids:
@@ -97,7 +105,7 @@ def collection_ids_path(collection_ids: str | list[str]) -> str:
 
 
 def preview_html(collection_ids: str | list[str]) -> str:
-    """MapLibre page that loads ``/collections/{ids}.geojson`` on a street basemap."""
+    """MapLibre page that loads a relative ``{ids}.geojson`` next to this HTML."""
     cid = collection_ids_path(collection_ids)
     cid_js = json.dumps(cid)
     return f"""<!DOCTYPE html>
@@ -106,6 +114,7 @@ def preview_html(collection_ids: str | list[str]) -> str:
   <meta charset="utf-8"/>
   <title>MapLark {cid}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="referrer" content="no-referrer"/>
   <link rel="stylesheet" href="{_MAPLIBRE_CSS}"/>
   <style>
     html, body, #map {{ margin: 0; height: 100%; background: #e8e4dc; }}
@@ -423,6 +432,7 @@ def _handler_for(session: Any) -> type[BaseHTTPRequestHandler]:
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            self.send_header("Referrer-Policy", "no-referrer")
             self.end_headers()
             self.wfile.write(body)
 

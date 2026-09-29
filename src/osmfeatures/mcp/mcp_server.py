@@ -6,11 +6,14 @@ HTTP auth is ``Authorization: Bearer <MAPLARK_API_KEY>`` per MCP session.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import inspect
 import json
 import re
-import threading
 import time
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from importlib.resources import files
 from typing import Any
@@ -35,8 +38,14 @@ HTTP_HOST = "127.0.0.1"
 HTTP_PORT = 8081
 MCP_SESSION_ID_HEADER = "mcp-session-id"
 _HTTP_SESSION_ID = re.compile(r"^[A-Za-z0-9._-]{8,128}$")
+_PUBLIC_HOST = re.compile(r"^[A-Za-z0-9._\[\]:-]{1,253}$")
 _PREVIEW_PREFIX = "/mcp/preview/"
-# Standing GET SSE does not refresh last_used; tool POSTs do. None disables expiry.
+_PREVIEW_HEADERS = {
+    "Cache-Control": "no-store",
+    "Access-Control-Allow-Origin": "*",
+}
+# Idle sessions are closed by an asyncio reaper on the ASGI lifespan.
+# None disables expiry.
 HTTP_SESSION_IDLE_TIMEOUT = 60 * 60
 
 
@@ -108,7 +117,7 @@ def build_server(
     get_preview = _preview_getter(get_session, preview)
 
     @mcp.tool()
-    def places_search(
+    async def places_search(
         bbox: str | None = None,
         lat: float | None = None,
         lng: float | None = None,
@@ -118,11 +127,12 @@ def build_server(
         limit: int | None = None,
         open_now: bool = False,
         as_of: str | None = None,
+        save_as: str | None = None,
     ) -> dict[str, Any]:
         """Places in a bbox or location+radius (not both). Polygon POIs come back as centroid points."""
         location = places_search_point(lat, lng, radius)
         require_places_search_spatial(bbox, location)
-        return get_session().places_search(
+        return await get_session().places_search(
             bbox=bbox,
             location=location,
             radius=radius,
@@ -131,10 +141,11 @@ def build_server(
             limit=limit,
             open_now=open_now,
             as_of=as_of,
+            save_as=save_as,
         )
 
     @mcp.tool()
-    def places_nearby(
+    async def places_nearby(
         lat: float,
         lng: float,
         radius: float | None = None,
@@ -143,9 +154,10 @@ def build_server(
         limit: int | None = None,
         open_now: bool = False,
         as_of: str | None = None,
+        save_as: str | None = None,
     ) -> dict[str, Any]:
         """Places ranked from a point, nearest first (straight-line metres)."""
-        return get_session().places_nearby(
+        return await get_session().places_nearby(
             location={"lat": lat, "lng": lng},
             radius=radius,
             tags=tags,
@@ -153,68 +165,79 @@ def build_server(
             limit=limit,
             open_now=open_now,
             as_of=as_of,
+            save_as=save_as,
         )
 
     @mcp.tool()
-    def places_details(osm_type: str, osm_id: int | str | None = None) -> dict[str, Any]:
+    async def places_details(
+        osm_type: str,
+        osm_id: int | str | None = None,
+        save_as: str | None = None,
+    ) -> dict[str, Any]:
         """One place by node|way|relation id, or a search id like node/123 as osm_type."""
-        return get_session().places_details(osm_type, osm_id)
+        return await get_session().places_details(osm_type, osm_id, save_as=save_as)
 
     @mcp.tool()
-    def geocode(q: str) -> dict[str, Any]:
+    async def geocode(q: str) -> dict[str, Any]:
         """Place name to lon/lat and bbox (Nominatim until MapLark geocode ships). Use bbox for places_search."""
-        return get_session().geocode(q)
+        return await get_session().geocode(q)
 
     @mcp.tool()
-    def routes_isochrone(
+    async def routes_isochrone(
         lon: float,
         lat: float,
         max_distance_m: float | None = None,
         duration_s: float | None = None,
         search_buffer_m: float | None = None,
         travel_mode: str | None = None,
+        save_as: str | None = None,
     ) -> dict[str, Any]:
         """Walk/bike reach polygon. Provide exactly one of max_distance_m or duration_s. travel_mode is WALK or BICYCLE."""
-        return get_session().routes_isochrone(
+        return await get_session().routes_isochrone(
             origin={"lon": lon, "lat": lat},
             max_distance_m=max_distance_m,
             duration_s=duration_s,
             search_buffer_m=search_buffer_m,
             travel_mode=travel_mode,
+            save_as=save_as,
         )
 
     @mcp.tool()
-    def routes_path(
+    async def routes_path(
         stops: list[dict[str, float]],
         search_buffer_m: float | None = None,
         travel_mode: str | None = None,
+        save_as: str | None = None,
     ) -> dict[str, Any]:
         """Given-order walk/bike path. Each stop is {lon, lat}. travel_mode is WALK or BICYCLE. Does not reorder."""
-        return get_session().routes_path(
+        return await get_session().routes_path(
             stops=stops,
             search_buffer_m=search_buffer_m,
             travel_mode=travel_mode,
+            save_as=save_as,
         )
 
     @mcp.tool()
-    def routes_optimized_path(
+    async def routes_optimized_path(
         start: dict[str, float],
         stops: list[dict[str, float]],
         loop: bool | None = None,
         search_buffer_m: float | None = None,
         travel_mode: str | None = None,
+        save_as: str | None = None,
     ) -> dict[str, Any]:
         """TSP from start (not in stops). loop=true returns to start. Start from a searched place. travel_mode is WALK or BICYCLE."""
-        return get_session().routes_optimized_path(
+        return await get_session().routes_optimized_path(
             start=start,
             stops=stops,
             search_buffer_m=search_buffer_m,
             loop=loop,
             travel_mode=travel_mode,
+            save_as=save_as,
         )
 
     @mcp.tool()
-    def query(
+    async def query(
         bbox: str | None = None,
         location: str | None = None,
         radius: float | None = None,
@@ -226,9 +249,10 @@ def build_server(
         within: str | None = None,
         zoom: float | None = None,
         limit: int | None = None,
+        save_as: str | None = None,
     ) -> dict[str, Any]:
         """One GET /v3/osm_features tile (omit limit for the key's max_limit, no cursor). Pass limit to cap the tile. location is numeric lat,lng, not a place name. within is way/<id> or relation/<id>. Non-points include centroids for local joins."""
-        return get_session().query(
+        return await get_session().query(
             bbox=bbox,
             location=location,
             radius=radius,
@@ -240,10 +264,11 @@ def build_server(
             within=within,
             zoom=zoom,
             limit=limit,
+            save_as=save_as,
         )
 
     @mcp.tool()
-    def stats(
+    async def stats(
         group_by: str,
         bbox: str | None = None,
         location: str | None = None,
@@ -258,7 +283,7 @@ def build_server(
         disable_budget_warning: bool = False,
     ) -> dict[str, Any]:
         """Count features grouped by a tag key. City/country histograms. Report total. Not a GeoJSON page. location is numeric lat,lng."""
-        return get_session().stats(
+        return await get_session().stats(
             group_by=group_by,
             bbox=bbox,
             location=location,
@@ -279,9 +304,12 @@ def build_server(
         secondary_id: str,
         max_distance_m: float,
         limit: int | None = None,
+        save_as: str | None = None,
     ) -> dict[str, Any]:
         """Nearest secondary for each primary within max_distance_m. Omit limit for every pair in the store; count is complete, items lists at most 40. Refuses joins over 500000 comparisons."""
-        return get_session().nearest_within(primary_id, secondary_id, max_distance_m, limit)
+        return get_session().nearest_within(
+            primary_id, secondary_id, max_distance_m, limit, save_as=save_as
+        )
 
     @mcp.tool()
     def pairs_within(
@@ -290,64 +318,103 @@ def build_server(
         max_distance_m: float,
         min_distance_m: float = 0,
         limit: int | None = None,
+        save_as: str | None = None,
     ) -> dict[str, Any]:
         """All pairs with min_distance_m <= d <= max_distance_m. Same collection_id on both sides emits each unordered pair once. Omit limit for every pair in the store; count is complete, items lists at most 40. Refuses joins over 500000 comparisons."""
         return get_session().pairs_within(
-            primary_id, secondary_id, max_distance_m, min_distance_m, limit
+            primary_id, secondary_id, max_distance_m, min_distance_m, limit, save_as=save_as
         )
 
     @mcp.tool()
-    def filter_open(collection_id: str) -> dict[str, Any]:
-        """Keep stored places with openNow true. Search first with as_of."""
-        return get_session().filter_open(collection_id)
+    def filter_open(
+        collection_id: str | None = None,
+        save_as: str | None = None,
+    ) -> dict[str, Any]:
+        """Keep stored places with openNow true. Omit collection_id to use the latest places search (skips a later route or join). Search first with as_of."""
+        return get_session().filter_open(collection_id, save_as=save_as)
 
     @mcp.tool()
-    def point_in_polygon(collection_id: str, lon: float, lat: float) -> dict[str, Any]:
-        """True if lon/lat is inside a stored isochrone or any polygon in a query collection."""
+    def point_in_polygon(
+        lon: float,
+        lat: float,
+        collection_id: str | None = None,
+    ) -> dict[str, Any]:
+        """True if lon/lat is inside a stored isochrone or any polygon in a query collection. Omit collection_id to use the latest stored collection."""
         return get_session().point_in_polygon(collection_id, lon, lat)
 
     @mcp.tool()
-    def points_in_polygon(points_id: str, polygon_id: str) -> dict[str, Any]:
+    def points_in_polygon(
+        points_id: str,
+        polygon_id: str,
+        save_as: str | None = None,
+    ) -> dict[str, Any]:
         """Keep stored point features that fall inside a stored polygon (isochrone)."""
-        return get_session().points_in_polygon(points_id, polygon_id)
+        return get_session().points_in_polygon(points_id, polygon_id, save_as=save_as)
 
     @mcp.tool()
-    def preview_map(collection_ids: list[str], open_browser: bool = True) -> dict[str, Any]:
-        """Open MapLibre + OpenFreeMap for one or more stored collections on the same map. Returns a URL, not geometry."""
-        return get_preview().open(collection_ids, open_browser=open_browser)
+    def preview_map(
+        collection_ids: list[str] | None = None,
+        open_browser: bool = True,
+    ) -> dict[str, Any]:
+        """Open MapLibre + OpenFreeMap. Omit collection_ids to draw the latest stored collection. Returns a URL, not geometry."""
+        ids = [str(item).strip() for item in (collection_ids or []) if str(item).strip()]
+        if not ids:
+            ids = [get_session().latest_collection_id()]
+        return get_preview().open(ids, open_browser=open_browser)
 
     @mcp.tool()
-    def export_geojson(collection_id: str) -> dict[str, Any]:
-        """Stdio writes a GeoJSON file (path). HTTP returns a download URL. Never geometry."""
+    def export_geojson(collection_id: str | None = None) -> dict[str, Any]:
+        """Stdio writes a GeoJSON file (path). HTTP returns a download URL. Never geometry. Omit collection_id to export the latest stored collection."""
+        cid = get_session().resolve_collection_id(collection_id)
         export_file = getattr(get_preview(), "export_file", None)
         if callable(export_file):
-            return export_file(collection_id)
-        return get_session().export_geojson_file(collection_id)
+            return export_file(cid)
+        return get_session().export_geojson_file(cid)
 
     return mcp
 
 
 def run_stdio(*, api_key: str, base_url: str | None = None) -> None:
-    from .._http import DEFAULT_BASE_URL
-    from ..client import OSMFeaturesClient
+    import anyio
 
-    with OSMFeaturesClient(api_key=api_key, base_url=base_url or DEFAULT_BASE_URL) as client:
+    anyio.run(run_stdio_async, api_key, base_url)
+
+
+async def run_stdio_async(api_key: str, base_url: str | None = None) -> None:
+    from .._http import DEFAULT_BASE_URL
+    from ..async_client import AsyncOSMFeaturesClient
+
+    async with AsyncOSMFeaturesClient(api_key=api_key, base_url=base_url or DEFAULT_BASE_URL) as client:
         session = GeoAgentSession(client)
         preview = PreviewServer(session)
         try:
-            build_server(lambda: session, lambda: preview).run(transport="stdio")
+            await build_server(lambda: session, lambda: preview).run_stdio_async()
         finally:
             preview.close()
 
 
 def public_origin(request: Request) -> str:
-    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme).split(",")[0].strip()
-    host = (
-        request.headers.get("x-forwarded-host")
-        or request.headers.get("host")
-        or request.url.netloc
-    ).split(",")[0].strip()
+    """Public URL origin so preview links can be opened by anyone until expiry.
+
+    Honors ``X-Forwarded-Proto`` / ``X-Forwarded-Host`` from any peer (typical
+    reverse proxy). Host values still have to look like a hostname.
+    """
+    proto = request.url.scheme
+    host = _safe_host(request.headers.get("host")) or request.url.netloc
+    forwarded_proto = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
+    if forwarded_proto in ("http", "https"):
+        proto = forwarded_proto
+    host = _safe_host(request.headers.get("x-forwarded-host")) or host
     return f"{proto}://{host}"
+
+
+def _safe_host(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    host = raw.split(",")[0].strip()
+    if not host or "/" in host or "@" in host or not _PUBLIC_HOST.match(host):
+        return None
+    return host
 
 
 def _is_public_preview(request: Request) -> bool:
@@ -369,14 +436,14 @@ def _preview_response(store: HttpSessionStore, session_id: str, ids_raw: str) ->
             return Response(
                 body,
                 media_type="application/geo+json; charset=utf-8",
-                headers={"Cache-Control": "no-store"},
+                headers=_PREVIEW_HEADERS,
             )
         for item in ids:
             bound.session.get(item)
         return Response(
             preview_html(ids).encode("utf-8"),
             media_type="text/html; charset=utf-8",
-            headers={"Cache-Control": "no-store"},
+            headers=_PREVIEW_HEADERS,
         )
     except (KeyError, ValueError, TypeError):
         return Response(b"unknown collection\n", status_code=404, media_type="text/plain")
@@ -401,10 +468,12 @@ class _BoundHttpSession:
     last_used: float = field(default_factory=time.monotonic)
 
 
-def _close_client(bound: _BoundHttpSession) -> None:
+def _close_awaitable(bound: _BoundHttpSession) -> Any:
     close = getattr(bound.client, "close", None)
-    if callable(close):
-        close()
+    if not callable(close):
+        return None
+    result = close()
+    return result if inspect.isawaitable(result) else None
 
 
 class HttpPreview:
@@ -448,7 +517,13 @@ class HttpPreview:
 
 
 class HttpSessionStore:
-    """One :class:`GeoAgentSession` per Streamable HTTP ``mcp-session-id``."""
+    """One :class:`GeoAgentSession` per Streamable HTTP ``mcp-session-id``.
+
+    An asyncio reaper on the ASGI lifespan closes idle clients even when no
+    requests arrive. ``expire_idle`` also runs on peek / tools/call / DELETE.
+    Preview GET calls ``peek`` and refreshes ``last_used`` so a map left open
+    keeps the bound API client alive.
+    """
 
     def __init__(
         self,
@@ -460,79 +535,120 @@ class HttpSessionStore:
         self._base_url = base_url
         self._client_factory = client_factory
         self._idle_timeout = idle_timeout
-        self._lock = threading.Lock()
         self._bound: dict[str, _BoundHttpSession] = {}
+        self._tombstones: dict[str, float] = {}
+        self._closing: set[asyncio.Task[Any]] = set()
         self._mcp: FastMCP | None = None
         self._http_preview = HttpPreview(self)
-        self._stop = threading.Event()
-        self._reaper: threading.Thread | None = None
-        if idle_timeout is not None and idle_timeout > 0:
-            interval = min(60.0, max(1.0, idle_timeout / 2))
-            self._reaper = threading.Thread(
-                target=self._reap_loop,
-                args=(interval,),
-                name="mcp-http-reaper",
-                daemon=True,
-            )
-            self._reaper.start()
 
-    def _reap_loop(self, interval: float) -> None:
-        while not self._stop.wait(interval):
-            self.expire_idle()
+    def _tombstone_ttl(self) -> float:
+        if self._idle_timeout is not None and self._idle_timeout > 0:
+            return self._idle_timeout
+        return HTTP_SESSION_IDLE_TIMEOUT
+
+    def _purge_tombstones(self, now: float) -> None:
+        ttl = self._tombstone_ttl()
+        expired = [sid for sid, t0 in self._tombstones.items() if now - t0 >= ttl]
+        for sid in expired:
+            del self._tombstones[sid]
+
+    def _schedule_close(self, bound: _BoundHttpSession) -> None:
+        pending = _close_awaitable(bound)
+        if pending is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(pending)
+            return
+        task = loop.create_task(pending)
+        self._closing.add(task)
+        task.add_done_callback(self._closing.discard)
+
+    async def drain_closes(self) -> None:
+        pending = list(self._closing)
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
     def expire_idle(self, now: float | None = None) -> None:
         if self._idle_timeout is None:
             return
         now = time.monotonic() if now is None else now
+        self._purge_tombstones(now)
         stale: list[_BoundHttpSession] = []
-        with self._lock:
-            for session_id, bound in list(self._bound.items()):
-                if now - bound.last_used >= self._idle_timeout:
-                    stale.append(self._bound.pop(session_id))
+        for session_id, bound in list(self._bound.items()):
+            if now - bound.last_used >= self._idle_timeout:
+                stale.append(self._bound.pop(session_id))
+                self._tombstones[session_id] = now
         for bound in stale:
-            _close_client(bound)
+            self._schedule_close(bound)
+
+    async def expire_idle_async(self, now: float | None = None) -> None:
+        self.expire_idle(now)
+        await self.drain_closes()
+
+    async def reap_forever(self) -> None:
+        """Close idle HTTP sessions on a timer so a quiet process does not leak clients."""
+        if self._idle_timeout is None or self._idle_timeout <= 0:
+            return
+        interval = min(60.0, max(0.05, self._idle_timeout / 2))
+        while True:
+            await asyncio.sleep(interval)
+            await self.expire_idle_async()
 
     def peek(self, session_id: str) -> _BoundHttpSession | None:
+        """Look up a live session. Refreshes idle expiry so a map in use stays alive."""
         self.expire_idle()
-        with self._lock:
-            return self._bound.get(session_id)
+        bound = self._bound.get(session_id)
+        if bound is not None:
+            bound.last_used = time.monotonic()
+        return bound
 
     def get_or_create(self, session_id: str, api_key: str) -> _BoundHttpSession:
         self.expire_idle()
-        with self._lock:
-            existing = self._bound.get(session_id)
-            if existing is not None:
-                if existing.api_key != api_key:
-                    raise ValueError("API key does not match this MCP session")
-                existing.last_used = time.monotonic()
-                return existing
-            client = self._client_factory(api_key, self._base_url)
-            bound = _BoundHttpSession(
-                session_id=session_id,
-                api_key=api_key,
-                client=client,
-                session=GeoAgentSession(client),
-            )
-            self._bound[session_id] = bound
-            return bound
+        self._purge_tombstones(time.monotonic())
+        # Tombstones last idle_timeout so a timed-out mcp-session-id cannot be
+        # revived as an empty store. FastMCP uses the same idle timeout, so
+        # clients mint a new session id after expiry.
+        if session_id in self._tombstones:
+            raise ValueError("MCP session expired")
+        existing = self._bound.get(session_id)
+        if existing is not None:
+            if existing.api_key != api_key:
+                raise ValueError("API key does not match this MCP session")
+            existing.last_used = time.monotonic()
+            return existing
+        client = self._client_factory(api_key, self._base_url)
+        bound = _BoundHttpSession(
+            session_id=session_id,
+            api_key=api_key,
+            client=client,
+            session=GeoAgentSession(client),
+        )
+        self._bound[session_id] = bound
+        return bound
 
     def close(self, session_id: str) -> None:
-        with self._lock:
-            bound = self._bound.pop(session_id, None)
+        bound = self._bound.pop(session_id, None)
         if bound is None:
             return
-        _close_client(bound)
+        self._tombstones[session_id] = time.monotonic()
+        self._schedule_close(bound)
+
+    async def aclose(self, session_id: str) -> None:
+        self.close(session_id)
+        await self.drain_closes()
 
     def close_all(self) -> None:
-        self._stop.set()
-        if self._reaper is not None:
-            self._reaper.join(timeout=1.0)
-            self._reaper = None
-        with self._lock:
-            bound_list = list(self._bound.values())
-            self._bound.clear()
+        bound_list = list(self._bound.values())
+        self._bound.clear()
+        self._tombstones.clear()
         for bound in bound_list:
-            _close_client(bound)
+            self._schedule_close(bound)
+
+    async def aclose_all(self) -> None:
+        self.close_all()
+        await self.drain_closes()
 
     def current_session(self) -> GeoAgentSession:
         return self._require_bound().session
@@ -601,13 +717,34 @@ class BearerAuthMiddleware:
                 return
         await self.app(scope, receive, send)
         if request.method == "DELETE" and session_id:
-            self.store.close(session_id)
+            await self.store.aclose(session_id)
 
 
 def _default_client(api_key: str, base_url: str) -> Any:
-    from ..client import OSMFeaturesClient
+    from ..async_client import AsyncOSMFeaturesClient
 
-    return OSMFeaturesClient(api_key=api_key, base_url=base_url)
+    return AsyncOSMFeaturesClient(api_key=api_key, base_url=base_url)
+
+
+def _attach_idle_reaper(app: Starlette, store: HttpSessionStore) -> None:
+    inner = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def lifespan(app_: Starlette):
+        task = asyncio.create_task(store.reap_forever(), name="mcp-http-reaper")
+        try:
+            if inner is not None:
+                async with inner(app_):
+                    yield
+            else:
+                yield
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+            await store.aclose_all()
+
+    app.router.lifespan_context = lifespan
 
 
 def build_http_app(
@@ -631,9 +768,11 @@ def build_http_app(
         "stateless_http": False,
         "json_response": json_response,
         "session_idle_timeout": HTTP_SESSION_IDLE_TIMEOUT,
+        # Preview links are public URLs. FastMCP would otherwise reject a
+        # public Host when bound to 127.0.0.1 behind a reverse proxy.
+        "transport_security": transport_security
+        or TransportSecuritySettings(enable_dns_rebinding_protection=False),
     }
-    if transport_security is not None:
-        mcp_kwargs["transport_security"] = transport_security
     mcp = FastMCP("maplark", instructions=INSTRUCTIONS, **mcp_kwargs)
     store._mcp = mcp
     build_server(store.current_session, store.current_preview, mcp=mcp)
@@ -647,6 +786,7 @@ def build_http_app(
         allow_headers=["*"],
         expose_headers=["Mcp-Session-Id", MCP_SESSION_ID_HEADER],
     )
+    _attach_idle_reaper(app, store)
     return app, store
 
 

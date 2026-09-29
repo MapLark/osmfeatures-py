@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import time
 
 import pytest
@@ -11,7 +13,7 @@ pytest.importorskip("mcp")
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.testclient import TestClient
 
-from osmfeatures.mcp.mcp_server import HTTP_SESSION_IDLE_TIMEOUT, HttpSessionStore, build_http_app
+from osmfeatures.mcp.mcp_server import HTTP_SESSION_IDLE_TIMEOUT, HttpSessionStore, build_http_app, public_origin
 
 _MCP_HEADERS = {
     "Authorization": "Bearer sk-a",
@@ -88,11 +90,121 @@ def test_http_session_store_expires_idle():
         assert a.client.closed is True
         assert store.peek("sess-b") is b
         assert b.client.closed is False
+        with pytest.raises(ValueError, match="expired"):
+            store.get_or_create("sess-a", "sk-a")
+        store._tombstones["sess-a"] = time.monotonic() - 61
         again = store.get_or_create("sess-a", "sk-a")
         assert again.session is not a.session
         assert again.client is not a.client
     finally:
         store.close_all()
+
+
+def test_http_preview_peek_refreshes_last_used():
+    store = HttpSessionStore(
+        base_url="http://api.test",
+        client_factory=_factory,
+        idle_timeout=60,
+    )
+    try:
+        a = store.get_or_create("sess-a", "sk-a")
+        a.last_used = time.monotonic() - 50
+        assert store.peek("sess-a") is a
+        assert time.monotonic() - a.last_used < 1
+    finally:
+        store.close_all()
+
+
+@pytest.mark.asyncio
+async def test_http_store_reaper_closes_idle_without_a_request():
+    store = HttpSessionStore(
+        base_url="http://api.test",
+        client_factory=_factory,
+        idle_timeout=0.05,
+    )
+    try:
+        a = store.get_or_create("sess-a", "sk-a")
+        a.last_used = time.monotonic() - 1
+        task = asyncio.create_task(store.reap_forever())
+        await asyncio.sleep(0.12)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        assert store.peek("sess-a") is None
+        assert a.client.closed is True
+    finally:
+        store.close_all()
+
+
+class _AsyncFakeClient:
+    def __init__(self, api_key: str, base_url: str) -> None:
+        self.api_key = api_key
+        self.base_url = base_url
+        self.closed = False
+
+    async def close(self) -> None:
+        await asyncio.sleep(0)
+        self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_http_store_awaits_async_client_close():
+    store = HttpSessionStore(
+        base_url="http://api.test",
+        client_factory=lambda key, url: _AsyncFakeClient(key, url),
+        idle_timeout=60,
+    )
+    try:
+        a = store.get_or_create("sess-a", "sk-a")
+        a.last_used = time.monotonic() - 61
+        await store.expire_idle_async()
+        assert store.peek("sess-a") is None
+        assert a.client.closed is True
+        b = store.get_or_create("sess-b", "sk-b")
+        await store.aclose_all()
+        assert b.client.closed is True
+    finally:
+        await store.aclose_all()
+
+
+def _starlette_request(headers: dict[str, str], client: tuple[str, int]) -> object:
+    from starlette.requests import Request
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": "/mcp",
+        "raw_path": b"/mcp",
+        "query_string": b"",
+        "headers": [(k.lower().encode("latin-1"), v.encode("latin-1")) for k, v in headers.items()],
+        "client": client,
+        "server": ("127.0.0.1", 8081),
+    }
+    return Request(scope)
+
+
+def test_public_origin_uses_forwarded_headers_from_any_peer():
+    proxied = _starlette_request(
+        {
+            "host": "127.0.0.1:8081",
+            "x-forwarded-proto": "https",
+            "x-forwarded-host": "api.maplark.com",
+        },
+        ("172.17.0.1", 9),
+    )
+    assert public_origin(proxied) == "https://api.maplark.com"
+    internet = _starlette_request(
+        {
+            "host": "api.maplark.com",
+            "x-forwarded-proto": "https",
+            "x-forwarded-host": "api.maplark.com",
+        },
+        ("203.0.113.8", 9),
+    )
+    assert public_origin(internet) == "https://api.maplark.com"
 
 
 def test_http_session_store_idle_timeout_none_never_expires():
@@ -324,6 +436,7 @@ def test_http_preview_and_export_use_public_urls():
 
             page = client.get(f"/mcp/preview/{sid}/fc_1")
             assert page.status_code == 200
+            assert page.headers.get("access-control-allow-origin") == "*"
             assert "text/html" in page.headers["content-type"]
             assert 'fetch(COLLECTION_ID + ".geojson")' in page.text
             assert "Drop Coffee" not in page.text
@@ -349,6 +462,16 @@ def test_http_preview_and_export_use_public_urls():
             )
             assert "path" not in export_out
             assert export_out["feature_count"] == 1
+
+            omitted = client.post(
+                "/mcp",
+                headers=tool_headers,
+                json=_rpc("tools/call", {"name": "preview_map", "arguments": {}}),
+            )
+            assert omitted.status_code == 200, omitted.text
+            omitted_out = omitted.json()["result"]["structuredContent"]
+            assert omitted_out["collection_ids"] == ["fc_1"]
+            assert omitted_out["preview_url"].endswith(f"/mcp/preview/{sid}/fc_1")
     finally:
         store.close_all()
 
@@ -368,5 +491,9 @@ def test_http_preview_is_session_scoped_and_requires_no_bearer():
             assert unknown.status_code == 404
             page = client.get(f"/mcp/preview/{sid_a}/fc_1")
             assert page.status_code == 200
+            assert page.headers.get("access-control-allow-origin") == "*"
+            geo = client.get(f"/mcp/preview/{sid_a}/fc_1.geojson")
+            assert geo.status_code == 200
+            assert geo.headers.get("access-control-allow-origin") == "*"
     finally:
         store.close_all()

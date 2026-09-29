@@ -157,8 +157,17 @@ async def test_build_server_wires_instructions_and_tools():
     assert mcp.name == "maplark"
     assert mcp.instructions == INSTRUCTIONS
     assert "preview_map" in mcp.instructions
-    assert "collection_ids" in mcp.instructions
     assert "one preview per collection" in mcp.instructions
+    assert "save_as=pubs" in mcp.instructions
+    assert "pubs_2" in mcp.instructions
+    assert "filter_open with no id uses the latest" in mcp.instructions
+    assert "skips a later route or join" in mcp.instructions
+    assert "preview_map and export_geojson with" in mcp.instructions
+    assert "collection_id=pubs" in mcp.instructions
+    assert "collection_ids=[restaurants" in mcp.instructions
+    assert "save_as=restaurants" in mcp.instructions
+    assert "max_distance_m=150" in mcp.instructions
+    assert "primary_id=restaurants" in mcp.instructions
     assert "export_geojson" in mcp.instructions
     assert "download URL" in mcp.instructions
     assert f"at most {SUMMARY_ITEM_CAP}" in mcp.instructions
@@ -203,6 +212,14 @@ async def test_build_server_wires_instructions_and_tools():
     band = next(t for t in tools if t.name == "pairs_within")
     assert "unordered pair" in (band.description or "")
     assert "500000 comparisons" in (band.description or "")
+    filt = next(t for t in tools if t.name == "filter_open")
+    assert "collection_id" not in (filt.inputSchema.get("required") or [])
+    assert "save_as" in filt.inputSchema["properties"]
+    assert "latest places search" in (filt.description or "")
+    search = next(t for t in tools if t.name == "places_search")
+    assert "save_as" in search.inputSchema["properties"]
+    preview = next(t for t in tools if t.name == "preview_map")
+    assert "collection_ids" not in (preview.inputSchema.get("required") or [])
 
 
 def test_run_stdio_closes_client_and_preview(monkeypatch):
@@ -212,14 +229,14 @@ def test_run_stdio_closes_client_and_preview(monkeypatch):
         def __init__(self, api_key: str, base_url: str | None = None) -> None:
             pass
 
-        def close(self) -> None:
+        async def close(self) -> None:
             closed.append("client")
 
-        def __enter__(self) -> FakeClient:
+        async def __aenter__(self) -> FakeClient:
             return self
 
-        def __exit__(self, *_: object) -> None:
-            self.close()
+        async def __aexit__(self, *_: object) -> None:
+            await self.close()
 
     class FakePreview:
         def __init__(self, session: object) -> None:
@@ -229,13 +246,12 @@ def test_run_stdio_closes_client_and_preview(monkeypatch):
             closed.append("preview")
 
     class FakeMCP:
-        def run(self, transport: str = "stdio") -> None:
-            assert transport == "stdio"
+        async def run_stdio_async(self) -> None:
+            return None
 
-    import osmfeatures.client as client_mod
     import osmfeatures.mcp.mcp_server as mcp_server
 
-    monkeypatch.setattr(client_mod, "OSMFeaturesClient", FakeClient)
+    monkeypatch.setattr("osmfeatures.async_client.AsyncOSMFeaturesClient", FakeClient)
     monkeypatch.setattr(mcp_server, "PreviewServer", FakePreview)
     monkeypatch.setattr(mcp_server, "build_server", lambda get_session, preview: FakeMCP())
     mcp_server.run_stdio(api_key="sk-test")
@@ -346,10 +362,12 @@ async def test_call_tool_places_nearby_details_and_filter_open(stack):
         lng=18.075,
         or_tags=["amenity=cafe"],
         limit=5,
+        save_as="cafes",
     )
     assert client.calls[-1][1]["location"] == {"lat": 59.316, "lng": 18.075}
+    assert nearby["collection_id"] == "cafes"
     assert nearby["items"][0]["distance_m"] == 84.0
-    opened = await _call(mcp, "filter_open", collection_id=nearby["collection_id"])
+    opened = await _call(mcp, "filter_open")
     assert opened["count"] == 1
     assert opened["items"][0]["name"] == "Open Near"
     detail = await _call(mcp, "places_details", osm_type="node/1")
@@ -583,6 +601,18 @@ async def test_call_tool_routes_containment_and_preview(stack):
     assert preview["preview_url"].endswith("/preview/" + iso["collection_id"])
     assert preview["collection_ids"] == [iso["collection_id"]]
     assert "coordinates" not in preview
+    latest = await _call(mcp, "preview_map", open_browser=False)
+    assert latest["collection_ids"] == [opt["collection_id"]]
+    overlay = await _call(
+        mcp,
+        "preview_map",
+        collection_ids=[cafes["collection_id"], path["collection_id"]],
+        open_browser=False,
+    )
+    assert overlay["collection_ids"] == [cafes["collection_id"], path["collection_id"]]
+    assert overlay["preview_url"].endswith(
+        "/preview/" + cafes["collection_id"] + "," + path["collection_id"]
+    )
 
 
 @pytest.mark.asyncio
@@ -632,3 +662,5 @@ async def test_call_tool_query_and_export(stack, tmp_path, monkeypatch):
     assert exported["feature_count"] == 1
     assert exported["path"].endswith(f"maplark-{page['collection_id']}.geojson")
     assert (tmp_path / f"maplark-{page['collection_id']}.geojson").is_file()
+    latest_export = await _call(mcp, "export_geojson")
+    assert latest_export["collection_id"] == capped["collection_id"]

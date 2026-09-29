@@ -1,12 +1,17 @@
 """In-process geo-agent tool session. No MCP dependency.
 
-HTTP tools call :class:`OSMFeaturesClient`. Local tools use ``nearest_within``,
+HTTP tools call the MapLark client (sync ``places_search`` or async
+``places_search_async``). Local tools use ``nearest_within``,
 ``pairs_within``, ``point_in_geometry``, and an opening-hours status filter. Results
-are stored by ``fc_N``; planner-facing summaries omit coordinate arrays.
+are stored by ``fc_N`` or a planner ``save_as`` label; planner-facing summaries
+omit coordinate arrays.
 """
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import inspect
 import json
 import tempfile
 from collections import OrderedDict
@@ -18,7 +23,7 @@ from ..geometry import point_in_geometry
 from ..models import OSMFeatureCollection
 from ..nearest import MAX_COMPARISONS, nearest_within, pairs_within
 from ._geocode import nominatim_geocode
-from ._preview import validate_collection_id
+from ._preview import normalize_save_as, validate_collection_id
 
 # Planner summaries list at most this many items; ``count`` is still the full total.
 SUMMARY_ITEM_CAP = 40
@@ -230,6 +235,29 @@ def _summarize_stats(payload: Any) -> dict[str, Any]:
     }
 
 
+def _non_places_reason(payload: Any) -> str | None:
+    """Join/route payloads have no place list; filtering them looked like count 0."""
+    if isinstance(payload, dict) and payload.get("type") == "PairList":
+        return "is a nearest_within/pairs_within result"
+    if (
+        isinstance(payload, dict)
+        and _geometry_from_payload(payload) is not None
+        and not isinstance(payload.get("items"), list)
+        and not _features_from_payload(payload)
+    ):
+        return "is a route or isochrone"
+    return None
+
+
+def _reject_non_places(payload: Any, collection_id: str, action: str) -> None:
+    reason = _non_places_reason(payload)
+    if reason is None:
+        return
+    raise ValueError(
+        f"{collection_id} {reason}; {action} a places search collection_id instead"
+    )
+
+
 def require_places_search_spatial(
     bbox: str | None,
     location: dict[str, float] | None,
@@ -395,6 +423,15 @@ def _summary_items(
     return out
 
 
+async def invoke_client(client: Any, name: str, *args: Any, **kwargs: Any) -> Any:
+    """Call ``name_async`` on an async MapLark client, else the sync method."""
+    fn = getattr(client, f"{name}_async", None) or getattr(client, name)
+    result = fn(*args, **kwargs)
+    if inspect.isawaitable(result):
+        return await result
+    return result
+
+
 def assert_no_coordinate_arrays(obj: Any) -> None:
     """Raise if a planner-facing payload still has GeoJSON coordinate arrays."""
     if isinstance(obj, dict):
@@ -408,7 +445,11 @@ def assert_no_coordinate_arrays(obj: Any) -> None:
 
 
 class GeoAgentSession:
-    """Per-connection collection store plus thin client/local tool methods."""
+    """Per-connection collection store plus thin client/local tool methods.
+
+    HTTP methods are async so they can use :class:`AsyncOSMFeaturesClient`.
+    Sync test fakes still work (``invoke_client`` calls ``places_search``).
+    """
 
     def __init__(
         self,
@@ -419,15 +460,68 @@ class GeoAgentSession:
         self._client = client
         self._store: OrderedDict[str, Any] = OrderedDict()
         self._next = 1
+        self._last_put: str | None = None
+        self._last_places_put: str | None = None
         self._max_collections = max_collections
 
-    def _put(self, payload: Any) -> str:
-        key = f"fc_{self._next}"
-        self._next += 1
+    def _unique_save_as(self, label: str) -> str:
+        """Keep an existing label. A reuse is stored as ``label_2``, ``label_3``, …"""
+        base = normalize_save_as(label)
+        if base not in self._store:
+            return base
+        n = 2
+        while True:
+            suffix = f"_{n}"
+            if len(base) + len(suffix) <= 64:
+                candidate = f"{base}{suffix}"
+            else:
+                digest = hashlib.sha1(base.encode("utf-8")).hexdigest()[:8]
+                candidate = f"s_{digest}{suffix}"
+            if candidate not in self._store:
+                return validate_collection_id(candidate)
+            n += 1
+
+    def _put(self, payload: Any, save_as: str | None = None) -> str:
+        label = (save_as or "").strip()
+        if label:
+            key = self._unique_save_as(label)
+        else:
+            key = f"fc_{self._next}"
+            self._next += 1
+            while key in self._store:
+                key = f"fc_{self._next}"
+                self._next += 1
         self._store[key] = payload
+        self._store.move_to_end(key)
+        self._last_put = key
+        if _non_places_reason(payload) is None:
+            self._last_places_put = key
         while len(self._store) > self._max_collections:
             self._store.popitem(last=False)
         return key
+
+    def latest_collection_id(self) -> str:
+        if self._last_put is None or self._last_put not in self._store:
+            raise KeyError("no stored collection; search or query first")
+        return self._last_put
+
+    def latest_places_collection_id(self) -> str:
+        """Last stored places/search collection, skipping a later route or join."""
+        if self._last_places_put is not None and self._last_places_put in self._store:
+            return self._last_places_put
+        for key in reversed(self._store):
+            if _non_places_reason(self._store[key]) is None:
+                return key
+        raise KeyError("no stored places collection; search first")
+
+    def resolve_collection_id(
+        self, collection_id: str | None, *, places: bool = False
+    ) -> str:
+        if collection_id is None or not str(collection_id).strip():
+            if places:
+                return self.latest_places_collection_id()
+            return self.latest_collection_id()
+        return str(collection_id).strip()
 
     def get(self, collection_id: str) -> Any:
         try:
@@ -492,7 +586,7 @@ class GeoAgentSession:
         out.update(self._route_hint_fields(payload))
         return out
 
-    def places_search(
+    async def places_search(
         self,
         *,
         bbox: str | None = None,
@@ -503,10 +597,13 @@ class GeoAgentSession:
         limit: int | None = None,
         open_now: bool = False,
         as_of: str | None = None,
+        save_as: str | None = None,
     ) -> dict[str, Any]:
         require_places_search_spatial(bbox, location)
         payload = with_search_origin(
-            self._client.places_search(
+            await invoke_client(
+                self._client,
+                "places_search",
                 bbox=bbox,
                 location=location,
                 radius=radius,
@@ -518,10 +615,10 @@ class GeoAgentSession:
             ),
             location,
         )
-        cid = self._put(payload)
+        cid = self._put(payload, save_as=save_as)
         return self._summarize_places(cid, payload)
 
-    def places_nearby(
+    async def places_nearby(
         self,
         *,
         location: dict[str, float],
@@ -531,9 +628,12 @@ class GeoAgentSession:
         limit: int | None = None,
         open_now: bool = False,
         as_of: str | None = None,
+        save_as: str | None = None,
     ) -> dict[str, Any]:
         payload = with_search_origin(
-            self._client.places_nearby(
+            await invoke_client(
+                self._client,
+                "places_nearby",
                 location=location,
                 radius=radius,
                 tags=tags,
@@ -544,23 +644,28 @@ class GeoAgentSession:
             ),
             location,
         )
-        cid = self._put(payload)
+        cid = self._put(payload, save_as=save_as)
         return self._summarize_places(cid, payload)
 
-    def places_details(self, osm_type: str, osm_id: int | str | None = None) -> dict[str, Any]:
-        payload = self._client.places_details(osm_type, osm_id)
-        cid = self._put(payload)
+    async def places_details(
+        self,
+        osm_type: str,
+        osm_id: int | str | None = None,
+        save_as: str | None = None,
+    ) -> dict[str, Any]:
+        payload = await invoke_client(self._client, "places_details", osm_type, osm_id)
+        cid = self._put(payload, save_as=save_as)
         feats = _features_from_payload(payload)
         item = _place_item(feats[0]) if feats else None
         out: dict[str, Any] = {"collection_id": cid, "item": item}
         out.update(_context_fields(payload))
         return out
 
-    def geocode(self, q: str) -> dict[str, Any]:
+    async def geocode(self, q: str) -> dict[str, Any]:
         """Place name to lon/lat + bbox. Nominatim until MapLark geocode ships."""
-        return nominatim_geocode(q)
+        return await asyncio.to_thread(nominatim_geocode, q)
 
-    def routes_isochrone(
+    async def routes_isochrone(
         self,
         *,
         origin: dict[str, float],
@@ -568,9 +673,12 @@ class GeoAgentSession:
         duration_s: float | None = None,
         search_buffer_m: float | None = None,
         travel_mode: str | None = None,
+        save_as: str | None = None,
     ) -> dict[str, Any]:
         payload = with_search_origin(
-            self._client.routes_isochrone(
+            await invoke_client(
+                self._client,
+                "routes_isochrone",
                 origin=origin,
                 max_distance_m=max_distance_m,
                 duration_s=duration_s,
@@ -579,7 +687,7 @@ class GeoAgentSession:
             ),
             origin,
         )
-        cid = self._put(payload)
+        cid = self._put(payload, save_as=save_as)
         out = {
             "collection_id": cid,
             "status": payload.get("status") if isinstance(payload, dict) else None,
@@ -593,22 +701,25 @@ class GeoAgentSession:
             out.update(self._route_hint_fields(payload))
         return out
 
-    def routes_path(
+    async def routes_path(
         self,
         *,
         stops: list[dict[str, float]],
         search_buffer_m: float | None = None,
         travel_mode: str | None = None,
+        save_as: str | None = None,
     ) -> dict[str, Any]:
-        payload = self._client.routes_path(
+        payload = await invoke_client(
+            self._client,
+            "routes_path",
             stops=stops,
             search_buffer_m=search_buffer_m,
             travel_mode=normalize_travel_mode(travel_mode),
         )
-        cid = self._put(payload)
+        cid = self._put(payload, save_as=save_as)
         return self._summarize_route(cid, payload if isinstance(payload, dict) else {})
 
-    def routes_optimized_path(
+    async def routes_optimized_path(
         self,
         *,
         start: dict[str, float],
@@ -616,18 +727,21 @@ class GeoAgentSession:
         search_buffer_m: float | None = None,
         loop: bool | None = None,
         travel_mode: str | None = None,
+        save_as: str | None = None,
     ) -> dict[str, Any]:
-        payload = self._client.routes_optimized_path(
+        payload = await invoke_client(
+            self._client,
+            "routes_optimized_path",
             start=start,
             stops=stops,
             search_buffer_m=search_buffer_m,
             loop=loop,
             travel_mode=normalize_travel_mode(travel_mode),
         )
-        cid = self._put(payload)
+        cid = self._put(payload, save_as=save_as)
         return self._summarize_route(cid, payload if isinstance(payload, dict) else {})
 
-    def query(
+    async def query(
         self,
         *,
         bbox: str | None = None,
@@ -641,8 +755,11 @@ class GeoAgentSession:
         within: str | None = None,
         zoom: float | None = None,
         limit: int | None = None,
+        save_as: str | None = None,
     ) -> dict[str, Any]:
-        payload = self._client.query(
+        payload = await invoke_client(
+            self._client,
+            "query",
             bbox=bbox,
             location=location,
             radius=radius,
@@ -656,10 +773,10 @@ class GeoAgentSession:
             centroid=True,
             limit=limit,
         )
-        cid = self._put(payload)
+        cid = self._put(payload, save_as=save_as)
         return self._summarize_query(cid, payload)
 
-    def stats(
+    async def stats(
         self,
         *,
         group_by: str,
@@ -676,7 +793,9 @@ class GeoAgentSession:
         disable_budget_warning: bool = False,
     ) -> dict[str, Any]:
         """Histogram of tag values. Counts, not geometries. Report ``total``."""
-        payload = self._client.count(
+        payload = await invoke_client(
+            self._client,
+            "count",
             group_by=group_by,
             bbox=bbox,
             location=location,
@@ -710,6 +829,7 @@ class GeoAgentSession:
         secondary_id: str,
         max_distance_m: float,
         limit: int | None = None,
+        save_as: str | None = None,
     ) -> dict[str, Any]:
         pairs = nearest_within(
             _features_from_payload(self.get(primary_id)),
@@ -718,7 +838,7 @@ class GeoAgentSession:
             limit=limit,
             max_comparisons=MAX_COMPARISONS,
         )
-        return self._summarize_pairs(pairs)
+        return self._summarize_pairs(pairs, save_as=save_as)
 
     def pairs_within(
         self,
@@ -727,6 +847,7 @@ class GeoAgentSession:
         max_distance_m: float,
         min_distance_m: float = 0,
         limit: int | None = None,
+        save_as: str | None = None,
     ) -> dict[str, Any]:
         feats_a = _features_from_payload(self.get(primary_id))
         feats_b = feats_a if primary_id == secondary_id else _features_from_payload(
@@ -740,10 +861,12 @@ class GeoAgentSession:
             limit=limit,
             max_comparisons=MAX_COMPARISONS,
         )
-        return self._summarize_pairs(pairs)
+        return self._summarize_pairs(pairs, save_as=save_as)
 
-    def _summarize_pairs(self, pairs: list[dict[str, Any]]) -> dict[str, Any]:
-        cid = self._put({"type": "PairList", "pairs": pairs})
+    def _summarize_pairs(
+        self, pairs: list[dict[str, Any]], save_as: str | None = None
+    ) -> dict[str, Any]:
+        cid = self._put({"type": "PairList", "pairs": pairs}, save_as=save_as)
         items = []
         for pair in pairs:
             feat = pair["feature"]
@@ -766,8 +889,14 @@ class GeoAgentSession:
             items.append(item)
         return _summary_items(cid, len(items), items[:SUMMARY_ITEM_CAP])
 
-    def filter_open(self, collection_id: str) -> dict[str, Any]:
-        src = self.get(collection_id)
+    def filter_open(
+        self,
+        collection_id: str | None = None,
+        save_as: str | None = None,
+    ) -> dict[str, Any]:
+        cid_in = self.resolve_collection_id(collection_id, places=True)
+        src = self.get(cid_in)
+        _reject_non_places(src, cid_in, "filter_open")
         if isinstance(src, dict) and isinstance(src.get("items"), list):
             opened_items = []
             for item in src["items"]:
@@ -784,21 +913,30 @@ class GeoAgentSession:
         if hours:
             payload["metadata"] = hours
         copy_search_origin(src, payload)
-        cid = self._put(payload)
+        cid = self._put(payload, save_as=save_as)
         return self._summarize_places(cid, payload)
 
-    def point_in_polygon(self, collection_id: str, lon: float, lat: float) -> dict[str, Any]:
-        geoms = _polygon_geoms(self.get(collection_id))
+    def point_in_polygon(
+        self, collection_id: str | None, lon: float, lat: float
+    ) -> dict[str, Any]:
+        cid = self.resolve_collection_id(collection_id)
+        geoms = _polygon_geoms(self.get(cid))
         if not geoms:
-            raise ValueError(f"{collection_id} has no Polygon/MultiPolygon geometry")
+            raise ValueError(f"{cid} has no Polygon/MultiPolygon geometry")
         inside = any(point_in_geometry(lon, lat, geom) for geom in geoms)
-        return {"collection_id": collection_id, "inside": inside}
+        return {"collection_id": cid, "inside": inside}
 
-    def points_in_polygon(self, points_id: str, polygon_id: str) -> dict[str, Any]:
+    def points_in_polygon(
+        self,
+        points_id: str,
+        polygon_id: str,
+        save_as: str | None = None,
+    ) -> dict[str, Any]:
         geoms = _polygon_geoms(self.get(polygon_id))
         if not geoms:
             raise ValueError(f"{polygon_id} has no Polygon/MultiPolygon geometry")
         src = self.get(points_id)
+        _reject_non_places(src, points_id, "points_in_polygon")
 
         def _inside(feat: dict[str, Any]) -> bool:
             pt = _lon_lat(feat)
@@ -823,7 +961,7 @@ class GeoAgentSession:
         if hours:
             payload["metadata"] = hours
         copy_search_origin(src, payload)
-        cid = self._put(payload)
+        cid = self._put(payload, save_as=save_as)
         return self._summarize_places(cid, payload)
 
     def _place_features_by_coord(self) -> dict[tuple[int, int], dict[str, Any]]:
@@ -900,12 +1038,12 @@ class GeoAgentSession:
 
     def export_geojson_file(
         self,
-        collection_id: str,
+        collection_id: str | None = None,
         *,
         directory: str | Path | None = None,
     ) -> dict[str, Any]:
         """Write GeoJSON to disk. Planner result is a path, not geometry."""
-        cid = validate_collection_id(collection_id)
+        cid = validate_collection_id(self.resolve_collection_id(collection_id))
         fc = self.export_geojson(cid)
         dest_dir = Path(directory) if directory is not None else Path(tempfile.gettempdir())
         dest_dir.mkdir(parents=True, exist_ok=True)

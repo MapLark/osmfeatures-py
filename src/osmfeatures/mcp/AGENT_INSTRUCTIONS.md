@@ -17,16 +17,31 @@ not a transit station; raise search_buffer_m only when reason says the corridor
 was too small.
 
 Tool results are summaries (ids, names, OSM tags, lon/lat scalars, distance_m,
-openNow) plus a collection_id. count is the full hit total; items
-lists at most {SUMMARY_ITEM_CAP} (items_truncated is true when more were stored).
-Do not treat len(items) as the total. When presenting a table, show only tag
-keys that answer the question (e.g. cuisine), not every key. Summaries never
-include GeoJSON coordinate arrays. Call preview_map(collection_ids) to draw on a
-basemap (the browser fetches GeoJSON; you only get a URL). Pass every collection
-that belongs on the same map in one call (a walking route plus the restaurants
-along it). Call export_geojson only
-when the user asked for a raw GeoJSON file: stdio returns a filesystem path, HTTP
-returns a download URL. Do not fetch that file or paste coordinate arrays.
+openNow). count is the full hit total; items lists at most {SUMMARY_ITEM_CAP}
+(items_truncated is true when more were stored). Do not treat len(items) as
+the total. When presenting a table, show only tag keys that answer the
+question (e.g. cuisine), not every key. When a place has a business URL in
+tags (website, then contact:website), make the POI or place name a markdown
+link to that URL so the user can open the site in one click. Prefer the
+official site over social tags (contact:facebook, contact:instagram). Do not
+invent URLs. Summaries never include GeoJSON coordinate arrays.
+
+Name a stored result with save_as as an ASCII slug (save_as=pubs for pubs in
+Berlin: start with a letter, then letters, digits, or underscore). Hyphens and
+spaces become underscore. Reusing a label keeps the first result and stores this
+one as pubs_2, pubs_3, and so on. For two searches the user will compare, pass
+distinct labels (pubs_noon, pubs_evening). filter_open with no id uses the latest
+places search (skips a later route or join). preview_map and export_geojson with
+no id use the latest stored collection (last save only, not every save). To
+filter, preview, or export a named collection, pass
+collection_id / collection_ids using that slug (collection_id=pubs). save_as on
+filter_open names the new filtered result, not which collection to filter.
+After one search, call preview_map with no ids. After two or more, pass
+collection_ids together in one preview_map call (a walking route plus the
+restaurants along it), not one preview per collection. Call export_geojson
+only when the user asked for a raw GeoJSON file: stdio returns a filesystem
+path, HTTP returns a download URL. Do not fetch that file or paste coordinate
+arrays.
 
 Opening hours: use as_of / open_now / filter_open only for staffed amenities
 where hours matter (cafe, bar, restaurant, shop). Skip hours for always-on
@@ -42,7 +57,7 @@ a clock for "open now".
 
 Local tools (no HTTP): nearest_within(primary_id, secondary_id, max_distance_m),
 pairs_within(primary_id, secondary_id, max_distance_m, min_distance_m=0),
-filter_open(collection_id), point_in_polygon / points_in_polygon.
+filter_open, point_in_polygon / points_in_polygon.
 nearest_within is O(n×m); pairs_within is O(n×m) or n(n-1)/2 for a same-collection
 call. Both refuse joins over {MAX_COMPARISONS} comparisons;
 shrink with places_search/nearby limit, not query.
@@ -59,26 +74,28 @@ Prompt shapes:
   tags=amenity=restaurant. Neighborhood name lists still use places_search
   (items prefix; group that prefix by tags.cuisine, not the full count if
   items_truncated)
-- restaurants within 150 m of a station → two places_search + nearest_within
-- every restaurant-station pair within 150 m → two places_search + pairs_within
+- restaurants within 150 m of a station → places_search save_as=restaurants,
+  places_search save_as=stations, then nearest_within(primary_id=restaurants,
+  secondary_id=stations, max_distance_m=150)
+- every restaurant-station pair within 150 m → same two searches, then
+  pairs_within(primary_id=restaurants, secondary_id=stations, max_distance_m=150)
 - bars open past midnight / cafes open at 8pm → places_search with as_of
-  (no open_now so closed hits stay), then filter_open; if short of N and the
-  page was full, raise limit and search again; if still empty drop hours
+  (no open_now so closed hits stay), then filter_open;
+  if short of N and the page was full, raise limit and search again; if still empty drop hours
   (hours rule above)
 - is A a 20-minute walk from B → routes_isochrone from A, point_in_polygon for B
 - walk from hotel to office → routes_path (listed order, {lon, lat} from the user
   or from a prior search summary)
 - walking loop of bars / cafe tour of a neighborhood → geocode the area,
   places_search (now unless the user named a clock; no open_now), retry as_of
-  if all closed, filter_open; if still empty drop hours (hours rule above);
+  if all closed, then filter_open; if still empty drop hours (hours rule above);
   start=one of those items, stops=the rest, loop true
-- show this on a map → preview_map(collection_ids) after a search or route;
-  one call with every collection that belongs together (route + places), not
-  one preview per collection
+- show this on a map → preview_map after a search or route; pass
+  collection_ids=[restaurants, walk] together for overlays
 
 stats is the count/histogram tool (GET /v2/osm_features/count). Larger spatial
-caps than query or places_search; billed count-only. No collection_id (nothing
-to preview_map). If the unit cap 400s, shrink the bbox or add tags. Do not retry
+caps than query or places_search; billed count-only. Counts, not a map. If the
+unit cap 400s, shrink the bbox or add tags. Do not retry
 with disable_budget_warning. Do not group_by name, ref, or addr:housenumber.
 
 query is GET /v3/osm_features: one unsorted tile of generic OSM (parks, highways), not
