@@ -25,7 +25,7 @@ def test_zoomed_out_large_buildings_only(client: OSMFeaturesClient):
         way_shape="polygon",
         tags="building",
         zoom=11,
-        max_features=300,
+        limit=300,
     )
     assert isinstance(baseline, OSMFeatureCollection)
     assert len(baseline["features"]) > 0, "Expected buildings in central Stockholm"
@@ -37,7 +37,7 @@ def test_zoomed_out_large_buildings_only(client: OSMFeaturesClient):
         tags="building",
         zoom=11,
         min_area_m2=3000,
-        max_features=300,
+        limit=300,
     )
     assert isinstance(large, OSMFeatureCollection)
     assert len(large["features"]) > 0, "Expected at least one large building at zoomed-out level"
@@ -55,7 +55,7 @@ def test_zoomed_out_large_buildings_only(client: OSMFeaturesClient):
         zoom=11,
         min_area_m2=500,
         max_area_m2=2999,
-        max_features=300,
+        limit=300,
     )
     assert isinstance(medium, OSMFeatureCollection)
     assert len(medium["features"]) > 0, "Expected medium buildings in Gamla Stan core"
@@ -77,7 +77,7 @@ def test_only_long_roads(client: OSMFeaturesClient):
         way_shape="line",
         tags="highway",
         clip_geometry=False,
-        max_features=300,
+        limit=300,
     )
     assert isinstance(baseline, OSMFeatureCollection)
     assert len(baseline["features"]) > 0, "Expected roads in central Stockholm"
@@ -89,7 +89,7 @@ def test_only_long_roads(client: OSMFeaturesClient):
         tags="highway",
         min_length_m=1200,
         clip_geometry=False,
-        max_features=300,
+        limit=300,
     )
     assert isinstance(long_roads, OSMFeatureCollection)
     assert len(long_roads["features"]) > 0, "Expected at least one long road"
@@ -104,7 +104,7 @@ def test_only_long_roads(client: OSMFeaturesClient):
         min_length_m=200,
         max_length_m=1199,
         clip_geometry=False,
-        max_features=300,
+        limit=300,
     )
     assert isinstance(medium_roads, OSMFeatureCollection)
     assert len(medium_roads["features"]) > 0, "Expected medium roads in central Stockholm"

@@ -1,4 +1,4 @@
-"""CLI for osmfeatures - ``osmfeatures query``, ``osmfeatures stats``, and ``osmfeatures mcp``."""
+"""CLI for osmfeatures - ``osmfeatures query``, ``osmfeatures count``, and ``osmfeatures mcp``."""
 
 from __future__ import annotations
 
@@ -17,6 +17,8 @@ from .models import (
     OSMFeaturesRateLimitError,
     OSMFeaturesAPIError,
     OSMFeaturesTimeoutError,
+    OSMFeaturesTooDenseError,
+    OSMFeaturesTooManyTilesError,
 )
 from .retry import RetryConfig
 
@@ -57,7 +59,7 @@ def _apply_output(features: list[Any], output_format: str, fc_dict: dict[str, An
 
 
 # ---------------------------------------------------------------------------
-# Common options shared between query and stats subcommands
+# Common options shared between query and count subcommands
 # ---------------------------------------------------------------------------
 
 _SPATIAL_OPTIONS = [
@@ -95,7 +97,7 @@ def cli() -> None:
 
 @cli.command("query")
 @_add_options(_SPATIAL_OPTIONS)
-@click.option("--limit", default=None, type=int, help="Maximum features to return (omit for API default, max 1000000)")
+@click.option("--limit", default=None, type=int, help="Maximum features to return (omit for the key's max_limit)")
 @click.option(
     "--output",
     "output_format",
@@ -200,6 +202,12 @@ def query_cmd(
     except OSMFeaturesAPIError as exc:
         click.echo(f"API error (HTTP {exc.status_code}): {exc}", err=True)
         sys.exit(1)
+    except OSMFeaturesTooManyTilesError as exc:
+        click.echo(f"Area too large: {exc}", err=True)
+        sys.exit(1)
+    except OSMFeaturesTooDenseError as exc:
+        click.echo(f"Area too dense: {exc}", err=True)
+        sys.exit(1)
     except OSMFeaturesTimeoutError as exc:
         click.echo(f"Timeout: {exc}", err=True)
         sys.exit(1)
@@ -214,7 +222,7 @@ def query_cmd(
     _apply_output(fc.features, output_format, fc.to_dict())
 
 
-@cli.command("stats")
+@cli.command("count")
 @_add_options(_SPATIAL_OPTIONS)
 @click.option("--group-by", "group_by", required=True, help="Tag key to group on (e.g. amenity)")
 @click.option("--limit", default=None, type=int, help="Max histogram groups")
@@ -228,7 +236,7 @@ def query_cmd(
 @click.option("--api-key", default=None, envvar="MAPLARK_API_KEY", help="MapLark API key")
 @click.option("--base-url", default=None, envvar="MAPLARK_BASE_URL", help="API base URL")
 @click.option("--retries", default=3, show_default=True, type=int, help="Max retry attempts")
-def stats_cmd(
+def count_cmd(
     bbox: str | None,
     location: str | None,
     radius: float | None,
@@ -254,9 +262,9 @@ def stats_cmd(
 ) -> None:
     """Count OSM features grouped by a tag key (GET /v2/osm_features/count)."""
     if osm_ids:
-        raise click.UsageError("stats does not take --osm-ids")
+        raise click.UsageError("count does not take --osm-ids")
     if zoom is not None:
-        raise click.UsageError("stats does not take --zoom")
+        raise click.UsageError("count does not take --zoom")
     try:
         client = _make_client(api_key, base_url, retries)
     except click.UsageError as exc:

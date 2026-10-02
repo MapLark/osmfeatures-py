@@ -177,7 +177,7 @@ def _fetch_parks(
             type=["way", "relation"],
             way_shape="polygon",
             zoom=_PARK_ZOOM,
-            max_features=_PARK_LIMIT,
+            limit=_PARK_LIMIT,
             clip_geometry=False,
         )
         feature_lists.append(list(page["features"]))

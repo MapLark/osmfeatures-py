@@ -44,7 +44,8 @@ python3 -m pytest tests/test_client.py::test_query_returns_feature_collection -v
 | `mcp/test_preview.py` | Local MapLibre preview HTTP (OpenFreeMap, no geometry in planner payload) |
 | `mcp/test_geocode.py` | Nominatim geocode tool (bbox remap, empty query, session does not store a collection) |
 | `test_retry.py` | Retry + backoff: 429->200, exhausted retries, monthly limit, `Retry-After` header |
-| `test_pagination.py` | `query` / `query_all` on `/v3/osm_features`, `bbox_tiles`, `split_until_fit` |
+| `test_pagination.py` | `query` / `query_all` on `/v3/osm_features`, `bbox_tiles`, `auto_split` |
+| `test_geo_agent_client.py` | Places/routes SDK methods, `places_search` `bbox_tiles` / `auto_split` |
 | `test_output.py` | `to_dataframe` column names, `to_geodataframe` CRS/geometry (skipped if `pandas`/`geopandas` not installed) |
 
 ## Fixtures (`conftest.py`)

@@ -14,7 +14,9 @@ from osmfeatures._geo_agent import (
     places_details_path,
     routes_optimized_path_body,
 )
-from tests.conftest import BASE_URL, FAKE_API_KEY
+from osmfeatures.chunking import split_bbox_tiles, bbox_area_deg2, tile_count_for_max_area
+from osmfeatures.models import OSMFeaturesAPIError
+from tests.conftest import BASE_URL, FAKE_API_KEY, STATS_URL
 
 
 @pytest.fixture
@@ -149,6 +151,253 @@ def test_places_and_routes_omit_api_defaults(client: OSMFeaturesClient):
     nearby_body = json.loads(rsps.calls[1].request.body)
     assert "limit" not in nearby_body
     assert "radius" not in nearby_body
+
+
+def _places_search_bboxes() -> list[str]:
+    out: list[str] = []
+    for call in rsps.calls:
+        if "/v1/places/search" not in call.request.url:
+            continue
+        body = json.loads(call.request.body)
+        out.append(body["bbox"])
+    return out
+
+
+def _bbox_too_large(*, area: str = "4.000000", limit: str = "1.000000") -> dict[str, object]:
+    return {
+        "error": "bad_request",
+        "detail": (
+            f"bbox area {area} exceeds the tagged tier limit {limit} "
+            "for the 'free' tier. Add tag filters to unlock a larger bbox, "
+            "or upgrade your tier."
+        ),
+        "status_code": 400,
+    }
+
+
+def _count_always(total: int = 1) -> None:
+    payload = json.dumps(
+        {"groups": [{"value": "cafe", "count": total}], "total": total, "truncated": False}
+    )
+
+    def _cb(request):  # noqa: ARG001
+        return (200, {}, payload)
+
+    rsps.add_callback(
+        rsps.GET, STATS_URL, callback=_cb, content_type="application/json"
+    )
+
+
+@rsps.activate
+def test_places_search_bbox_tiles_splits_upfront(client: OSMFeaturesClient):
+    bbox = "0,0,2,1"
+    tiles = split_bbox_tiles(bbox, 2)
+    rsps.add(
+        rsps.POST,
+        f"{BASE_URL}/v1/places/search",
+        json={
+            "type": "FeatureCollection",
+            "features": [
+                {"type": "Feature", "id": "node/1", "geometry": None, "properties": {}}
+            ],
+        },
+    )
+    rsps.add(
+        rsps.POST,
+        f"{BASE_URL}/v1/places/search",
+        json={
+            "type": "FeatureCollection",
+            "features": [
+                {"type": "Feature", "id": "node/2", "geometry": None, "properties": {}}
+            ],
+        },
+    )
+    out = client.places_search(bbox=bbox, or_tags=["amenity=cafe"], bbox_tiles=2)
+    assert [f["id"] for f in out["features"]] == ["node/1", "node/2"]
+    assert _places_search_bboxes() == tiles
+
+
+def test_places_search_bbox_tiles_requires_bbox(client: OSMFeaturesClient):
+    with pytest.raises(ValueError, match="bbox_tiles only applies to bbox search"):
+        client.places_search(
+            location={"lat": 59.3, "lng": 18.0},
+            radius=500,
+            or_tags=["amenity=cafe"],
+            bbox_tiles=2,
+        )
+
+
+def test_places_search_auto_split_requires_bbox(client: OSMFeaturesClient):
+    with pytest.raises(ValueError, match="auto_split only applies to bbox search"):
+        client.places_search(
+            location={"lat": 59.3, "lng": 18.0},
+            radius=500,
+            or_tags=["amenity=cafe"],
+            auto_split=True,
+        )
+
+
+@rsps.activate
+def test_places_search_area_overflow_is_the_api_error(client: OSMFeaturesClient):
+    rsps.add(
+        rsps.POST,
+        f"{BASE_URL}/v1/places/search",
+        json=_bbox_too_large(),
+        status=400,
+    )
+    with pytest.raises(OSMFeaturesAPIError, match="bbox area") as exc:
+        client.places_search(bbox="0,0,2,2", or_tags=["amenity=cafe"])
+    assert "auto_split" not in str(exc.value)
+    assert len(rsps.calls) == 1
+
+
+@rsps.activate
+def test_places_search_auto_split_counts_then_quarters_area_overflow(
+    client: OSMFeaturesClient,
+):
+    bbox = "0,0,2,2"
+    quarters = split_bbox_tiles(bbox, 4)
+    _count_always(1)
+    rsps.add(
+        rsps.POST,
+        f"{BASE_URL}/v1/places/search",
+        json=_bbox_too_large(),
+        status=400,
+    )
+    for i in range(4):
+        rsps.add(
+            rsps.POST,
+            f"{BASE_URL}/v1/places/search",
+            json={
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "id": f"node/{i}",
+                        "geometry": None,
+                        "properties": {},
+                    }
+                ],
+            },
+        )
+    out = client.places_search(
+        bbox=bbox, or_tags=["amenity=cafe"], auto_split=True
+    )
+    assert {f["id"] for f in out["features"]} == {"node/0", "node/1", "node/2", "node/3"}
+    assert _places_search_bboxes() == [bbox, *quarters]
+    assert rsps.calls[0].request.method == "GET"
+    assert "/v2/osm_features/count" in rsps.calls[0].request.url
+
+
+@rsps.activate
+def test_places_search_auto_split_keeps_page_limit(
+    client: OSMFeaturesClient,
+):
+    _count_always(59)
+    rsps.add(
+        rsps.POST,
+        f"{BASE_URL}/v1/places/search",
+        json={
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "id": "node/1",
+                    "geometry": None,
+                    "properties": {},
+                }
+            ],
+        },
+    )
+    out = client.places_search(
+        bbox="0,0,1,1",
+        or_tags=["amenity=cafe"],
+        limit=40,
+        auto_split=True,
+    )
+    assert [f["id"] for f in out["features"]] == ["node/1"]
+    assert _places_search_bboxes() == ["0,0,1,1"]
+    body = json.loads(rsps.calls[1].request.body)
+    assert body["limit"] == 40
+
+
+@rsps.activate
+def test_places_search_auto_split_jumps_area_without_probe_tree(
+    client: OSMFeaturesClient,
+):
+    bbox = "0,0,1,1"
+    max_area = 0.1
+    leaves = split_bbox_tiles(bbox, tile_count_for_max_area(bbox, max_area))
+    assert len(leaves) == 16
+    _count_always(1)
+    post_400s = {"n": 0}
+
+    def _search(request):
+        body = json.loads(request.body)
+        area = bbox_area_deg2(body["bbox"])
+        if area > max_area + 1e-9:
+            post_400s["n"] += 1
+            return (
+                400,
+                {},
+                json.dumps(_bbox_too_large(area=f"{area:.6f}", limit=f"{max_area:.6f}")),
+            )
+        fid = body["bbox"].replace(",", "_")
+        return (
+            200,
+            {},
+            json.dumps(
+                {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "id": f"node/{fid}",
+                            "geometry": None,
+                            "properties": {},
+                        }
+                    ],
+                }
+            ),
+        )
+
+    rsps.add_callback(
+        rsps.POST,
+        f"{BASE_URL}/v1/places/search",
+        callback=_search,
+        content_type="application/json",
+    )
+    out = client.places_search(
+        bbox=bbox, or_tags=["amenity=cafe"], auto_split=True
+    )
+    assert post_400s["n"] == 1
+    assert _places_search_bboxes() == [bbox, *leaves]
+    assert len(out["features"]) == 16
+
+
+@rsps.activate
+def test_places_search_auto_split_dedupes_shared_edges(client: OSMFeaturesClient):
+    bbox = "0,0,2,1"
+    tiles = split_bbox_tiles(bbox, 2)
+    feat = {
+        "type": "Feature",
+        "id": "node/1",
+        "geometry": None,
+        "properties": {},
+    }
+    rsps.add(
+        rsps.POST,
+        f"{BASE_URL}/v1/places/search",
+        json={"type": "FeatureCollection", "features": [feat]},
+    )
+    rsps.add(
+        rsps.POST,
+        f"{BASE_URL}/v1/places/search",
+        json={"type": "FeatureCollection", "features": [feat]},
+    )
+    out = client.places_search(bbox=bbox, or_tags=["amenity=cafe"], bbox_tiles=2)
+    assert [f["id"] for f in out["features"]] == ["node/1"]
+    assert _places_search_bboxes() == tiles
 
 
 def test_parse_place_ref():

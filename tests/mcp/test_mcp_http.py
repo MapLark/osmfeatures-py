@@ -333,7 +333,7 @@ def test_http_tools_call_binds_session_from_mcp_request():
                 json=_rpc(
                     "tools/call",
                     {
-                        "name": "stats",
+                        "name": "count",
                         "arguments": {
                             "group_by": "amenity",
                             "tags": ["amenity=cafe"],

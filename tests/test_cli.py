@@ -249,7 +249,7 @@ def test_mcp_http_does_not_require_api_key(monkeypatch):
     assert called == {"host": "0.0.0.0", "port": 9001, "base_url": "http://api:8080"}
 
 
-def test_stats_forwards_group_by():
+def test_count_forwards_group_by():
     runner = CliRunner()
     with patch("osmfeatures.cli.OSMFeaturesClient") as MockClient:
         MockClient.return_value.count.return_value = {
@@ -258,7 +258,7 @@ def test_stats_forwards_group_by():
             "truncated": False,
         }
         result = runner.invoke(cli, [
-            "stats",
+            "count",
             "--api-key", "sk-test",
             "--group-by", "amenity",
             "--bbox", "18.06,59.32,18.09,59.34",

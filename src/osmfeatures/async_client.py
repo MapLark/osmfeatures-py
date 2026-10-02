@@ -6,7 +6,6 @@ from typing import Any
 
 import httpx
 
-from .chunking import shapely_to_bbox
 from ._geo_agent import (
     PLACES_NEARBY_PATH,
     PLACES_SEARCH_PATH,
@@ -16,12 +15,13 @@ from ._geo_agent import (
     RouteTravelMode,
     places_details_path,
     places_nearby_body,
-    places_search_body,
     routes_isochrone_body,
     routes_optimized_path_body,
     routes_path_body,
 )
+from ._places import execute_places_search
 from ._http import (
+    ACCOUNT_TIER_PATH,
     DEFAULT_BASE_URL,
     GEOJSON_ACCEPT,
     ElementType,
@@ -29,16 +29,18 @@ from ._http import (
     build_params,
     build_rate_limit_error,
     is_429_retryable,
-    is_geojson_accept,
     raise_for_response,
 )
 from .models import (
     BinaryQueryResult,
-    OSMFeature,
     OSMFeatureCollection,
-    ResponseMeta,
 )
-from .client import DEFAULT_MAX_FEATURES, _V3_PATH, _resolve_query_limit
+from ._pagination import DEFAULT_QUERY_ALL_TIMEOUT_S
+from ._query import (
+    QUERY_DOC,
+    _V3_PATH,
+    execute_query,
+)
 from .retry import RetryConfig, retry_async
 
 
@@ -75,6 +77,7 @@ class AsyncOSMFeaturesClient:
         self._retry = retry_config or RetryConfig()
         self._headers = {"Authorization": f"Bearer {api_key}"}
         self._client: httpx.AsyncClient | None = None
+        self._account_tier: dict[str, Any] | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -89,14 +92,18 @@ class AsyncOSMFeaturesClient:
     # ------------------------------------------------------------------
 
     async def _request(
-        self, params: dict[str, Any], *, accept: str | None = None
+        self,
+        params: dict[str, Any],
+        *,
+        accept: str | None = None,
+        path: str = _V3_PATH,
     ) -> httpx.Response:
         param_list = build_params(params)
         client = await self._get_client()
 
         async def _do() -> httpx.Response:
             return await client.get(
-                f"{self._base_url}{_V3_PATH}",
+                f"{self._base_url}{path}",
                 params=param_list,
                 headers={"Accept": accept or GEOJSON_ACCEPT},
             )
@@ -113,9 +120,13 @@ class AsyncOSMFeaturesClient:
         return resp
 
     async def _raw_query(
-        self, params: dict[str, Any], *, accept: str | None = None
+        self,
+        params: dict[str, Any],
+        *,
+        accept: str | None = None,
+        path: str = _V3_PATH,
     ) -> OSMFeatureCollection:
-        resp = await self._request(params, accept=accept)
+        resp = await self._request(params, accept=accept, path=path)
         return OSMFeatureCollection.from_http(resp.json(), resp.headers)
 
     async def _post_json(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -159,92 +170,25 @@ class AsyncOSMFeaturesClient:
     async def query_async(
         self,
         *,
-        bbox: str | None = None,
-        location: str | None = None,
-        radius: float | None = None,
-        type: ElementType | list[ElementType] | None = None,  # noqa: A002
-        way_shape: ShapeType | None = None,
-        shape: ShapeType | None = None,
-        osm_ids: str | None = None,
-        within: str | None = None,
-        tags: list[str] | str | None = None,
-        or_tags: list[str] | str | None = None,
-        not_tags: list[str] | str | None = None,
-        zoom: float | None = None,
-        min_length_m: float | None = None,
-        max_length_m: float | None = None,
-        min_area_m2: float | None = None,
-        max_area_m2: float | None = None,
-        geometry: Any = None,
-        centroid: bool = False,
-        clip_geometry: bool | None = None,
-        max_features: int | None = DEFAULT_MAX_FEATURES,
-        accept: str | None = None,
-        limit: int | None = None,
+        bbox_tiles: int = 1,
+        auto_split: bool = False,
+        split_until_fit: bool | None = None,
+        timeout: float | None = DEFAULT_QUERY_ALL_TIMEOUT_S,
+        **params: Any,
     ) -> OSMFeatureCollection | BinaryQueryResult:
-        """One ``/v3/osm_features`` call. Same filters as :meth:`OSMFeaturesClient.query`.
-
-        No cursor and no bbox tiling. Use the sync client for ``split_until_fit``.
-        Non-GeoJSON ``accept`` returns :class:`BinaryQueryResult`.
-        """
-        if geometry is not None:
-            bbox = shapely_to_bbox(geometry)
-
-        params: dict[str, Any] = {}
-        if bbox is not None:
-            params["bbox"] = bbox
-        if location is not None:
-            params["location"] = location
-        if radius is not None:
-            params["radius"] = radius
-        if type is not None:
-            params["type"] = type
-        if way_shape is not None:
-            params["way_shape"] = way_shape
-        if shape is not None:
-            params["shape"] = shape
-        if osm_ids is not None:
-            params["osm_ids"] = osm_ids
-        if within is not None:
-            params["within"] = within
-        if tags is not None:
-            params["tags"] = tags
-        if or_tags is not None:
-            params["or_tags"] = or_tags
-        if not_tags is not None:
-            params["not_tags"] = not_tags
-        resolved_limit = _resolve_query_limit(limit)
-        if resolved_limit is not None:
-            params["limit"] = resolved_limit
-        if zoom is not None:
-            params["zoom"] = zoom
-        if min_length_m is not None:
-            params["min_length_m"] = min_length_m
-        if max_length_m is not None:
-            params["max_length_m"] = max_length_m
-        if min_area_m2 is not None:
-            params["min_area_m2"] = min_area_m2
-        if max_area_m2 is not None:
-            params["max_area_m2"] = max_area_m2
-        if centroid:
-            params["centroid"] = True
-        if clip_geometry is not None:
-            params["clip_geometry"] = clip_geometry
-
-        if not is_geojson_accept(accept):
-            resp = await self._request(params, accept=accept)
-            return BinaryQueryResult.from_http(resp.content, resp.headers)
-
-        collection = await self._raw_query(params)
-        page = list(collection.get("features", []))
-        truncated = collection.meta.has_more
-        if max_features is not None and len(page) > max_features:
-            page = page[:max_features]
-            truncated = True
-        return OSMFeatureCollection(
-            features=[OSMFeature.from_dict(f) for f in page],
-            meta=ResponseMeta(returned=len(page), has_more=truncated),
+        return await execute_query(
+            raw_query=self._raw_query,
+            request=self._request,
+            count=self.count_async,
+            account_tier=self.account_tier_async,
+            bbox_tiles=bbox_tiles,
+            auto_split=auto_split,
+            split_until_fit=split_until_fit,
+            timeout=timeout,
+            **params,
         )
+
+    query_async.__doc__ = QUERY_DOC
 
     async def query_all_async(self, **kwargs: Any) -> OSMFeatureCollection | BinaryQueryResult:
         """Same as :meth:`query_async`."""
@@ -333,6 +277,16 @@ class AsyncOSMFeaturesClient:
         raise_for_response(resp)
         return resp.json()  # type: ignore[no-any-return]
 
+    async def account_tier_async(self) -> dict[str, Any]:
+        """Return this API key's plan limits (``GET /v1/account/tier``).
+
+        Cached on the client. Same payload as
+        :meth:`OSMFeaturesClient.account_tier`.
+        """
+        if self._account_tier is None:
+            self._account_tier = await self._get_json(ACCOUNT_TIER_PATH)
+        return self._account_tier
+
     async def usage_async(self) -> dict[str, Any]:
         """Return this month's unit-budget usage for the authenticated API key."""
         return await self._get_json("/v1/usage")
@@ -349,21 +303,38 @@ class AsyncOSMFeaturesClient:
         limit: int | None = None,
         open_now: bool = False,
         as_of: str | None = None,
+        bbox_tiles: int = 1,
+        auto_split: bool = False,
+        split_until_fit: bool | None = None,
+        timeout: float | None = DEFAULT_QUERY_ALL_TIMEOUT_S,
     ) -> dict[str, Any]:
-        """Find places via ``POST /v1/places/search``."""
-        return await self._post_json(
-            PLACES_SEARCH_PATH,
-            places_search_body(
-                bbox=bbox,
-                location=location,
-                radius=radius,
-                type=type,
-                tags=tags,
-                or_tags=or_tags,
-                limit=limit,
-                open_now=open_now,
-                as_of=as_of,
-            ),
+        """Find places via ``POST /v1/places/search``.
+
+        ``metadata.units`` is credits charged. ``bbox_tiles`` and ``auto_split``
+        are client-side, like :meth:`query_async`, and **only apply to bbox search**.
+        ``auto_split`` counts first, then fetches (same walk as
+        :meth:`query_async`). location+radius is a circle and cannot split;
+        :func:`around_to_bbox` turns a radius into a covering bbox if you
+        need tiles (square around the circle; corners can fall outside the
+        original radius).
+        ``split_until_fit`` is a deprecated alias for ``auto_split``.
+        """
+        return await execute_places_search(
+            post=lambda body: self._post_json(PLACES_SEARCH_PATH, body),
+            count=self.count_async,
+            bbox=bbox,
+            location=location,
+            radius=radius,
+            type=type,
+            tags=tags,
+            or_tags=or_tags,
+            limit=limit,
+            open_now=open_now,
+            as_of=as_of,
+            bbox_tiles=bbox_tiles,
+            auto_split=auto_split,
+            split_until_fit=split_until_fit,
+            timeout=timeout,
         )
 
     async def places_nearby_async(
@@ -378,7 +349,10 @@ class AsyncOSMFeaturesClient:
         open_now: bool = False,
         as_of: str | None = None,
     ) -> dict[str, Any]:
-        """Nearest places ranked by straight-line distance."""
+        """Nearest places ranked by straight-line distance.
+
+        ``units`` is credits charged.
+        """
         return await self._post_json(
             PLACES_NEARBY_PATH,
             places_nearby_body(
@@ -401,7 +375,7 @@ class AsyncOSMFeaturesClient:
         """One place via ``GET /v1/places/{osm_type}/{osm_id}``.
 
         *osm_type* may be a search/nearby feature id (``node/123``) when
-        *osm_id* is omitted.
+        *osm_id* is omitted. ``units`` is credits charged.
         """
         return await self._get_json(places_details_path(osm_type, osm_id))
 

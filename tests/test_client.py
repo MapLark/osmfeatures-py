@@ -219,12 +219,12 @@ def test_query_binary_accept_returns_bytes(client):
 
 
 @rsps.activate
-def test_query_binary_rejects_split_until_fit(client):
+def test_query_binary_rejects_auto_split(client):
     with pytest.raises(ValueError, match="GeoJSON"):
         client.query(
             bbox="18.06,59.32,18.09,59.34",
             accept="application/flatgeobuf",
-            split_until_fit=True,
+            auto_split=True,
         )
     assert not rsps.calls
 

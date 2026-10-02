@@ -13,6 +13,7 @@ from osmfeatures import (
     split_bbox_tiles,
     tile_count_for_corridor,
 )
+from osmfeatures.chunking import tile_count_for_max_area
 
 
 class TestParseBbox:
@@ -95,6 +96,16 @@ class TestTileCountForCorridor:
 
     def test_caps_at_256(self) -> None:
         assert tile_count_for_corridor("0,0,1000,1000", 1.0) == 256
+
+
+class TestTileCountForMaxArea:
+    def test_jumps_to_power_of_two(self) -> None:
+        # area 1 / max 0.1 → 10 → 16
+        assert tile_count_for_max_area("0,0,1,1", 0.1) == 16
+
+    def test_cap_default_allows_county_tagged_window(self) -> None:
+        # ~5 deg² county / 0.04 tagged cap → 125 → 128 (not the corridor 256 cap)
+        assert tile_count_for_max_area("17.24,58.49,20.01,60.30", 0.04) == 128
 
 
 class TestCorridorBbox:

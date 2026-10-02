@@ -13,7 +13,12 @@ from osmfeatures.mcp._mcp_session import (
     with_search_origin,
 )
 from osmfeatures.geometry import point_in_geometry
-from osmfeatures.models import OSMFeature, OSMFeatureCollection, ResponseMeta
+from osmfeatures.models import (
+    OSMFeature,
+    OSMFeatureCollection,
+    OSMFeaturesAPIError,
+    ResponseMeta,
+)
 
 
 def _feat(
@@ -45,7 +50,7 @@ def _fc(*feats: dict) -> dict:
     return {
         "type": "FeatureCollection",
         "features": list(feats),
-        "metadata": {"estimated_units": 1, "evaluated_at": "2026-08-10T18:00:00Z"},
+        "metadata": {"units": 1, "evaluated_at": "2026-08-10T18:00:00Z"},
     }
 
 
@@ -87,16 +92,20 @@ class FakeClient:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict]] = []
         self.search: dict | None = None
+        self.search_errors: list[BaseException] = []
         self.nearby: dict | None = None
         self.details: dict | None = None
         self.isochrone: dict | None = None
         self.path: dict | None = None
         self.optimized: dict | None = None
         self.query_result: dict | None = None
-        self.stats_result: dict | None = None
+        self.query_errors: list[BaseException] = []
+        self.count_result: dict | None = None
 
     def places_search(self, **kwargs):
         self.calls.append(("places_search", kwargs))
+        if self.search_errors:
+            raise self.search_errors.pop(0)
         return self.search
 
     def places_nearby(self, **kwargs):
@@ -121,11 +130,13 @@ class FakeClient:
 
     def query(self, **kwargs):
         self.calls.append(("query", kwargs))
+        if self.query_errors:
+            raise self.query_errors.pop(0)
         return self.query_result
 
     def count(self, **kwargs):
         self.calls.append(("count", kwargs))
-        return self.stats_result
+        return self.count_result
 
 
 async def test_point_in_geometry_square():
@@ -151,13 +162,13 @@ async def test_with_search_origin_preserves_feature_collection_metadata():
         features=[feat],
         evaluated_at="2026-08-10T16:00:00Z",
         timezone="Europe/Stockholm",
-        estimated_units=1,
+        units=1,
     )
     out = with_search_origin(fc, {"lat": 59.316, "lng": 18.075})
     assert out["search_origin"] == {"lat": 59.316, "lng": 18.075}
     assert out["evaluated_at"] == "2026-08-10T16:00:00Z"
     assert out["timezone"] == "Europe/Stockholm"
-    assert out["estimated_units"] == 1
+    assert out["units"] == 1
     assert "search_origin" not in fc
 
 
@@ -169,7 +180,7 @@ async def test_cafes_near_me_place_list():
             {"feature": _feat("node/1", 18.075, 59.316, name="Drop Coffee"), "distance_m": 84.0},
             {"feature": _feat("node/2", 18.076, 59.317, name="Cafe Pascal"), "distance_m": 210.0},
         ],
-        "estimated_units": 2,
+        "units": 2,
         "evaluated_at": "2026-08-10T16:00:00Z",
     }
     session = GeoAgentSession(client)
@@ -178,6 +189,7 @@ async def test_cafes_near_me_place_list():
     assert out["collection_id"] == "fc_1"
     assert out["count"] == 2
     assert out["evaluated_at"] == "2026-08-10T16:00:00Z"
+    assert out["units"] == 2
     assert out["items"][0]["name"] == "Drop Coffee"
     assert out["items"][0]["tags"] == {"name": "Drop Coffee"}
     assert out["items"][0]["distance_m"] == 84.0
@@ -378,7 +390,7 @@ async def test_filter_open_keeps_nearby_distance():
             {"feature": _feat("node/2", 18.076, 59.317, name="Closed Near", status="closed"), "distance_m": 90.0},
             {"feature": _feat("node/3", 18.08, 59.32, name="Open Far", status="open"), "distance_m": 210.0},
         ],
-        "estimated_units": 3,
+        "units": 3,
         "evaluated_at": "2026-08-10T16:00:00Z",
     }
     session = GeoAgentSession(client)
@@ -497,7 +509,7 @@ async def test_route_failure_summary_keeps_reason():
         "status": "no_path_within_area",
         "reason": "Could not form a complete distance matrix between stops. Retry with a larger search_buffer_m (used 500.0).",
         "search_buffer_m": 500.0,
-        "estimated_units": 7,
+        "units": 7,
         "geometry": {"type": "LineString", "coordinates": []},
     }
     client.isochrone = {
@@ -517,7 +529,7 @@ async def test_route_failure_summary_keeps_reason():
     assert opt["status"] == "no_path_within_area"
     assert "search_buffer_m" in opt["reason"]
     assert opt["search_buffer_m"] == 500.0
-    assert opt["estimated_units"] == 7
+    assert opt["units"] == 7
     assert client.calls[-1][1]["travel_mode"] == "WALK"
     iso = await session.routes_isochrone(origin={"lon": 18.075, "lat": 59.316}, max_distance_m=800)
     assert iso["status"] == "start_unreachable"
@@ -636,16 +648,16 @@ async def test_points_in_polygon_keeps_nearby_distance():
     assert exported["search_origin"] == {"lat": 59.316, "lng": 18.075}
 
 
-async def test_stats_summarizes_histogram():
+async def test_count_summarizes_histogram():
     extra = [{"value": f"x{i}", "count": 1} for i in range(SUMMARY_ITEM_CAP)]
     client = FakeClient()
-    client.stats_result = {
+    client.count_result = {
         "groups": [{"value": "pub", "count": 412}] + extra,
         "total": 412 + SUMMARY_ITEM_CAP,
         "truncated": False,
     }
     session = GeoAgentSession(client)
-    out = await session.stats(
+    out = await session.count(
         group_by="amenity",
         bbox="17.8,59.2,18.2,59.4",
         tags=["amenity=pub"],
@@ -683,7 +695,7 @@ async def test_query_and_details_summaries():
     client.details = {
         "status": "ok",
         "feature": _feat("node/1", 18.075, 59.316, name="Drop Coffee", status="open"),
-        "estimated_units": 1,
+        "units": 1,
         "evaluated_at": "2026-08-10T16:00:00Z",
         "timezone": "Europe/Stockholm",
     }
@@ -698,7 +710,7 @@ async def test_query_and_details_summaries():
     assert detail["item"]["tags"] == {"name": "Drop Coffee"}
     assert detail["evaluated_at"] == "2026-08-10T16:00:00Z"
     assert detail["timezone"] == "Europe/Stockholm"
-    assert detail["estimated_units"] == 1
+    assert detail["units"] == 1
     exported = session.export_geojson(detail["collection_id"])
     assert exported["features"][0]["id"] == "node/1"
     assert exported["features"][0]["geometry"]["coordinates"] == [18.075, 59.316]
@@ -726,8 +738,79 @@ async def test_query_forwards_within():
     assert client.calls[0][0] == "query"
     assert client.calls[0][1]["within"] == "relation/155790"
     assert client.calls[0][1]["limit"] is None
+    assert client.calls[0][1]["auto_split"] is False
+    assert client.calls[0][1]["timeout"] == 120
     await session.query(within="relation/155790", type="node", tags=["amenity"], limit=50)
     assert client.calls[-1][1]["limit"] == 50
+
+
+async def test_query_forwards_auto_split():
+    client = FakeClient()
+    client.query_result = _fc(_feat("way/1", 18.07, 59.32, name="Tantolunden"))
+    session = GeoAgentSession(client)
+    await session.query(
+        bbox="18.05,59.31,18.10,59.33",
+        tags=["leisure=park"],
+        auto_split=True,
+    )
+    assert client.calls[0][1]["auto_split"] is True
+
+
+async def test_places_search_forwards_auto_split():
+    client = FakeClient()
+    client.search = _fc(_feat("node/1", 18.07, 59.32, name="Cafe"))
+    session = GeoAgentSession(client)
+    await session.places_search(
+        bbox="18.05,59.31,18.10,59.33",
+        or_tags=["amenity=cafe"],
+        auto_split=True,
+    )
+    assert client.calls[0][1]["auto_split"] is True
+    assert client.calls[0][1]["timeout"] == 120
+
+
+async def test_places_search_does_not_retry_bbox_area():
+    client = FakeClient()
+    client.search_errors = [
+        OSMFeaturesAPIError(
+            "API error (HTTP 400): bbox area 5.009167 exceeds the tagged tier limit 0.040000",
+            400,
+        )
+    ]
+    session = GeoAgentSession(client)
+    with pytest.raises(OSMFeaturesAPIError, match="bbox area"):
+        await session.places_search(
+            bbox="17.24,58.48,20.00,60.30", or_tags=["amenity=cafe"]
+        )
+    assert len(client.calls) == 1
+    assert client.calls[0][1]["auto_split"] is False
+
+
+async def test_query_does_not_retry_result_too_large():
+    client = FakeClient()
+    client.query_errors = [
+        OSMFeaturesAPIError("API error (HTTP 400): result_too_large", 400)
+    ]
+    session = GeoAgentSession(client)
+    with pytest.raises(OSMFeaturesAPIError, match="result_too_large"):
+        await session.query(bbox="18.05,59.31,18.10,59.33", tags=["leisure=park"])
+    assert len(client.calls) == 1
+    assert client.calls[0][1]["auto_split"] is False
+
+
+async def test_query_does_not_retry_bbox_area():
+    client = FakeClient()
+    client.query_errors = [
+        OSMFeaturesAPIError(
+            "API error (HTTP 400): bbox area 5.009167 exceeds the tagged tier limit 0.040000",
+            400,
+        )
+    ]
+    session = GeoAgentSession(client)
+    with pytest.raises(OSMFeaturesAPIError, match="bbox area"):
+        await session.query(bbox="17.24,58.48,20.00,60.30", tags=["leisure=park"])
+    assert len(client.calls) == 1
+    assert client.calls[0][1]["auto_split"] is False
 
 
 async def test_query_summary_caps_items_not_count():

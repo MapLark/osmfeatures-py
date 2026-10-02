@@ -3,7 +3,7 @@
 Each helper is a thin, typed wrapper that pre-fills the correct OSM tag
 filters, geometry shape, and element type.  All accept ``**kwargs`` that
 are forwarded directly to ``client.query()`` so you can still pass
-``max_features``, ``timeout``, ``split_until_fit``, ``bbox_tiles``, etc.
+``timeout``, ``auto_split``, ``bbox_tiles``, ``limit``, etc.
 """
 
 from __future__ import annotations

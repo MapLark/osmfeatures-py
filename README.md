@@ -102,7 +102,7 @@ with OSMFeaturesClient(api_key="sk-...") as client:
 
 ### Query OSM features
 
-`query()` calls `GET /v3/osm_features` and returns the whole tile. Omit `limit` for the API default. Paid keys may raise `limit` up to their `max_limit` (enterprise 1000000). A larger match set is truncated (`X-Has-More: true`). Pass `split_until_fit=True` to quarter the bbox until each piece fits. That adds latency. Pass `bbox_tiles=2` (or 4, 8, ...) to split the bbox up front. `query()` does not take `cursor`.
+`query()` calls `GET /v3/osm_features` and returns the whole tile. Omit `limit` for the API default. Paid keys may raise `limit` up to their `max_limit` (enterprise 1000000). A larger match set is truncated (`X-Has-More: true`). Pass `auto_split=True` to read the key's `max_limit` from `GET /v1/account/tier`, count first, and jump to a power-of-2 tile grid when the match set exceeds that cap (one extra jump if a leftover leaf is still dense). That adds latency. Pass `bbox_tiles=2` (or 4, 8, ...) to split the bbox up front. `query()` does not take `cursor`.
 
 ```python
 fc = client.query(
@@ -125,7 +125,7 @@ Common filters:
 - `way_shape="polygon" | "line" | "all"` (omit = both shapes; `all` also means both)
 - `clip_geometry=True | False` (omit for the API default; set `False` to keep full geometry outside bbox)
 - `bbox_tiles=2` (power of 2) to split a bbox that exceeds your tier area cap
-- `split_until_fit=True` to split a bbox that exceeds `limit` (or the key's `max_limit`)
+- `auto_split=True` to count first, then fetch (reads `max_limit` from `GET /v1/account/tier`, cached on the client; jumps to a power-of-2 grid when the match set exceeds that cap; one extra jump if a leftover leaf is still dense; a lower `limit` truncates; jumps when a 400 names a bbox-area cap). Caps at 32 tiles (`OSMFeaturesTooManyTilesError` if covering the bbox needs more, `OSMFeaturesTooDenseError` if a tile still overflows). `OSMFeaturesTimeoutError` is only a real wall-clock miss.
 - `accept="text/csv"` / `"application/flatgeobuf"` / `"application/vnd.apache.parquet"` (returns `BinaryQueryResult`)
 
 
@@ -137,8 +137,7 @@ Use this to query a larger bbox than what is allowed by splitting the bbox up in
 all_restaurants = client.query(
     bbox="18.063,59.322,18.082,59.332",
     tags="amenity=restaurant",
-    split_until_fit=True,
-    max_features=1_000_000,
+    auto_split=True,
     timeout=60,
 )
 ```
@@ -221,7 +220,7 @@ Results come back as summaries (ids, names, OSM tags, lon/lat scalars, `distance
 - Places: `places_search`, `places_nearby`, `places_details`
 - Geocode: `geocode` (Nominatim interim)
 - Routes: `routes_isochrone`, `routes_path`, `routes_optimized_path`
-- Generic OSM: `query`, `stats` (count/histogram)
+- Generic OSM: `query`, `count` (histogram / total)
 - Local (no HTTP): `nearest_within`, `pairs_within`, `filter_open`, `point_in_polygon`, `points_in_polygon`
 - Draw / export: `preview_map`, `export_geojson`
 
@@ -302,6 +301,15 @@ Runnable Python chains live in `tests/example_apps/test_geo_agent.py`. Full HTTP
 
 `places_search()` finds places in a bounding box **or** a `location` plus `radius` (not both). Optional `tags` (AND) and `or_tags` (OR) use the same OSM filters as `query()`. Omit `limit` to use the API default (100, max 10_000).
 
+`bbox_tiles` and `auto_split` **only apply to bbox search** (same names as `query()`). Pass `bbox_tiles=2` (or 4, 8, ...) to split a bbox up front. Pass `auto_split=True` to count first, then fetch — the same walk as `query()`. A bbox that exceeds the tagged area cap is split in one jump from the limit in the 400, not by probing every quarter, up to 32 tiles. location+radius is a circle and cannot split. To tile a radius window, convert it first with `around_to_bbox` (a square that contains the circle; corner hits can fall outside the original radius):
+
+```python
+from osmfeatures import around_to_bbox
+
+bbox = around_to_bbox(lon=18.075, lat=59.316, radius_m=800)
+cafes = client.places_search(bbox=bbox, or_tags=["amenity=cafe"], auto_split=True)
+```
+
 ```python
 cafes = client.places_search(
     location={"lat": 59.316, "lng": 18.075},
@@ -314,7 +322,7 @@ print(len(cafes["features"]), "open cafes")
 print(cafes["metadata"]["evaluated_at"])
 ```
 
-Response is a GeoJSON FeatureCollection plus `metadata.evaluated_at` (UTC instant used for hours).
+Response is a GeoJSON FeatureCollection plus `metadata.evaluated_at` (UTC instant used for hours) and `metadata.units` (credits charged).
 
 ### Nearby (ranked from a point)
 
@@ -332,7 +340,7 @@ for item in nearby["items"]:
     print(item["distance_m"], item["feature"]["id"])
 ```
 
-Response: `{status, items: [{feature, distance_m}], estimated_units, evaluated_at}`.
+Response: `{status, items: [{feature, distance_m}], units, evaluated_at}`.
 
 ### Place details
 
@@ -345,7 +353,7 @@ print(details["feature"]["properties"]["tags"])
 print(details["timezone"], details["evaluated_at"])
 ```
 
-Response: `{status, feature, estimated_units, evaluated_at, timezone}`. Hours are annotated at request time in the place's IANA zone (from its coordinates).
+Response: `{status, feature, units, evaluated_at, timezone}`. Hours are annotated at request time in the place's IANA zone (from its coordinates).
 
 ### Opening hours
 
@@ -456,6 +464,7 @@ The repository includes runnable example-app tests in `tests/example_apps/` show
 - `test_bike_path_dijkstra_liljeholmen_to_djurgarden.py`: tiled corridor bike routing from Liljeholmen to Djurgarden.
 - `test_geometry_filters.py`: zoom + area/length filters for large buildings and long roads.
 - `test_geo_agent.py`: Python places/routes chains (bar crawl, bike parks, isochrone filter/compare/coverage, client-side open-at-clock).
+- `test_auto_split.py`: ``auto_split`` for a city-scale cafe bbox (area cap) and dense inner-Stockholm buildings (``max_limit``).
 
 Run all example apps:
 

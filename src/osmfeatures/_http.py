@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import warnings
 from typing import Any, Literal
 
@@ -13,8 +14,11 @@ from .models import (
 )
 
 DEFAULT_BASE_URL = "https://api.maplark.com"
+ACCOUNT_TIER_PATH = "/v1/account/tier"
 GEOJSON_ACCEPT = "application/geo+json"
 DEFAULT_TIMEOUT = 60.0
+_LOG_BODY_MAX = 4000
+logger = logging.getLogger("osmfeatures.http")
 
 ElementType = Literal["node", "way", "relation"]
 ShapeType = Literal["line", "polygon", "all"]
@@ -71,8 +75,37 @@ def build_params(kwargs: dict[str, Any]) -> list[tuple[str, Any]]:
     return params
 
 
+def _clip(text: str, limit: int = _LOG_BODY_MAX) -> str:
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
+def _log_failed_response(resp: Any) -> None:
+    req = getattr(resp, "request", None)
+    raw = b""
+    if req is not None:
+        raw = getattr(req, "content", None)
+        if raw is None:
+            raw = getattr(req, "body", b"") or b""
+    if isinstance(raw, str):
+        body = raw
+    elif raw:
+        body = bytes(raw).decode("utf-8", errors="replace")
+    else:
+        body = ""
+    logger.warning(
+        "API error HTTP %s %s %s body=%s response=%s",
+        resp.status_code,
+        getattr(req, "method", "?") if req is not None else "?",
+        getattr(req, "url", "") if req is not None else "",
+        _clip(body),
+        _clip(getattr(resp, "text", "") or "", 500),
+    )
+
+
 def raise_for_response(resp: Any) -> None:
     status = resp.status_code
+    if not (200 <= status < 300):
+        _log_failed_response(resp)
     if status == 401:
         raise OSMFeaturesAuthError(f"Authentication failed (HTTP 401): {resp.text[:200]}")
     if status == 403:
@@ -94,7 +127,7 @@ def raise_for_response(resp: Any) -> None:
             body.get("detail", body.get("message", f"Rate limit exceeded (HTTP 429): {resp.text[:200]}")),
             error_code=body.get("error", ""),
             tier=body.get("tier", ""),
-            estimated_units=body.get("estimated_units"),
+            units=body.get("units"),
             max_units_per_request=body.get("max_units_per_request"),
             retry_after=retry_after,
         )
@@ -152,7 +185,7 @@ def build_rate_limit_error(resp: Any) -> OSMFeaturesRateLimitError:
         body.get("detail", body.get("message", "Rate limit exceeded")),
         error_code=body.get("error", ""),
         tier=body.get("tier", ""),
-        estimated_units=body.get("estimated_units"),
+        units=body.get("units"),
         max_units_per_request=body.get("max_units_per_request"),
         retry_after=retry_after,
     )

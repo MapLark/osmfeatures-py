@@ -13,13 +13,18 @@ from osmfeatures import (
     OSMFeaturesAuthError,
     OSMFeaturesAPIError,
     OSMFeaturesRateLimitError,
+    OSMFeaturesTooDenseError,
+    OSMFeaturesTooManyTilesError,
     OSMFeatureCollection,
     RetryConfig,
 )
 from osmfeatures.async_client import AsyncOSMFeaturesClient
+from osmfeatures.chunking import split_bbox_tiles
 from tests.conftest import (
     BASE_URL,
     FAKE_API_KEY,
+    FREE_TIER_MAX_LIMIT,
+    make_account_tier,
     make_test_feature,
     make_feature_collection,
     features_page,
@@ -224,6 +229,214 @@ async def test_async_query_sends_location_and_radius_not_around():
 # ---------------------------------------------------------------------------
 
 
+def _too_large() -> tuple[int, dict[str, Any]]:
+    return (
+        400,
+        {
+            "error": "bad_request",
+            "detail": "result exceeds the 100000 feature limit",
+            "status_code": 400,
+            "subtype": "result_too_large",
+        },
+    )
+
+
+def _stats_total(total: int) -> tuple[int, dict[str, Any]]:
+    return (
+        200,
+        {
+            "groups": [{"value": "yes", "count": total}],
+            "total": total,
+            "truncated": False,
+        },
+    )
+
+
+def _account_tier(max_limit: int = FREE_TIER_MAX_LIMIT, *, tier_id: str = "free") -> tuple[int, dict[str, Any]]:
+    return (200, make_account_tier(max_limit=max_limit, tier_id=tier_id))
+
+
+def _bboxes(transport: _MockTransport, path: str) -> list[str]:
+    out: list[str] = []
+    for req in transport.requests:
+        if req.url.path != path:
+            continue
+        out.append(str(req.url.params["bbox"]))
+    return out
+
+
+async def test_async_query_rejects_cursor():
+    transport = _MockTransport([(200, make_feature_collection([]))])
+    client = _make_client(transport)
+    async with client:
+        with pytest.raises(ValueError, match="cursor"):
+            await client.query_async(bbox="18.06,59.32,18.09,59.34", cursor="abc")
+    assert transport.call_count == 0
+
+
+async def test_async_query_does_not_send_disable_budget_warning():
+    transport = _MockTransport([(200, make_feature_collection([]))])
+    client = _make_client(transport)
+    async with client:
+        await client.query_async(
+            bbox="18.06,59.32,18.09,59.34", disable_budget_warning=True
+        )
+    assert "disable_budget_warning" not in dict(transport.requests[0].url.params)
+
+
+async def test_async_query_binary_rejects_auto_split():
+    transport = _MockTransport([(200, b"id,geometry\n")])
+    client = _make_client(transport)
+    async with client:
+        with pytest.raises(ValueError, match="GeoJSON"):
+            await client.query_async(
+                bbox="18.06,59.32,18.09,59.34",
+                accept="application/flatgeobuf",
+                auto_split=True,
+            )
+    assert transport.call_count == 0
+
+
+async def test_async_query_bbox_tiles_requires_bbox():
+    transport = _MockTransport([])
+    client = _make_client(transport)
+    async with client:
+        with pytest.raises(ValueError, match="bbox_tiles requires bbox"):
+            await client.query_async(
+                within="relation/155790", bbox_tiles=2, tags=["amenity"]
+            )
+
+
+async def test_async_query_bbox_tiles_splits_upfront():
+    bbox = "0,0,2,1"
+    tiles = split_bbox_tiles(bbox, 2)
+    transport = _MockTransport(
+        [
+            features_page([make_test_feature("way/1")]),
+            features_page([make_test_feature("way/2")]),
+        ]
+    )
+    client = _make_client(transport)
+    async with client:
+        result = await client.query_async(bbox=bbox, bbox_tiles=2, tags=["building"])
+    assert [f.id for f in result.features] == ["way/1", "way/2"]
+    assert _bboxes(transport, "/v3/osm_features") == tiles
+
+
+async def test_async_query_counts_before_feature_then_jumps_density():
+    bbox = "0,0,2,2"
+    tiles = split_bbox_tiles(bbox, 4)
+    overflow = tiles[2]
+    leaves = split_bbox_tiles(overflow, 4)
+
+    queued: list[_ResponseTuple] = [_account_tier()]
+
+    def _count(total: int) -> None:
+        queued.append(_stats_total(total))
+
+    def _feat(fid: str) -> None:
+        queued.append(features_page([make_test_feature(fid)]))
+
+    _count(1)
+    _feat("way/0")
+    _count(1)
+    _feat("way/1")
+    _count(200_000)
+    _count(1)
+    _feat("way/3")
+    for fid in ("way/20", "way/21", "way/22", "way/23"):
+        _count(1)
+        _feat(fid)
+    transport = _MockTransport(queued)
+    client = _make_client(transport)
+    async with client:
+        result = await client.query_async(
+            bbox=bbox, bbox_tiles=4, tags=["building"], auto_split=True,
+        )
+
+    assert {f.id for f in result.features} == {
+        "way/0", "way/1", "way/3", "way/20", "way/21", "way/22", "way/23",
+    }
+    feature_bboxes = _bboxes(transport, "/v3/osm_features")
+    assert feature_bboxes == [tiles[0], tiles[1], tiles[3], *leaves]
+    assert overflow not in feature_bboxes
+    assert _bboxes(transport, "/v2/osm_features/count") == [*tiles, *leaves]
+
+
+async def test_async_query_auto_split_aborts_when_match_count_exceeds_32_tiles():
+    transport = _MockTransport([_account_tier(), _stats_total(3_000_000)])
+    client = _make_client(transport)
+    async with client:
+        with pytest.raises(OSMFeaturesTooDenseError, match="too dense"):
+            await client.query_async(
+                bbox="0,0,20,20",
+                tags=["building"],
+                auto_split=True,
+            )
+    assert transport.call_count == 2
+    assert transport.requests[0].url.path.endswith("/v1/account/tier")
+    assert transport.requests[1].url.path.endswith("/v2/osm_features/count")
+
+
+async def test_async_query_auto_split_uses_paid_tier_max_limit():
+    bbox = "0,0,2,2"
+    leaves = split_bbox_tiles(bbox, 4)
+    queued: list[_ResponseTuple] = [_account_tier(1_000_000, tier_id="enterprise")]
+    queued.append(_stats_total(3_000_000))
+    for fid in ("way/0", "way/1", "way/2", "way/3"):
+        queued.append(_stats_total(1))
+        queued.append(features_page([make_test_feature(fid)]))
+    transport = _MockTransport(queued)
+    client = _make_client(transport)
+    async with client:
+        result = await client.query_async(
+            bbox=bbox, tags=["building"], auto_split=True,
+        )
+    assert [f.id for f in result.features] == ["way/0", "way/1", "way/2", "way/3"]
+    assert _bboxes(transport, "/v3/osm_features") == leaves
+    assert transport.requests[0].url.path.endswith("/v1/account/tier")
+
+
+async def test_async_query_auto_split_aborts_when_area_jump_exceeds_32_tiles():
+    transport = _MockTransport(
+        [
+            _account_tier(),
+            (
+                400,
+                {
+                    "error": "bad_request",
+                    "detail": (
+                        "bbox area 400.000000 exceeds the tagged tier "
+                        "limit 0.040000 for the 'free' tier."
+                    ),
+                    "status_code": 400,
+                },
+            )
+        ]
+    )
+    client = _make_client(transport)
+    async with client:
+        with pytest.raises(OSMFeaturesTooManyTilesError, match="too large"):
+            await client.query_async(
+                bbox="0,0,20,20",
+                tags=["building"],
+                auto_split=True,
+            )
+    assert transport.call_count == 2
+    assert transport.requests[0].url.path.endswith("/v1/account/tier")
+    assert transport.requests[1].url.path.endswith("/v2/osm_features/count")
+
+
+async def test_async_query_overflow_is_the_api_error():
+    transport = _MockTransport([_too_large()])
+    client = _make_client(transport)
+    async with client:
+        with pytest.raises(OSMFeaturesAPIError, match="result_too_large") as exc:
+            await client.query_async(bbox="0,0,2,2", tags=["building"])
+    assert "auto_split" not in str(exc.value)
+    assert transport.call_count == 1
+
+
 async def test_async_query_all_forwards_to_query():
     features = [make_test_feature(f"way/{i}") for i in range(3)]
     transport = _MockTransport([features_page(features, has_more=False)])
@@ -284,19 +497,20 @@ async def test_async_monthly_limit_not_retried():
     """rate_limit_monthly subtype (hard cap) must surface on the first attempt without retrying."""
     transport = _MockTransport(
         [
-            (429, {"error": "too_many_requests", "subtype": "rate_limit_monthly", "detail": "monthly budget exceeded", "tier": "free"}),
+            (429, {"error": "too_many_requests", "subtype": "rate_limit_monthly", "detail": "Need 50 credits; 1 remaining this month.", "units": 50}),
             # Extra entries that must never be reached:
-            (429, {"error": "too_many_requests", "subtype": "rate_limit_monthly", "detail": "monthly budget exceeded", "tier": "free"}),
-            (429, {"error": "too_many_requests", "subtype": "rate_limit_monthly", "detail": "monthly budget exceeded", "tier": "free"}),
-            (429, {"error": "too_many_requests", "subtype": "rate_limit_monthly", "detail": "monthly budget exceeded", "tier": "free"}),
+            (429, {"error": "too_many_requests", "subtype": "rate_limit_monthly", "detail": "Need 50 credits; 1 remaining this month.", "units": 50}),
+            (429, {"error": "too_many_requests", "subtype": "rate_limit_monthly", "detail": "Need 50 credits; 1 remaining this month.", "units": 50}),
+            (429, {"error": "too_many_requests", "subtype": "rate_limit_monthly", "detail": "Need 50 credits; 1 remaining this month.", "units": 50}),
         ]
     )
     client = _make_client(transport, max_retries=3)
 
     async with client:
-        with pytest.raises(OSMFeaturesRateLimitError):
+        with pytest.raises(OSMFeaturesRateLimitError) as exc_info:
             await client.query_async(bbox="18.06,59.32,18.09,59.34")
 
+    assert exc_info.value.units == 50
     assert transport.call_count == 1
 
 
@@ -340,4 +554,85 @@ async def test_async_count_forwards_group_by():
     assert out["total"] == 12
     parsed = parse_qs(urlsplit(str(transport.requests[0].url)).query)
     assert parsed["group_by"] == ["amenity"]
+    assert transport.requests[0].url.path.endswith("/v2/osm_features/count")
+
+
+# ---------------------------------------------------------------------------
+# places_search tiling
+# ---------------------------------------------------------------------------
+
+
+def _places_post_bboxes(transport: _MockTransport) -> list[str]:
+    out: list[str] = []
+    for req in transport.requests:
+        if req.url.path.endswith("/v1/places/search"):
+            out.append(json.loads(req.content)["bbox"])
+    return out
+
+
+def _place_fc(fid: str) -> dict[str, Any]:
+    return {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "id": fid, "geometry": None, "properties": {}}
+        ],
+    }
+
+
+def _places_bbox_too_large() -> dict[str, Any]:
+    return {
+        "error": "bad_request",
+        "detail": (
+            "bbox area 4.000000 exceeds the tagged tier limit 1.000000 "
+            "for the 'free' tier."
+        ),
+        "status_code": 400,
+    }
+
+
+async def test_async_places_search_bbox_tiles_splits_upfront():
+    bbox = "0,0,2,1"
+    tiles = split_bbox_tiles(bbox, 2)
+    transport = _MockTransport(
+        [(200, _place_fc("node/1")), (200, _place_fc("node/2"))]
+    )
+    client = _make_client(transport)
+    async with client:
+        result = await client.places_search_async(
+            bbox=bbox, or_tags=["amenity=cafe"], bbox_tiles=2
+        )
+    assert [f["id"] for f in result["features"]] == ["node/1", "node/2"]
+    assert _places_post_bboxes(transport) == tiles
+
+
+async def test_async_places_search_bbox_tiles_requires_bbox():
+    transport = _MockTransport([])
+    client = _make_client(transport)
+    async with client:
+        with pytest.raises(ValueError, match="bbox_tiles only applies to bbox search"):
+            await client.places_search_async(
+                location={"lat": 59.3, "lng": 18.0},
+                radius=500,
+                or_tags=["amenity=cafe"],
+                bbox_tiles=2,
+            )
+
+
+async def test_async_places_search_auto_split_counts_then_quarters_area_overflow():
+    bbox = "0,0,2,2"
+    quarters = split_bbox_tiles(bbox, 4)
+    queued: list[_ResponseTuple] = [_stats_total(1), (400, _places_bbox_too_large())]
+    for i in range(4):
+        queued.append(_stats_total(1))
+        queued.append((200, _place_fc(f"node/{i}")))
+    transport = _MockTransport(queued)
+    client = _make_client(transport)
+    async with client:
+        result = await client.places_search_async(
+            bbox=bbox, or_tags=["amenity=cafe"], auto_split=True
+        )
+    assert {f["id"] for f in result["features"]} == {
+        "node/0", "node/1", "node/2", "node/3",
+    }
+    assert _places_post_bboxes(transport) == [bbox, *quarters]
     assert transport.requests[0].url.path.endswith("/v2/osm_features/count")

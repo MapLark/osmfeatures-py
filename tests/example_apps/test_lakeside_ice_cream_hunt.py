@@ -77,7 +77,7 @@ def test_lakeside_ice_cream_hunt(client: OSMFeaturesClient):
         type="way,relation",
         way_shape="polygon",
         tags="natural=water",
-        max_features=50,
+        limit=50,
     )
     assert isinstance(water, OSMFeatureCollection)
 
@@ -86,7 +86,7 @@ def test_lakeside_ice_cream_hunt(client: OSMFeaturesClient):
         bbox=CENTRAL_EAST_BBOX,
         type="node,way",
         tags="amenity=ice_cream",
-        max_features=50,
+        limit=50,
     )
     assert isinstance(ice_cream, OSMFeatureCollection)
 

@@ -28,7 +28,7 @@ from ._preview import normalize_save_as, validate_collection_id
 # Planner summaries list at most this many items; ``count`` is still the full total.
 SUMMARY_ITEM_CAP = 40
 _STORE_MAX_COLLECTIONS = 64
-_CONTEXT_KEYS = ("evaluated_at", "timezone", "estimated_units")
+_CONTEXT_KEYS = ("evaluated_at", "timezone", "units")
 _HOURS_KEYS = ("evaluated_at", "timezone")
 # Router 200-body diagnostics. Planner summaries used to drop these, so a
 # no_path_within_area looked identical to a snap miss.
@@ -37,7 +37,7 @@ _ROUTE_HINT_KEYS = (
     "search_buffer_m",
     "snap_radius_m",
     "nearest_edge_distance_m",
-    "estimated_units",
+    "units",
 )
 
 
@@ -213,14 +213,14 @@ def _lon_lat(feat: dict[str, Any]) -> tuple[float, float] | None:
     return None
 
 
-def _summarize_stats(payload: Any) -> dict[str, Any]:
+def _summarize_count(payload: Any) -> dict[str, Any]:
     """Planner-facing histogram. No collection_id (nothing to draw).
 
     Pass every API group through. ``SUMMARY_ITEM_CAP`` is for GeoJSON item
     lists; ``truncated`` is the server extra-groups flag.
     """
     if not isinstance(payload, dict):
-        raise TypeError("expected a stats histogram dict")
+        raise TypeError("expected a count histogram dict")
     groups = payload.get("groups") or []
     if not isinstance(groups, list):
         groups = []
@@ -597,6 +597,7 @@ class GeoAgentSession:
         limit: int | None = None,
         open_now: bool = False,
         as_of: str | None = None,
+        auto_split: bool = False,
         save_as: str | None = None,
     ) -> dict[str, Any]:
         require_places_search_spatial(bbox, location)
@@ -612,6 +613,8 @@ class GeoAgentSession:
                 limit=limit,
                 open_now=open_now,
                 as_of=as_of,
+                auto_split=auto_split,
+                timeout=120,
             ),
             location,
         )
@@ -755,6 +758,7 @@ class GeoAgentSession:
         within: str | None = None,
         zoom: float | None = None,
         limit: int | None = None,
+        auto_split: bool = False,
         save_as: str | None = None,
     ) -> dict[str, Any]:
         payload = await invoke_client(
@@ -772,11 +776,13 @@ class GeoAgentSession:
             zoom=zoom,
             centroid=True,
             limit=limit,
+            auto_split=auto_split,
+            timeout=120,
         )
         cid = self._put(payload, save_as=save_as)
         return self._summarize_query(cid, payload)
 
-    async def stats(
+    async def count(
         self,
         *,
         group_by: str,
@@ -809,7 +815,7 @@ class GeoAgentSession:
             limit=limit,
             disable_budget_warning=disable_budget_warning,
         )
-        return _summarize_stats(payload)
+        return _summarize_count(payload)
 
     def _summarize_query(self, collection_id: str, payload: Any) -> dict[str, Any]:
         feats = _feature_seq(payload)

@@ -49,6 +49,8 @@ from .models import (
     OSMFeaturesForbiddenError,
     OSMFeaturesRateLimitError,
     OSMFeaturesTimeoutError,
+    OSMFeaturesTooDenseError,
+    OSMFeaturesTooManyTilesError,
     ResponseMeta,
 )
 from .output import to_dataframe, to_geodataframe
@@ -72,6 +74,8 @@ __all__ = [
     "OSMFeaturesRateLimitError",
     "OSMFeaturesAPIError",
     "OSMFeaturesTimeoutError",
+    "OSMFeaturesTooDenseError",
+    "OSMFeaturesTooManyTilesError",
     # Output
     "to_dataframe",
     "to_geodataframe",

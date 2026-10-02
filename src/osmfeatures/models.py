@@ -55,7 +55,7 @@ class OSMFeature(_geojson.Feature):
 
 @dataclass
 class ResponseMeta:
-    """Counts from ``X-Returned`` / ``X-Has-More``. ``has_more`` is a client cap trim."""
+    """Counts from ``X-Returned`` / ``X-Has-More``. ``has_more`` means a tile was truncated."""
 
     returned: int
     has_more: bool
@@ -155,14 +155,14 @@ class OSMFeaturesRateLimitError(OSMFeaturesError):
         message: str,
         error_code: str = "",
         tier: str = "",
-        estimated_units: int | None = None,
+        units: int | None = None,
         max_units_per_request: int | None = None,
         retry_after: float | None = None,
     ) -> None:
         super().__init__(message)
         self.error_code = error_code
         self.tier = tier
-        self.estimated_units = estimated_units
+        self.units = units
         self.max_units_per_request = max_units_per_request
         self.retry_after = retry_after
 
@@ -176,8 +176,51 @@ class OSMFeaturesAPIError(OSMFeaturesError):
 
 
 class OSMFeaturesTimeoutError(OSMFeaturesError):
-    """Raised when ``query_all`` hits its wall-clock timeout with pages still remaining."""
+    """Raised when a tiled query hits its wall-clock deadline mid-walk."""
 
     def __init__(self, message: str, *, timeout: float | None = None) -> None:
         super().__init__(message)
         self.timeout = timeout
+
+
+class OSMFeaturesTooManyTilesError(OSMFeaturesError):
+    """Raised when ``auto_split`` would need more than ``max_tiles`` to cover the bbox.
+
+    This is an area problem (the window is too large), not a timeout and not
+    a dense match set. Agents should geocode a smaller named place or ask
+    the user; they must not bisect leftover rectangles.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        tiles: int,
+        max_tiles: int,
+        total: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.tiles = tiles
+        self.max_tiles = max_tiles
+        self.total = total
+
+
+class OSMFeaturesTooDenseError(OSMFeaturesError):
+    """Raised when a tile still overflows after ``auto_split`` hits ``max_tiles``.
+
+    Count-first splitting was not enough. Agents should ask the user to
+    shrink the area or add filters; if they do not answer, add tighter tags.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        max_tiles: int,
+        tiles: int | None = None,
+        total: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.max_tiles = max_tiles
+        self.tiles = tiles
+        self.total = total

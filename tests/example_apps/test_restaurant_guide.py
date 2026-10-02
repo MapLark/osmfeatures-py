@@ -20,7 +20,7 @@ def test_restaurant_guide(client: OSMFeaturesClient):
         bbox=GAMLA_STAN_BBOX,
         type="node,way",
         tags="amenity=restaurant",
-        max_features=50,
+        limit=50,
     )
     assert isinstance(data, OSMFeatureCollection)
     assert len(data["features"]) > 0, "Expected restaurants in Gamla Stan"

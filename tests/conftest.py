@@ -17,6 +17,29 @@ FAKE_API_KEY = "sk-test-1234"
 BASE_URL = "http://testserver"
 FEATURES_V3_URL = f"{BASE_URL}/v3/osm_features"
 STATS_URL = f"{BASE_URL}/v2/osm_features/count"
+ACCOUNT_TIER_URL = f"{BASE_URL}/v1/account/tier"
+# Current free-tier catalog default (GET /v1/account/tier max_limit).
+FREE_TIER_MAX_LIMIT = 75_000
+
+
+def make_account_tier(
+    *,
+    max_limit: int = FREE_TIER_MAX_LIMIT,
+    tier_id: str = "free",
+) -> dict[str, Any]:
+    return {"id": tier_id, "label": tier_id.title(), "max_limit": max_limit}
+
+
+def add_account_tier_response(
+    *,
+    max_limit: int = FREE_TIER_MAX_LIMIT,
+    tier_id: str = "free",
+) -> None:
+    rsps.add(
+        rsps.GET,
+        ACCOUNT_TIER_URL,
+        json=make_account_tier(max_limit=max_limit, tier_id=tier_id),
+    )
 
 
 def make_test_feature(fid: str = "way/1", tags: dict[str, str] | None = None) -> dict[str, Any]:

@@ -27,7 +27,7 @@ _EXPECTED_TOOLS = frozenset(
         "routes_path",
         "routes_optimized_path",
         "query",
-        "stats",
+        "count",
         "nearest_within",
         "pairs_within",
         "filter_open",
@@ -84,7 +84,7 @@ class FakeClient:
         self.path: dict | None = None
         self.optimized: dict | None = None
         self.query_result: dict | None = None
-        self.stats_result: dict | None = None
+        self.count_result: dict | None = None
 
     def places_search(self, **kwargs):
         self.calls.append(("places_search", kwargs))
@@ -116,7 +116,7 @@ class FakeClient:
 
     def count(self, **kwargs):
         self.calls.append(("count", kwargs))
-        return self.stats_result
+        return self.count_result
 
 
 class _FakePreview:
@@ -156,6 +156,7 @@ async def test_build_server_wires_instructions_and_tools():
     mcp = build_server(lambda: GeoAgentSession(object()), preview=_FakePreview())
     assert mcp.name == "maplark"
     assert mcp.instructions == INSTRUCTIONS
+    assert "Read a tool's schema before calling it" in mcp.instructions
     assert "preview_map" in mcp.instructions
     assert "one preview per collection" in mcp.instructions
     assert "save_as=pubs" in mcp.instructions
@@ -185,8 +186,9 @@ async def test_build_server_wires_instructions_and_tools():
     assert "{lon, lat}" in mcp.instructions
     assert "{SUMMARY_ITEM_CAP}" not in mcp.instructions
     assert "call geocode" in mcp.instructions
-    assert "stats" in mcp.instructions
+    assert "count, not query" in mcp.instructions
     assert "how many pubs in Stockholm" in mcp.instructions
+    assert "top pubs in Stockholm open after 6pm" in mcp.instructions
     assert "n(n-1)/2" in mcp.instructions
     assert "Do not retry\nwith disable_budget_warning" in mcp.instructions
     assert f"over {MAX_COMPARISONS} comparisons" in mcp.instructions
@@ -198,10 +200,23 @@ async def test_build_server_wires_instructions_and_tools():
     assert "v3/osm_features" in (query.description or "")
     assert "no cursor" in (query.description or "").lower()
     assert "limit" in query.inputSchema["properties"]
+    assert "auto_split" in query.inputSchema["properties"]
+    count = next(t for t in tools if t.name == "count")
+    assert "City/country histograms" in (count.description or "")
+    assert "group_by" in count.inputSchema.get("required", [])
+    assert "bbox" in count.inputSchema["properties"]
     assert "GET /v3/osm_features" in mcp.instructions
     assert "one unsorted tile" in mcp.instructions
     assert "result_too_large" in mcp.instructions
     assert "Pass limit" in mcp.instructions
+    assert "Omit limit for the key's max_limit" in mcp.instructions
+    assert "gather all features present in database" not in mcp.instructions
+    assert "auto_split" in mcp.instructions
+    assert "Known-small windows" in mcp.instructions
+    assert "count, not query" in mcp.instructions
+    assert "32 tiles" in mcp.instructions
+    assert "too many bbox tiles" in mcp.instructions
+    assert "too dense" in mcp.instructions
     nearest = next(t for t in tools if t.name == "nearest_within")
     assert (nearest.inputSchema["properties"]["limit"].get("default") or 0) != 20
     assert "keep every match" not in (nearest.description or "")
@@ -218,6 +233,12 @@ async def test_build_server_wires_instructions_and_tools():
     assert "latest places search" in (filt.description or "")
     search = next(t for t in tools if t.name == "places_search")
     assert "save_as" in search.inputSchema["properties"]
+    assert "auto_split" in search.inputSchema["properties"]
+    assert "City-scale bbox" in (search.description or "")
+    assert "bbox only" in (search.description or "")
+    assert "does not apply to lat/lng/radius" in (search.description or "")
+    assert "places_search with auto_split" in mcp.instructions
+    assert "bbox-only" in mcp.instructions
     preview = next(t for t in tools if t.name == "preview_map")
     assert "collection_ids" not in (preview.inputSchema.get("required") or [])
 
@@ -616,16 +637,16 @@ async def test_call_tool_routes_containment_and_preview(stack):
 
 
 @pytest.mark.asyncio
-async def test_call_tool_stats(stack):
+async def test_call_tool_count(stack):
     client, mcp = stack
-    client.stats_result = {
+    client.count_result = {
         "groups": [{"value": "pub", "count": 412}],
         "total": 412,
         "truncated": False,
     }
     out = await _call(
         mcp,
-        "stats",
+        "count",
         group_by="amenity",
         bbox="17.8,59.2,18.2,59.4",
         tags=["amenity=pub"],

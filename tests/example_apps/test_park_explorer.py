@@ -32,7 +32,7 @@ def test_park_explorer(client: OSMFeaturesClient):
         type="way,relation",
         way_shape="polygon",
         tags="leisure=park",
-        max_features=50,
+        limit=50,
         centroid=True,
     )
     assert isinstance(data, OSMFeatureCollection)

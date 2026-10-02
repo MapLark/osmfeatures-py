@@ -127,9 +127,10 @@ def build_server(
         limit: int | None = None,
         open_now: bool = False,
         as_of: str | None = None,
+        auto_split: bool = False,
         save_as: str | None = None,
     ) -> dict[str, Any]:
-        """Places in a bbox or location+radius (not both). Polygon POIs come back as centroid points."""
+        """Places in a bbox or location+radius (not both). Known-small windows go direct. City-scale bbox: auto_split (bbox only; counts first, then fetch). auto_split does not apply to lat/lng/radius. A bbox area / result_too_large 400 is not retried; pass auto_split or shrink. auto_split stops at 32 tiles (area too large → smaller named place or ask the user; still too dense → ask, else add tags). Polygon POIs come back as centroid points."""
         location = places_search_point(lat, lng, radius)
         require_places_search_spatial(bbox, location)
         return await get_session().places_search(
@@ -141,6 +142,7 @@ def build_server(
             limit=limit,
             open_now=open_now,
             as_of=as_of,
+            auto_split=auto_split,
             save_as=save_as,
         )
 
@@ -249,9 +251,16 @@ def build_server(
         within: str | None = None,
         zoom: float | None = None,
         limit: int | None = None,
+        auto_split: bool = False,
         save_as: str | None = None,
     ) -> dict[str, Any]:
-        """One GET /v3/osm_features tile (omit limit for the key's max_limit, no cursor). Pass limit to cap the tile. location is numeric lat,lng, not a place name. within is way/<id> or relation/<id>. Non-points include centroids for local joins."""
+        """
+        One GET /v3/osm_features tile (omit limit for the key's max_limit, no cursor). Pass limit to cap the tile. 
+        Known-small windows go direct. City-scale bbox: auto_split (counts first, then fetch). State/country: count,
+        not query (auto_split max 32 tiles). A bbox area / result_too_large 400 is not retried; pass auto_split or shrink.
+        location is numeric lat,lng, not a place name. within is way/<id> or relation/<id>. 
+        Non-points include centroids for local joins.
+        """
         return await get_session().query(
             bbox=bbox,
             location=location,
@@ -264,11 +273,12 @@ def build_server(
             within=within,
             zoom=zoom,
             limit=limit,
+            auto_split=auto_split,
             save_as=save_as,
         )
 
     @mcp.tool()
-    async def stats(
+    async def count(
         group_by: str,
         bbox: str | None = None,
         location: str | None = None,
@@ -283,7 +293,7 @@ def build_server(
         disable_budget_warning: bool = False,
     ) -> dict[str, Any]:
         """Count features grouped by a tag key. City/country histograms. Report total. Not a GeoJSON page. location is numeric lat,lng."""
-        return await get_session().stats(
+        return await get_session().count(
             group_by=group_by,
             bbox=bbox,
             location=location,

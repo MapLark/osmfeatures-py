@@ -45,27 +45,28 @@ def test_monthly_limit_not_retried(client_with_retries):
     rsps.add(
         rsps.GET, FEATURES_V3_URL,
         status=429,
-        json={"error": "too_many_requests", "subtype": "rate_limit_monthly", "detail": "monthly budget exceeded", "tier": "free"},
+        json={"error": "too_many_requests", "subtype": "rate_limit_monthly", "detail": "Need 50 credits; 1 remaining this month.", "units": 50},
     )
     rsps.add(
         rsps.GET, FEATURES_V3_URL,
         status=429,
-        json={"error": "too_many_requests", "subtype": "rate_limit_monthly", "detail": "monthly budget exceeded", "tier": "free"},
+        json={"error": "too_many_requests", "subtype": "rate_limit_monthly", "detail": "Need 50 credits; 1 remaining this month.", "units": 50},
     )
     rsps.add(
         rsps.GET, FEATURES_V3_URL,
         status=429,
-        json={"error": "too_many_requests", "subtype": "rate_limit_monthly", "detail": "monthly budget exceeded", "tier": "free"},
+        json={"error": "too_many_requests", "subtype": "rate_limit_monthly", "detail": "Need 50 credits; 1 remaining this month.", "units": 50},
     )
     rsps.add(
         rsps.GET, FEATURES_V3_URL,
         status=429,
-        json={"error": "too_many_requests", "subtype": "rate_limit_monthly", "detail": "monthly budget exceeded", "tier": "free"},
+        json={"error": "too_many_requests", "subtype": "rate_limit_monthly", "detail": "Need 50 credits; 1 remaining this month.", "units": 50},
     )
 
-    with pytest.raises(OSMFeaturesRateLimitError):
+    with pytest.raises(OSMFeaturesRateLimitError) as exc_info:
         client_with_retries.query(bbox="18.06,59.32,18.09,59.34")
 
+    assert exc_info.value.units == 50
     assert len(rsps.calls) == 1
 
 

@@ -72,17 +72,31 @@ def _next_power_of_two(n: int) -> int:
     return 1 << (n - 1).bit_length()
 
 
+def tile_count_for_max_area(
+    bbox: str,
+    max_tile_area: float | None,
+    *,
+    cap: int = 4096,
+) -> int:
+    """Power-of-2 tile count so each tile's area is at most *max_tile_area* (deg²).
+
+    Returns 1 when *max_tile_area* is unset/non-positive or the bbox already
+    fits. *cap* is itself clamped to a power of 2.
+    """
+    area = bbox_area_deg2(bbox)
+    if max_tile_area is None or max_tile_area <= 0 or area <= max_tile_area:
+        return 1
+    needed = math.ceil(area / max_tile_area)
+    return min(_next_power_of_two(needed), _next_power_of_two(cap))
+
+
 def tile_count_for_corridor(corridor: str, max_tile_area: float | None) -> int:
     """Power-of-2 tile count so each tile's area is at most *max_tile_area* (deg²).
 
     Caps at 256 tiles. Returns 1 when *max_tile_area* is unset/non-positive or
     the corridor already fits.
     """
-    area = bbox_area_deg2(corridor)
-    if max_tile_area is None or max_tile_area <= 0 or area <= max_tile_area:
-        return 1
-    needed = math.ceil(area / max_tile_area)
-    return min(_next_power_of_two(needed), 256)
+    return tile_count_for_max_area(corridor, max_tile_area, cap=256)
 
 
 def merge_features(feature_lists: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
