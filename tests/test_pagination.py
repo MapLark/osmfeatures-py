@@ -9,10 +9,13 @@ import responses as rsps
 
 from osmfeatures import (
     OSMFeaturesAPIError,
+    OSMFeaturesClient,
     OSMFeaturesTooDenseError,
     OSMFeaturesTooManyTilesError,
     split_bbox_tiles,
 )
+from osmfeatures._query import QUERY_DOC
+from osmfeatures.async_client import AsyncOSMFeaturesClient
 from tests.conftest import (
     FEATURES_V3_URL,
     STATS_URL,
@@ -20,6 +23,14 @@ from tests.conftest import (
     add_features_response,
     make_test_feature,
 )
+
+
+def test_query_doc_auto_split_is_scalar_count():
+    assert "scalar ``GET /v2/osm_features/count``" in QUERY_DOC
+    assert "no ``group_by``" in QUERY_DOC
+    assert "is the count ``group_by``" not in QUERY_DOC
+    assert OSMFeaturesClient.query.__doc__ == QUERY_DOC
+    assert AsyncOSMFeaturesClient.query_async.__doc__ == QUERY_DOC
 
 
 def test_query_rejects_non_positive_limit(client):
@@ -246,7 +257,25 @@ def test_query_auto_split_counts_or_tags(client):
         if urlsplit(c.request.url).path == "/v2/osm_features/count"
     )
     assert urlsplit(rsps.calls[0].request.url).path == "/v1/account/tier"
-    assert parse_qs(urlsplit(count_call.request.url).query)["group_by"] == ["amenity"]
+    parsed = parse_qs(urlsplit(count_call.request.url).query)
+    assert parsed["or_tags"] == ["amenity=cafe"]
+    assert "group_by" not in parsed
+
+
+@rsps.activate
+def test_query_auto_split_counts_without_tags(client):
+    add_account_tier_response()
+    _add_stats_total(1)
+    add_features_response([make_test_feature("way/1")], url=FEATURES_V3_URL)
+    client.query(bbox="0,0,1,1", auto_split=True)
+    count_call = next(
+        c for c in rsps.calls
+        if urlsplit(c.request.url).path == "/v2/osm_features/count"
+    )
+    parsed = parse_qs(urlsplit(count_call.request.url).query)
+    assert parsed["bbox"] == ["0,0,1,1"]
+    assert "group_by" not in parsed
+    assert "tags" not in parsed
 
 
 @rsps.activate
@@ -265,6 +294,37 @@ def test_query_auto_split_aborts_when_match_count_exceeds_32_tiles(client):
         "/v1/account/tier",
         "/v2/osm_features/count",
     ]
+
+
+@rsps.activate
+def test_query_auto_split_leftover_area_jump_is_too_many_tiles(client):
+    """Area children plus remaining queue over 32 is too-many-tiles, not too-dense."""
+    bbox = "0,0,16,1"
+    add_account_tier_response()
+    _add_stats_total(1)
+    rsps.add(
+        rsps.GET,
+        FEATURES_V3_URL,
+        json={
+            "error": "bad_request",
+            "detail": (
+                "bbox area 1.000000 exceeds the tagged tier limit 0.040000 "
+                "for the 'free' tier."
+            ),
+            "status_code": 400,
+        },
+        status=400,
+    )
+    with pytest.raises(OSMFeaturesTooManyTilesError, match="too large") as exc:
+        client.query(
+            bbox=bbox,
+            tags=["building"],
+            bbox_tiles=16,
+            auto_split=True,
+        )
+    assert exc.value.tiles > 32
+    assert exc.value.max_tiles == 32
+    assert "too dense" not in str(exc.value).lower()
 
 
 @rsps.activate

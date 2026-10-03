@@ -202,8 +202,9 @@ async def test_build_server_wires_instructions_and_tools():
     assert "limit" in query.inputSchema["properties"]
     assert "auto_split" in query.inputSchema["properties"]
     count = next(t for t in tools if t.name == "count")
-    assert "City/country histograms" in (count.description or "")
-    assert "group_by" in count.inputSchema.get("required", [])
+    assert "scalar total" in (count.description or "")
+    assert "group_by" not in count.inputSchema.get("required", [])
+    assert "group_by" in count.inputSchema["properties"]
     assert "bbox" in count.inputSchema["properties"]
     assert "GET /v3/osm_features" in mcp.instructions
     assert "one unsorted tile" in mcp.instructions

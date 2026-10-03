@@ -54,10 +54,8 @@ def _places_search_posts(resp: requests.Response) -> dict[str, Any] | None:
 def test_auto_split_huge_bbox_cafes(client: OSMFeaturesClient):
     """List cafes in a city-scale bbox that exceeds the tagged area cap."""
     counted = client.count(
-        group_by="amenity",
         bbox=GREATER_STOCKHOLM_BBOX,
         tags=["amenity=cafe"],
-        limit=1,
     )
     total = int(counted["total"])
     print(f"\n[huge bbox] {total} cafes in greater Stockholm (count, not a map)")
@@ -163,12 +161,10 @@ def _query_split_call(resp: requests.Response) -> dict[str, Any] | None:
 def test_auto_split_dense_buildings(client: OSMFeaturesClient):
     """Fetch building polygons where the match set can exceed max_limit."""
     counted = client.count(
-        group_by="building",
         bbox=INNER_STOCKHOLM_BBOX,
         tags=["building"],
         type="way",
         way_shape="polygon",
-        limit=1,
     )
     total = int(counted["total"])
     print(f"\n[density] {total} building polygons in inner Stockholm")

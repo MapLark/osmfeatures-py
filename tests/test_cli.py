@@ -272,3 +272,26 @@ def test_count_forwards_group_by():
         bbox="18.06,59.32,18.09,59.34",
         tags=["amenity"],
     )
+
+
+def test_count_omits_group_by_for_scalar_total():
+    runner = CliRunner()
+    with patch("osmfeatures.cli.OSMFeaturesClient") as MockClient:
+        MockClient.return_value.count.return_value = {
+            "groups": [],
+            "total": 412,
+            "truncated": False,
+        }
+        result = runner.invoke(cli, [
+            "count",
+            "--api-key", "sk-test",
+            "--bbox", "18.06,59.32,18.09,59.34",
+            "--tags", "amenity",
+        ])
+    assert result.exit_code == 0, result.output
+    parsed = json.loads(result.output)
+    assert parsed["total"] == 412
+    MockClient.return_value.count.assert_called_once_with(
+        bbox="18.06,59.32,18.09,59.34",
+        tags=["amenity"],
+    )

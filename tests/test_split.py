@@ -7,8 +7,10 @@ import pytest
 from osmfeatures._split import (
     MAX_DENSITY_JUMP_DEPTH,
     MAX_SPLIT_TILES,
-    count_group_key,
+    PLACES_MAX_LIMIT,
     fold_auto_split,
+    hours_parse_split_cap,
+    is_hours_parse_limit,
     match_split_cap,
     max_limit_from_tier,
     parse_bbox_area_limit,
@@ -19,27 +21,36 @@ from osmfeatures._split import (
 from osmfeatures.models import OSMFeaturesAPIError
 
 
-def test_count_group_key_prefers_and_tags():
-    assert count_group_key(["amenity=cafe"], ["cuisine=coffee_shop"]) == "amenity"
-
-
-def test_count_group_key_falls_back_to_or_tags():
-    assert count_group_key(None, ["amenity=cafe", "amenity=restaurant"]) == "amenity"
-
-
-def test_count_group_key_skips_unbounded_and_uses_or_tags():
-    assert count_group_key(["name=Cafe"], ["amenity=cafe"]) == "amenity"
-
-
-def test_count_group_key_none_without_filters():
-    assert count_group_key(None) is None
-    assert count_group_key(["name=Cafe"]) is None
-
-
 def test_match_split_cap_ignores_page_limit():
     assert match_split_cap(None, 75_000) == 75_000
     assert match_split_cap(10, 75_000) == 75_000
     assert match_split_cap(200_000, 75_000) == 200_000
+
+
+def test_hours_parse_split_cap_page_limit_does_not_split():
+    assert hours_parse_split_cap(None) > PLACES_MAX_LIMIT
+    assert hours_parse_split_cap(100) > PLACES_MAX_LIMIT
+    assert hours_parse_split_cap(PLACES_MAX_LIMIT) > PLACES_MAX_LIMIT
+    assert hours_parse_split_cap(PLACES_MAX_LIMIT + 1) == PLACES_MAX_LIMIT
+    assert hours_parse_split_cap(20_000) == PLACES_MAX_LIMIT
+
+
+def test_hours_parse_split_cap_open_now_uses_scan_max():
+    assert hours_parse_split_cap(None, open_now=True) == PLACES_MAX_LIMIT
+    assert hours_parse_split_cap(100, open_now=True) == PLACES_MAX_LIMIT
+    assert hours_parse_split_cap(1000, open_now=True) == PLACES_MAX_LIMIT
+    assert hours_parse_split_cap(PLACES_MAX_LIMIT, open_now=True) == PLACES_MAX_LIMIT
+
+
+def test_is_hours_parse_limit():
+    overflow = OSMFeaturesAPIError(
+        "API error (HTTP 400): hours_parse_limit. More than 10000 places "
+        "have opening_hours.",
+        400,
+    )
+    assert is_hours_parse_limit(overflow)
+    assert not is_hours_parse_limit(OSMFeaturesAPIError("result_too_large", 400))
+    assert not is_hours_parse_limit(OSMFeaturesAPIError("hours_parse_limit", 500))
 
 
 def test_max_limit_from_tier():
@@ -61,6 +72,16 @@ def test_parse_bbox_area_limit():
     assert parse_bbox_area_limit(exc) == 0.04
     assert parse_bbox_area_limit(OSMFeaturesAPIError("result_too_large", 400)) is None
     assert parse_bbox_area_limit(OSMFeaturesAPIError("bbox area", 500)) is None
+    assert (
+        parse_bbox_area_limit(
+            OSMFeaturesAPIError(
+                "API error (HTTP 400): count bbox area 500.000000 exceeds "
+                "the tagged tier limit 400.000000 for the 'free' tier.",
+                400,
+            )
+        )
+        is None
+    )
 
 
 def test_fold_auto_split_default():

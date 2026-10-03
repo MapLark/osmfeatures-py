@@ -52,15 +52,16 @@ bbox_tiles:
     Default 1 sends the bbox as one request. Use 2, 4, 8, ... to stay
     under a tier area cap.
 auto_split:
-    Count matches first, then fetch. Same walk as
-    ``places_search``. Reads the key's ``max_limit`` from
-    ``GET /v1/account/tier`` (cached on the client). If the match set
-    exceeds that cap, jump to a power-of-2 tile grid; one leftover
-    dense leaf may jump once more (do not walk a deeper tree). A
-    lower ``limit`` is a page size and does not split. A bbox-area
-    400 jumps to the tier limit in the error instead of probing
-    every quarter, up to 32 tiles. Default False. Slower: a count
-    per tile. ``split_until_fit`` is a deprecated alias.
+    Count matches first via a scalar ``GET /v2/osm_features/count``
+    (no ``group_by``), then fetch. Same walk as ``places_search``.
+    Reads the key's ``max_limit`` from ``GET /v1/account/tier``
+    (cached on the client). If the match set exceeds that cap, jump
+    to a power-of-2 tile grid; one leftover dense leaf may jump once
+    more (do not walk a deeper tree). A lower ``limit`` is a page
+    size and does not split. A bbox-area 400 jumps to the tier
+    limit in the error instead of probing every quarter, up to 32
+    tiles. Default False. Slower: a count per tile.
+    ``split_until_fit`` is a deprecated alias.
 timeout:
     Wall-clock seconds for this call. Defaults to 60. ``None`` is no cap.
     A genuine deadline miss is :class:`OSMFeaturesTimeoutError`.
@@ -73,8 +74,9 @@ timeout:
     ``way_shape``, ``shape``, ``osm_ids``, ``within``, ``tags``,
     ``or_tags``, ``not_tags``, ``zoom``, size bounds, ``centroid``,
     ``clip_geometry``, ``geometry``, ``accept``, ``limit``. No
-    ``cursor``. ``disable_budget_warning`` is count-only. An AND ``tags``
-    key (else the first ``or_tags`` key) is the count ``group_by``.
+    ``cursor``. ``disable_budget_warning`` is count-only.
+    ``auto_split`` counts with a scalar ``GET /v2/osm_features/count``
+    (no ``group_by``).
 
     ``limit`` is the maximum features in the response (omit for the
     key's ``max_limit``). A lower limit truncates. A match

@@ -495,13 +495,20 @@ async def test_async_retries_exhausted_raises_rate_limit_error():
 
 async def test_async_monthly_limit_not_retried():
     """rate_limit_monthly subtype (hard cap) must surface on the first attempt without retrying."""
+    monthly = {
+        "error": "too_many_requests",
+        "subtype": "rate_limit_monthly",
+        "detail": "Need 50 credits; 1 remaining this month.",
+        "units": 50,
+        "tier": "free",
+    }
     transport = _MockTransport(
         [
-            (429, {"error": "too_many_requests", "subtype": "rate_limit_monthly", "detail": "Need 50 credits; 1 remaining this month.", "units": 50}),
+            (429, monthly),
             # Extra entries that must never be reached:
-            (429, {"error": "too_many_requests", "subtype": "rate_limit_monthly", "detail": "Need 50 credits; 1 remaining this month.", "units": 50}),
-            (429, {"error": "too_many_requests", "subtype": "rate_limit_monthly", "detail": "Need 50 credits; 1 remaining this month.", "units": 50}),
-            (429, {"error": "too_many_requests", "subtype": "rate_limit_monthly", "detail": "Need 50 credits; 1 remaining this month.", "units": 50}),
+            (429, monthly),
+            (429, monthly),
+            (429, monthly),
         ]
     )
     client = _make_client(transport, max_retries=3)
@@ -621,7 +628,11 @@ async def test_async_places_search_bbox_tiles_requires_bbox():
 async def test_async_places_search_auto_split_counts_then_quarters_area_overflow():
     bbox = "0,0,2,2"
     quarters = split_bbox_tiles(bbox, 4)
-    queued: list[_ResponseTuple] = [_stats_total(1), (400, _places_bbox_too_large())]
+    queued: list[_ResponseTuple] = [
+        _account_tier(),
+        _stats_total(1),
+        (400, _places_bbox_too_large()),
+    ]
     for i in range(4):
         queued.append(_stats_total(1))
         queued.append((200, _place_fc(f"node/{i}")))
@@ -635,4 +646,77 @@ async def test_async_places_search_auto_split_counts_then_quarters_area_overflow
         "node/0", "node/1", "node/2", "node/3",
     }
     assert _places_post_bboxes(transport) == [bbox, *quarters]
+    assert transport.requests[0].url.path.endswith("/v1/account/tier")
+    assert transport.requests[1].url.path.endswith("/v2/osm_features/count")
+    assert all(
+        not req.url.path.endswith("/v1/places/count")
+        for req in transport.requests
+    )
+
+
+async def test_async_count_scalar_places_set():
+    from urllib.parse import parse_qs, urlsplit
+
+    transport = _MockTransport(
+        [(200, {"groups": [], "total": 12, "truncated": False})]
+    )
+    client = _make_client(transport)
+    async with client:
+        out = await client.count_async(
+            bbox="18.05,59.31,18.10,59.33",
+            or_tags=["amenity=cafe"],
+            way_shape="polygon",
+        )
+    assert out["total"] == 12
+    assert out["groups"] == []
     assert transport.requests[0].url.path.endswith("/v2/osm_features/count")
+    parsed = parse_qs(urlsplit(str(transport.requests[0].url)).query)
+    assert parsed["or_tags"] == ["amenity=cafe"]
+    assert parsed["way_shape"] == ["polygon"]
+    assert "group_by" not in parsed
+
+
+async def test_async_places_search_auto_split_hours_skips_account_tier():
+    transport = _MockTransport(
+        [_stats_total(100), (200, _place_fc("node/1"))]
+    )
+    client = _make_client(transport)
+    async with client:
+        result = await client.places_search_async(
+            bbox="0,0,1,1",
+            or_tags=["amenity=cafe"],
+            as_of="2026-08-10T18:00:00+02:00",
+            auto_split=True,
+        )
+    assert [f["id"] for f in result["features"]] == ["node/1"]
+    assert transport.requests[0].url.path.endswith("/v2/osm_features/count")
+    assert all(
+        not req.url.path.endswith("/v1/account/tier") for req in transport.requests
+    )
+
+
+async def test_async_places_search_auto_split_open_now_splits_on_scan_cap():
+    bbox = "0,0,1,1"
+    tiles = split_bbox_tiles(bbox, 2)
+    transport = _MockTransport(
+        [
+            _stats_total(15_000),
+            _stats_total(100),
+            (200, _place_fc("node/0")),
+            _stats_total(100),
+            (200, _place_fc("node/1")),
+        ]
+    )
+    client = _make_client(transport)
+    async with client:
+        result = await client.places_search_async(
+            bbox=bbox,
+            or_tags=["amenity=cafe"],
+            open_now=True,
+            auto_split=True,
+        )
+    assert {f["id"] for f in result["features"]} == {"node/0", "node/1"}
+    assert _places_post_bboxes(transport) == tiles
+    assert all(
+        not req.url.path.endswith("/v1/account/tier") for req in transport.requests
+    )

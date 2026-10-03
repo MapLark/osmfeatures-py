@@ -785,7 +785,7 @@ class GeoAgentSession:
     async def count(
         self,
         *,
-        group_by: str,
+        group_by: str | None = None,
         bbox: str | None = None,
         location: str | None = None,
         radius: float | None = None,
@@ -798,7 +798,7 @@ class GeoAgentSession:
         limit: int | None = None,
         disable_budget_warning: bool = False,
     ) -> dict[str, Any]:
-        """Histogram of tag values. Counts, not geometries. Report ``total``."""
+        """Scalar total, or histogram when ``group_by`` is set. Counts, not geometries. Report ``total``."""
         payload = await invoke_client(
             self._client,
             "count",

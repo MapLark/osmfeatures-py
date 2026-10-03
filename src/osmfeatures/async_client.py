@@ -148,9 +148,12 @@ class AsyncOSMFeaturesClient:
 
     async def _get_json(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         client = await self._get_client()
+        param_list = build_params(params) if params else None
 
         async def _do() -> httpx.Response:
-            return await client.get(f"{self._base_url}{path}", params=params or None)
+            return await client.get(
+                f"{self._base_url}{path}", params=param_list or None
+            )
 
         resp = await retry_async(
             _do,
@@ -197,7 +200,7 @@ class AsyncOSMFeaturesClient:
     async def count_async(
         self,
         *,
-        group_by: str,
+        group_by: str | None = None,
         bbox: str | None = None,
         location: str | None = None,
         radius: float | None = None,
@@ -214,7 +217,7 @@ class AsyncOSMFeaturesClient:
         max_area_m2: float | None = None,
         disable_budget_warning: bool = False,
     ) -> dict[str, Any]:
-        """``GET /v2/osm_features/count``: count features grouped by a tag key.
+        """``GET /v2/osm_features/count``: scalar total, or histogram with ``group_by``.
 
         Same as :meth:`OSMFeaturesClient.count`. Example::
 
@@ -225,7 +228,9 @@ class AsyncOSMFeaturesClient:
                 tags=["amenity"],
             )
         """
-        params: dict[str, Any] = {"group_by": group_by}
+        params: dict[str, Any] = {}
+        if group_by is not None:
+            params["group_by"] = group_by
         if bbox is not None:
             params["bbox"] = bbox
         if location is not None:
@@ -310,10 +315,15 @@ class AsyncOSMFeaturesClient:
     ) -> dict[str, Any]:
         """Find places via ``POST /v1/places/search``.
 
-        ``metadata.units`` is credits charged. ``bbox_tiles`` and ``auto_split``
-        are client-side, like :meth:`query_async`, and **only apply to bbox search**.
-        ``auto_split`` counts first, then fetches (same walk as
-        :meth:`query_async`). location+radius is a circle and cannot split;
+        ``bbox_tiles`` and ``auto_split`` are client-side, like
+        :meth:`query_async`, and **only apply to bbox search**.
+        ``auto_split`` counts first via :meth:`count_async` with
+        ``way_shape="polygon"``, then fetches. No hours: split on
+        ``total`` vs the key's ``max_limit``. ``asOf`` / ``openNow`` AND
+        ``opening_hours``. An ``asOf`` page ``limit`` (default 100) truncates;
+        split on the 10k parse cap only when ``limit`` is raised above 10k.
+        ``openNow`` splits on that 10k scan cap even with a small fill limit.
+        location+radius is a circle and cannot split;
         :func:`around_to_bbox` turns a radius into a covering bbox if you
         need tiles (square around the circle; corners can fall outside the
         original radius).
@@ -322,6 +332,7 @@ class AsyncOSMFeaturesClient:
         return await execute_places_search(
             post=lambda body: self._post_json(PLACES_SEARCH_PATH, body),
             count=self.count_async,
+            account_tier=self.account_tier_async,
             bbox=bbox,
             location=location,
             radius=radius,
@@ -349,10 +360,7 @@ class AsyncOSMFeaturesClient:
         open_now: bool = False,
         as_of: str | None = None,
     ) -> dict[str, Any]:
-        """Nearest places ranked by straight-line distance.
-
-        ``units`` is credits charged.
-        """
+        """Nearest places ranked by straight-line distance."""
         return await self._post_json(
             PLACES_NEARBY_PATH,
             places_nearby_body(
@@ -375,7 +383,7 @@ class AsyncOSMFeaturesClient:
         """One place via ``GET /v1/places/{osm_type}/{osm_id}``.
 
         *osm_type* may be a search/nearby feature id (``node/123``) when
-        *osm_id* is omitted. ``units`` is credits charged.
+        *osm_id* is omitted.
         """
         return await self._get_json(places_details_path(osm_type, osm_id))
 

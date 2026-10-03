@@ -106,11 +106,15 @@ unit cap 400s, shrink the bbox or add tags. Do not retry
 with disable_budget_warning. Do not group_by name, ref, or addr:housenumber.
 
 places_search is POST /v1/places/search: named POIs (cafes, bars) with hours. Known-small
-windows go directly. City- or county-scale bbox: auto_split (counts first,
-then fetches; a tagged-area 400 or a match set over max_limit jumps to a
-power-of-2 grid; one leftover dense leaf may jump once more). auto_split is bbox-only; do not pass it with
+windows go directly. City- or county-scale bbox: auto_split (GET /v2/osm_features/count
+with way_shape=polygon first; then fetches; no hours: total vs max_limit; asOf/openNow
+AND opening_hours; asOf page limit truncates (split vs the 10k parse cap only when
+limit is raised above 10k); openNow splits vs that 10k scan cap; a fetch tagged-area
+400 or a match set over that cap jumps to a power-of-2 grid; one leftover dense leaf
+may jump once more). auto_split is bbox-only; do not pass it with
 lat/lng/radius (a circle cannot split). A bbox area / result_too_large
-400 is not retried; pass auto_split or shrink. auto_split walks at most 32 tiles
+400 is not retried; pass auto_split or shrink. A count bbox area 400 is not
+split (window still too big to count). auto_split walks at most 32 tiles
 (five longest-side bisections). If the error
 says the area is too large or too many bbox tiles: geocode a smaller named place
 (city or neighborhood) or ask the user which area to use. Do not bisect leftover

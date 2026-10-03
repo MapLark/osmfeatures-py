@@ -224,7 +224,7 @@ def query_cmd(
 
 @cli.command("count")
 @_add_options(_SPATIAL_OPTIONS)
-@click.option("--group-by", "group_by", required=True, help="Tag key to group on (e.g. amenity)")
+@click.option("--group-by", "group_by", default=None, help="Tag key to group on (omit for a scalar total)")
 @click.option("--limit", default=None, type=int, help="Max histogram groups")
 @click.option(
     "--disable-budget-warning",
@@ -253,14 +253,14 @@ def count_cmd(
     max_length_m: float | None,
     min_area_m2: float | None,
     max_area_m2: float | None,
-    group_by: str,
+    group_by: str | None,
     limit: int | None,
     disable_budget_warning: bool,
     api_key: str | None,
     base_url: str | None,
     retries: int,
 ) -> None:
-    """Count OSM features grouped by a tag key (GET /v2/osm_features/count)."""
+    """Count OSM features (GET /v2/osm_features/count). Omit --group-by for a scalar total."""
     if osm_ids:
         raise click.UsageError("count does not take --osm-ids")
     if zoom is not None:
@@ -271,7 +271,9 @@ def count_cmd(
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
 
-    params: dict[str, Any] = {"group_by": group_by}
+    params: dict[str, Any] = {}
+    if group_by:
+        params["group_by"] = group_by
     if bbox:
         params["bbox"] = bbox
     if location:

@@ -102,7 +102,7 @@ with OSMFeaturesClient(api_key="sk-...") as client:
 
 ### Query OSM features
 
-`query()` calls `GET /v3/osm_features` and returns the whole tile. Omit `limit` for the API default. Paid keys may raise `limit` up to their `max_limit` (enterprise 1000000). A larger match set is truncated (`X-Has-More: true`). Pass `auto_split=True` to read the key's `max_limit` from `GET /v1/account/tier`, count first, and jump to a power-of-2 tile grid when the match set exceeds that cap (one extra jump if a leftover leaf is still dense). That adds latency. Pass `bbox_tiles=2` (or 4, 8, ...) to split the bbox up front. `query()` does not take `cursor`.
+`query()` calls `GET /v3/osm_features` and returns the whole tile. Omit `limit` for the API default. Paid keys may raise `limit` up to their `max_limit`. A larger match set is truncated (`X-Has-More: true`). Pass `auto_split=True` to read the key's `max_limit` from `GET /v1/account/tier`, count first with a scalar `GET /v2/osm_features/count` (no `group_by`), and jump to a power-of-2 tile grid when the match set exceeds that cap (one extra jump if a leftover leaf is still dense). That adds latency. Pass `bbox_tiles=2` (or 4, 8, ...) to split the bbox up front. `query()` does not take `cursor`.
 
 ```python
 fc = client.query(
@@ -147,7 +147,7 @@ all_restaurants = client.query(
 #### Count
 Analyze feature counts with a histogram over a very large area - city and country sized bounding boxes allowed. For example, you can find out how many cafes, bars, and restaurants are in different cities or countries.
 
-`client.count` calls `GET /v2/osm_features/count`. Example amenity histogram:
+`client.count` calls `GET /v2/osm_features/count`. Omit `group_by` for a scalar total. Example amenity histogram:
 
 ```python
 client.count(
@@ -299,9 +299,9 @@ Runnable Python chains live in `tests/example_apps/test_geo_agent.py`. Full HTTP
 
 ### Places search
 
-`places_search()` finds places in a bounding box **or** a `location` plus `radius` (not both). Optional `tags` (AND) and `or_tags` (OR) use the same OSM filters as `query()`. Omit `limit` to use the API default (100, max 10_000).
+`places_search()` finds places in a bounding box **or** a `location` plus `radius` (not both). Optional `tags` (AND) and `or_tags` (OR) use the same OSM filters as `query()`. Omit `limit` to use the API default (100). Paid keys may raise `limit` up to their `/v3` `max_limit`; `asOf` / `openNow` still cap hours parse at 10_000.
 
-`bbox_tiles` and `auto_split` **only apply to bbox search** (same names as `query()`). Pass `bbox_tiles=2` (or 4, 8, ...) to split a bbox up front. Pass `auto_split=True` to count first, then fetch — the same walk as `query()`. A bbox that exceeds the tagged area cap is split in one jump from the limit in the 400, not by probing every quarter, up to 32 tiles. location+radius is a circle and cannot split. To tile a radius window, convert it first with `around_to_bbox` (a square that contains the circle; corner hits can fall outside the original radius):
+`bbox_tiles` and `auto_split` **only apply to bbox search** (same names as `query()`). Pass `bbox_tiles=2` (or 4, 8, ...) to split a bbox up front. Pass `auto_split=True` to count first via `GET /v2/osm_features/count` with `way_shape=polygon`, then fetch. No hours: split on `total` vs the key's `max_limit`. With `asOf` / `openNow`: AND `opening_hours`. An `asOf` page `limit` (default 100) truncates; density-split vs the 10k parse cap only when `limit` is raised above 10k. `openNow` density-splits vs that 10k scan cap even with a small fill limit. A search that exceeds the tagged **fetch** area cap 400s; that 400 is split in one jump from the limit in the message, not by probing every quarter, up to 32 tiles. A `count bbox area` 400 is not split (the window is still too big to count). location+radius is a circle and cannot split. To tile a radius window, convert it first with `around_to_bbox` (a square that contains the circle; corner hits can fall outside the original radius):
 
 ```python
 from osmfeatures import around_to_bbox
@@ -322,7 +322,7 @@ print(len(cafes["features"]), "open cafes")
 print(cafes["metadata"]["evaluated_at"])
 ```
 
-Response is a GeoJSON FeatureCollection plus `metadata.evaluated_at` (UTC instant used for hours) and `metadata.units` (credits charged).
+Response is a GeoJSON FeatureCollection plus `metadata.evaluated_at` (UTC instant used for hours) and `metadata.units` (credits charged). After `bbox_tiles` / `auto_split`, `units` is the sum of the search tiles.
 
 ### Nearby (ranked from a point)
 

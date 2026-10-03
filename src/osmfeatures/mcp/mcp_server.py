@@ -279,7 +279,7 @@ def build_server(
 
     @mcp.tool()
     async def count(
-        group_by: str,
+        group_by: str | None = None,
         bbox: str | None = None,
         location: str | None = None,
         radius: float | None = None,
@@ -292,7 +292,7 @@ def build_server(
         limit: int | None = None,
         disable_budget_warning: bool = False,
     ) -> dict[str, Any]:
-        """Count features grouped by a tag key. City/country histograms. Report total. Not a GeoJSON page. location is numeric lat,lng."""
+        """Count features. Omit group_by for a scalar total; set it for a histogram. Report total. Not a GeoJSON page. location is numeric lat,lng."""
         return await get_session().count(
             group_by=group_by,
             bbox=bbox,

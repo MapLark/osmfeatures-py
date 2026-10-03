@@ -143,11 +143,12 @@ class OSMFeaturesClient:
 
     def _get_json(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """GET JSON from a geo-agent path; raise SDK errors on non-2xx."""
+        param_list = build_params(params) if params else None
 
         def _do() -> requests.Response:
             return self._session.get(
                 f"{self._base_url}{path}",
-                params=params or None,
+                params=param_list or None,
                 timeout=self._timeout,
             )
 
@@ -236,7 +237,7 @@ class OSMFeaturesClient:
     def count(
         self,
         *,
-        group_by: str,
+        group_by: str | None = None,
         bbox: str | None = None,
         location: str | None = None,
         radius: float | None = None,
@@ -253,10 +254,13 @@ class OSMFeaturesClient:
         max_area_m2: float | None = None,
         disable_budget_warning: bool = False,
     ) -> dict[str, Any]:
-        """``GET /v2/osm_features/count``: count features grouped by a tag key.
+        """``GET /v2/osm_features/count``: scalar total, or histogram with ``group_by``.
 
+        Omit ``group_by`` for ``{groups: [], total, truncated: false}``.
+        Places search is that total with ``way_shape="polygon"``.
         Same tag filters as :meth:`query` except ``osm_ids``. Spatial windows are larger
-        than :meth:`query` (country-scale on every tier) and billed count-only.
+        than :meth:`query` when tags or ``group_by`` are set (country-scale on every
+        tier) and billed count-only.
         ``limit`` is max histogram buckets (API default 100, max 10000). Example::
 
             client.count(
@@ -270,7 +274,9 @@ class OSMFeaturesClient:
             #             {"value": "bar", "count": 47}],
             #  "total": 412, "truncated": False}
         """
-        params: dict[str, Any] = {"group_by": group_by}
+        params: dict[str, Any] = {}
+        if group_by is not None:
+            params["group_by"] = group_by
         if bbox is not None:
             params["bbox"] = bbox
         if location is not None:
@@ -345,22 +351,26 @@ class OSMFeaturesClient:
     ) -> dict[str, Any]:
         """Find places via ``POST /v1/places/search`` (GeoJSON FeatureCollection).
 
-        ``metadata.units`` is credits charged. ``bbox_tiles`` and ``auto_split``
-        are client-side, like :meth:`query`, and **only apply to bbox search**. ``bbox_tiles`` splits the bbox up
-        front (power of 2). ``auto_split`` counts first (same walk as
-        :meth:`query`), then fetches. A match set over the places schema
-        ``max_limit`` (10_000) jumps
-        to a power-of-2 grid; one leftover dense leaf may jump once more. A bbox-area 400 jumps to the tier
-        limit in the error instead of probing every quarter, up to 32
-        tiles. location+radius is
-        a circle and cannot split; :func:`around_to_bbox` turns a radius into a
-        covering bbox if you need tiles (square around the circle; corners
-        can fall outside the original radius).
+        ``bbox_tiles`` and ``auto_split`` are client-side, like :meth:`query`,
+        and **only apply to bbox search**. ``bbox_tiles`` splits the bbox up
+        front (power of 2). ``auto_split`` counts first via :meth:`count`
+        with ``way_shape="polygon"``, then fetches. No hours: split on
+        ``total`` vs the key's ``max_limit``. ``asOf`` / ``openNow`` AND
+        ``opening_hours``. An ``asOf`` page ``limit`` (default 100) truncates;
+        split on the 10k parse cap only when ``limit`` is raised above 10k.
+        ``openNow`` splits on that 10k scan cap even with a small fill limit.
+        A leftover dense leaf may jump once more. A bbox-area 400 jumps to
+        the tier limit in the error instead of probing every quarter, up
+        to 32 tiles.
+        location+radius is a circle and cannot split; :func:`around_to_bbox`
+        turns a radius into a covering bbox if you need tiles (square around
+        the circle; corners can fall outside the original radius).
         ``split_until_fit`` is a deprecated alias for ``auto_split``.
         """
         return execute_places_search_sync(
             post=lambda body: self._post_json(PLACES_SEARCH_PATH, body),
             count=self.count,
+            account_tier=self.account_tier,
             bbox=bbox,
             location=location,
             radius=radius,
@@ -388,10 +398,7 @@ class OSMFeaturesClient:
         open_now: bool = False,
         as_of: str | None = None,
     ) -> dict[str, Any]:
-        """Nearest places ranked by straight-line distance (``POST /v1/places/nearby``).
-
-        ``units`` is credits charged.
-        """
+        """Nearest places ranked by straight-line distance (``POST /v1/places/nearby``)."""
         return self._post_json(
             PLACES_NEARBY_PATH,
             places_nearby_body(
@@ -414,7 +421,7 @@ class OSMFeaturesClient:
         """One place via ``GET /v1/places/{osm_type}/{osm_id}``.
 
         *osm_type* may be a search/nearby feature id (``node/123``) when
-        *osm_id* is omitted. ``units`` is credits charged.
+        *osm_id* is omitted.
         """
         return self._get_json(places_details_path(osm_type, osm_id))
 
