@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 # Planner save_as labels (pubs) or server-minted fc_N. No slashes/commas (URL path).
 _COLLECTION_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
 _SAVE_AS_SEP = re.compile(r"[\s-]+")
+_OSM_REF = re.compile(r"^(node|way|relation)/[1-9]\d*$", re.IGNORECASE)
 
 # Vector basemap, no API key. Overlay GeoJSON is fetched from this process.
 _MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty"
@@ -33,6 +34,22 @@ def feature_popup_name(feat: dict[str, Any]) -> str | None:
     return None
 
 
+def feature_osm_id(feat: dict[str, Any]) -> str | None:
+    """GeoJSON ``id`` when it is ``node|way|relation/<positive id>``.
+
+    MapLibre drops string feature ids on click, so the preview copies this into
+    ``properties.osm_id`` for the popup.
+    """
+    fid = feat.get("id")
+    if not isinstance(fid, str):
+        return None
+    raw = fid.strip()
+    if not _OSM_REF.match(raw):
+        return None
+    kind, n = raw.split("/", 1)
+    return f"{kind.lower()}/{n}"
+
+
 def geojson_for_map(fc: dict[str, Any]) -> dict[str, Any]:
     """Copy a FeatureCollection with ``properties.name`` as a string MapLibre can show."""
     features: list[dict[str, Any]] = []
@@ -44,6 +61,9 @@ def geojson_for_map(fc: dict[str, Any]) -> dict[str, Any]:
         name = feature_popup_name(out)
         if name is not None:
             props["name"] = name
+        osm_id = feature_osm_id(out)
+        if osm_id is not None:
+            props["osm_id"] = osm_id
         out["properties"] = props
         features.append(out)
     mapped: dict[str, Any] = {"type": "FeatureCollection", "features": features}
@@ -135,6 +155,7 @@ def preview_html(collection_ids: str | list[str]) -> str:
       color: #555; font-weight: 600; padding-right: 12px; white-space: nowrap;
     }}
     .ml-popup-tags td {{ word-break: break-word; }}
+    .ml-popup-tags a {{ color: #1d4ed8; }}
     .ml-origin-marker {{
       width: 16px; height: 16px; border-radius: 50%;
       background: #c2410c; border: 2px solid #fff;
@@ -253,20 +274,52 @@ def preview_html(collection_ids: str | list[str]) -> str:
       if (typeof v === "object") return JSON.stringify(v);
       return String(v);
     }}
-    function propPriority(k) {{
-      if (k === "name") return 0;
-      if (k === "openNow") return 1;
-      if (k === "distance_m") return 2;
-      if (k === "lon" || k === "lng") return 3;
-      if (k === "lat") return 4;
-      return 5;
+    function isWebsiteKey(k) {{
+      const key = String(k);
+      return key === "url" || key.endsWith(":url") || key === "website" || key.includes("website");
     }}
-    function pointLonLat(hit) {{
-      const g = hit && hit.geometry;
-      if (!g || g.type !== "Point" || !Array.isArray(g.coordinates)) return null;
-      const lon = g.coordinates[0], lat = g.coordinates[1];
-      if (typeof lon !== "number" || typeof lat !== "number") return null;
-      return {{ lon, lat }};
+    function safeHttpHref(raw, allowBareHost) {{
+      const s = String(raw).trim();
+      if (!s) return null;
+      let href = s;
+      if (!/^[a-z][a-z0-9+.-]*:/i.test(href)) {{
+        if (!allowBareHost) return null;
+        href = "https://" + href;
+      }}
+      try {{
+        const u = new URL(href);
+        if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+        return u.href;
+      }} catch (err) {{
+        return null;
+      }}
+    }}
+    function osmOrgHref(raw) {{
+      const m = String(raw).trim().match(/^(node|way|relation)\\/([1-9]\\d*)$/i);
+      if (!m) return null;
+      return "https://www.openstreetmap.org/" + m[1].toLowerCase() + "/" + m[2];
+    }}
+    function hrefFor(key, value) {{
+      if (key === "osm_id") return osmOrgHref(value);
+      return safeHttpHref(value, isWebsiteKey(key));
+    }}
+    function formatCell(key, value) {{
+      const text = formatPropValue(value);
+      const href = hrefFor(key, text);
+      if (href) {{
+        return '<a href="' + escapeHtml(href) + '" target="_blank" rel="noopener noreferrer">'
+          + escapeHtml(text) + "</a>";
+      }}
+      return escapeHtml(text);
+    }}
+    function propPriority(k) {{
+      if (k === "osm_id") return 0;
+      if (k === "name") return 1;
+      if (k === "openNow") return 2;
+      if (k === "distance_m") return 3;
+      if (k === "lon" || k === "lng") return 4;
+      if (k === "lat") return 5;
+      return 6;
     }}
     function popupHtml(hit) {{
       const props = (hit && hit.properties) || {{}};
@@ -284,15 +337,6 @@ def preview_html(collection_ids: str | list[str]) -> str:
         rows.push([k, formatPropValue(props[k])]);
         seen.add(k);
       }}
-      if (!seen.has("lon") && !seen.has("lng") && !seen.has("lat")) {{
-        const pt = pointLonLat(hit);
-        if (pt) {{
-          rows.push(["lon", formatPropValue(pt.lon)]);
-          rows.push(["lat", formatPropValue(pt.lat)]);
-          seen.add("lon");
-          seen.add("lat");
-        }}
-      }}
       if (tags) {{
         const tagKeys = Object.keys(tags).filter((k) => !seen.has(k));
         tagKeys.sort((a, b) => {{
@@ -306,7 +350,7 @@ def preview_html(collection_ids: str | list[str]) -> str:
       }}
       if (rows.length) {{
         const htmlRows = rows.map((pair) =>
-          "<tr><th>" + escapeHtml(pair[0]) + "</th><td>" + escapeHtml(pair[1]) + "</td></tr>"
+          "<tr><th>" + escapeHtml(pair[0]) + "</th><td>" + formatCell(pair[0], pair[1]) + "</td></tr>"
         );
         return '<div class="ml-popup"><table class="ml-popup-tags">' + htmlRows.join("") + "</table></div>";
       }}

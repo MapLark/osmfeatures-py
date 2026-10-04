@@ -11,6 +11,7 @@ import pytest
 from osmfeatures.mcp._mcp_session import GeoAgentSession, assert_no_coordinate_arrays
 from osmfeatures.mcp._preview import (
     PreviewServer,
+    feature_osm_id,
     geojson_for_map,
     geojson_for_map_many,
     normalize_save_as,
@@ -95,7 +96,13 @@ def test_preview_html_uses_openfreemap_and_relative_geojson():
     assert "SKIP_PROP_KEYS" in html
     assert "openNow" in html
     assert "distance_m" in html
-    assert "pointLonLat" in html
+    assert "osm_id" in html
+    assert "openstreetmap.org" in html
+    assert "isWebsiteKey" in html
+    assert "safeHttpHref" in html
+    assert "formatCell" in html
+    assert "noopener noreferrer" in html
+    assert "pointLonLat" not in html
     assert "search_origin" in html
     assert "ml-origin-marker" in html
     assert "ml-popup-tags" in html
@@ -117,6 +124,7 @@ def test_geojson_for_map_promotes_tags_name():
     }
     out = geojson_for_map(fc)
     assert out["features"][0]["properties"]["name"] == "Drop Coffee"
+    assert out["features"][0]["properties"]["osm_id"] == "node/1"
     assert out["features"][0]["properties"]["tags"] == {
         "name": "Drop Coffee",
         "amenity": "cafe",
@@ -124,6 +132,16 @@ def test_geojson_for_map_promotes_tags_name():
     }
     assert out["search_origin"] == {"lat": 59.316, "lng": 18.075}
     assert fc["features"][0]["properties"].get("name") is None
+    assert fc["features"][0]["properties"].get("osm_id") is None
+
+
+def test_feature_osm_id():
+    assert feature_osm_id({"id": "node/1"}) == "node/1"
+    assert feature_osm_id({"id": "WAY/99"}) == "way/99"
+    assert feature_osm_id({"id": "relation/155790"}) == "relation/155790"
+    assert feature_osm_id({"id": 1}) is None
+    assert feature_osm_id({"id": "node/0"}) is None
+    assert feature_osm_id({"id": "fc_1"}) is None
 
 
 def test_preview_open_returns_url_without_geometry(preview, monkeypatch):
@@ -149,6 +167,7 @@ def test_http_preview_and_geojson(preview):
         body = json.loads(resp.read())
         assert body["features"][0]["geometry"]["coordinates"] == [18.075, 59.316]
         assert body["features"][0]["properties"]["name"] == "Drop Coffee"
+        assert body["features"][0]["properties"]["osm_id"] == "node/1"
         assert body["features"][0]["properties"]["tags"] == {
             "name": "Drop Coffee",
             "amenity": "cafe",
@@ -158,6 +177,7 @@ def test_http_preview_and_geojson(preview):
         body = json.loads(resp.read())
         assert body["features"][0]["geometry"]["coordinates"] == [18.075, 59.316]
         assert body["features"][0]["properties"]["name"] == "Drop Coffee"
+        assert body["features"][0]["properties"]["osm_id"] == "node/1"
         assert body["features"][0]["properties"]["tags"] == {
             "name": "Drop Coffee",
             "amenity": "cafe",
@@ -256,6 +276,7 @@ def test_geojson_for_map_many_concatenates_and_keeps_first_origin():
     out = geojson_for_map_many([places, route])
     assert [f["geometry"]["type"] for f in out["features"]] == ["Point", "LineString"]
     assert out["features"][0]["properties"]["name"] == "Drop Coffee"
+    assert out["features"][0]["properties"]["osm_id"] == "node/1"
     assert out["search_origin"] == {"lat": 59.316, "lng": 18.075}
 
 

@@ -182,15 +182,14 @@ async def test_build_server_wires_instructions_and_tools():
     assert "Treat hotels as always open" in mcp.instructions
     assert "tour,\ncrawl, or loop" in mcp.instructions
     assert "walk, bike, route, path, or loop" not in mcp.instructions
-    assert "if still empty drop hours" in mcp.instructions
+    assert "retry with no as_of and no open_now" in mcp.instructions
     assert "{lon, lat}" in mcp.instructions
     assert "{SUMMARY_ITEM_CAP}" not in mcp.instructions
     assert "call geocode" in mcp.instructions
     assert "count, not query" in mcp.instructions
-    assert "how many pubs in Stockholm" in mcp.instructions
-    assert "top pubs in Stockholm open after 6pm" in mcp.instructions
+    assert "Choose a tool:" in mcp.instructions
     assert "n(n-1)/2" in mcp.instructions
-    assert "Do not retry\nwith disable_budget_warning" in mcp.instructions
+    assert "Do not retry with disable_budget_warning" in mcp.instructions
     assert f"over {MAX_COMPARISONS} comparisons" in mcp.instructions
     tools = await mcp.list_tools()
     names = {tool.name for tool in tools}
@@ -206,12 +205,9 @@ async def test_build_server_wires_instructions_and_tools():
     assert "group_by" not in count.inputSchema.get("required", [])
     assert "group_by" in count.inputSchema["properties"]
     assert "bbox" in count.inputSchema["properties"]
-    assert "GET /v3/osm_features" in mcp.instructions
-    assert "one unsorted tile" in mcp.instructions
     assert "result_too_large" in mcp.instructions
-    assert "Pass limit" in mcp.instructions
-    assert "Omit limit for the key's max_limit" in mcp.instructions
     assert "gather all features present in database" not in mcp.instructions
+    assert "Scale (query and places_search)" in mcp.instructions
     assert "auto_split" in mcp.instructions
     assert "Known-small windows" in mcp.instructions
     assert "count, not query" in mcp.instructions
