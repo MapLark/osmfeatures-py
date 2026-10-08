@@ -1,4 +1,4 @@
-"""CLI for osmfeatures - ``osmfeatures query``, ``osmfeatures count``, and ``osmfeatures mcp``."""
+"""CLI for osmfeatures - ``osmfeatures query``, ``osmfeatures count``, ``osmfeatures density``, and ``osmfeatures mcp``."""
 
 from __future__ import annotations
 
@@ -309,6 +309,109 @@ def count_cmd(
     try:
         with client:
             out = client.count(**params)
+    except OSMFeaturesAuthError as exc:
+        click.echo(f"Authentication error: {exc}", err=True)
+        sys.exit(1)
+    except OSMFeaturesRateLimitError as exc:
+        click.echo(f"Rate limit: {exc}", err=True)
+        sys.exit(1)
+    except OSMFeaturesAPIError as exc:
+        click.echo(f"API error (HTTP {exc.status_code}): {exc}", err=True)
+        sys.exit(1)
+    except ValueError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+    click.echo(json.dumps(out, indent=2))
+
+
+@cli.command("density")
+@_add_options(_SPATIAL_OPTIONS)
+@click.option("--cell-deg", "cell_deg", default=None, type=float, help="Grid cell size in degrees (API default 0.1)")
+@click.option("--limit", default=None, type=int, help="Max occupied cells")
+@click.option(
+    "--disable-budget-warning",
+    "disable_budget_warning",
+    is_flag=True,
+    default=False,
+    help="Bypass per-request unit cap (maps to disable_budget_warning=true)",
+)
+@click.option("--api-key", default=None, envvar="MAPLARK_API_KEY", help="MapLark API key")
+@click.option("--base-url", default=None, envvar="MAPLARK_BASE_URL", help="API base URL")
+@click.option("--retries", default=3, show_default=True, type=int, help="Max retry attempts")
+def density_cmd(
+    bbox: str | None,
+    location: str | None,
+    radius: float | None,
+    osm_ids: str | None,
+    within: str | None,
+    tags: tuple[str, ...],
+    or_tags: tuple[str, ...],
+    not_tags: tuple[str, ...],
+    element_type: str | None,
+    way_shape: str | None,
+    shape: str | None,
+    zoom: float | None,
+    min_length_m: float | None,
+    max_length_m: float | None,
+    min_area_m2: float | None,
+    max_area_m2: float | None,
+    cell_deg: float | None,
+    limit: int | None,
+    disable_budget_warning: bool,
+    api_key: str | None,
+    base_url: str | None,
+    retries: int,
+) -> None:
+    """Density of features as GeoJSON bins (GET /v2/osm_features/density)."""
+    if osm_ids:
+        raise click.UsageError("density does not take --osm-ids")
+    if zoom is not None:
+        raise click.UsageError("density does not take --zoom")
+    try:
+        client = _make_client(api_key, base_url, retries)
+    except click.UsageError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+    params: dict[str, Any] = {}
+    if cell_deg is not None:
+        params["cell_deg"] = cell_deg
+    if bbox:
+        params["bbox"] = bbox
+    if location:
+        params["location"] = location
+    if radius is not None:
+        params["radius"] = radius
+    if within:
+        params["within"] = within
+    if tags:
+        params["tags"] = list(tags)
+    if or_tags:
+        params["or_tags"] = list(or_tags)
+    if not_tags:
+        params["not_tags"] = list(not_tags)
+    if element_type:
+        params["type"] = [t.strip() for t in element_type.split(",")]
+    resolved_shape = way_shape or shape
+    if resolved_shape:
+        params["way_shape"] = resolved_shape
+    if min_length_m is not None:
+        params["min_length_m"] = min_length_m
+    if max_length_m is not None:
+        params["max_length_m"] = max_length_m
+    if min_area_m2 is not None:
+        params["min_area_m2"] = min_area_m2
+    if max_area_m2 is not None:
+        params["max_area_m2"] = max_area_m2
+    if limit is not None:
+        params["limit"] = limit
+    if disable_budget_warning:
+        params["disable_budget_warning"] = True
+
+    try:
+        with client:
+            out = client.density(**params)
     except OSMFeaturesAuthError as exc:
         click.echo(f"Authentication error: {exc}", err=True)
         sys.exit(1)

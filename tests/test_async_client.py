@@ -564,6 +564,47 @@ async def test_async_count_forwards_group_by():
     assert transport.requests[0].url.path.endswith("/v2/osm_features/count")
 
 
+async def test_async_density_forwards_cell_deg():
+    from urllib.parse import parse_qs, urlsplit
+
+    from osmfeatures import DensityFeatureCollection
+
+    transport = _MockTransport(
+        [
+            (
+                200,
+                {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "geometry": {"type": "Point", "coordinates": [18.1, 59.3]},
+                            "properties": {"count": 4},
+                        }
+                    ],
+                    "total": 4,
+                    "truncated": False,
+                },
+            )
+        ]
+    )
+    client = _make_client(transport)
+    async with client:
+        out = await client.density_async(
+            bbox="18.06,59.32,18.09,59.34",
+            tags=["place"],
+            cell_deg=0.1,
+        )
+    assert isinstance(out, DensityFeatureCollection)
+    assert out.total == 4
+    assert out["features"][0]["properties"]["count"] == 4
+    assert out["features"][0].get("id") is None
+    parsed = parse_qs(urlsplit(str(transport.requests[0].url)).query)
+    assert transport.requests[0].url.path.endswith("/v2/osm_features/density")
+    assert parsed["cell_deg"] == ["0.1"]
+    assert "group_by" not in parsed
+
+
 # ---------------------------------------------------------------------------
 # places_search tiling
 # ---------------------------------------------------------------------------

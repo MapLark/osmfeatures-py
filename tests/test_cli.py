@@ -274,6 +274,40 @@ def test_count_forwards_group_by():
     )
 
 
+def test_density_forwards_cell_deg():
+    runner = CliRunner()
+    with patch("osmfeatures.cli.OSMFeaturesClient") as MockClient:
+        MockClient.return_value.density.return_value = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [18.1, 59.3]},
+                    "properties": {"count": 4},
+                }
+            ],
+            "total": 4,
+            "truncated": False,
+        }
+        result = runner.invoke(cli, [
+            "density",
+            "--api-key", "sk-test",
+            "--cell-deg", "0.1",
+            "--bbox", "18.06,59.32,18.09,59.34",
+            "--tags", "place",
+        ])
+    assert result.exit_code == 0, result.output
+    parsed = json.loads(result.output)
+    assert parsed["total"] == 4
+    assert parsed["features"][0]["properties"]["count"] == 4
+    assert "id" not in parsed["features"][0]
+    MockClient.return_value.density.assert_called_once_with(
+        cell_deg=0.1,
+        bbox="18.06,59.32,18.09,59.34",
+        tags=["place"],
+    )
+
+
 def test_count_omits_group_by_for_scalar_total():
     runner = CliRunner()
     with patch("osmfeatures.cli.OSMFeaturesClient") as MockClient:

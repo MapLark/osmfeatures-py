@@ -11,6 +11,7 @@ Official Python client for the [MapLark OSM Features API](https://maplark.com) w
   - [Query OSM features](#query-osm-features)
   - [Query a large bbox](#query-a-large-bbox)
   - [Count](#count)
+  - [Density](#density)
   - [Async client](#async-client)
   - [Convenience helpers](#convenience-helpers)
   - [Usage](#usage)
@@ -161,6 +162,24 @@ client.count(
 ```
 
 
+#### Density
+
+`client.density` calls `GET /v2/osm_features/density`. Occupied grid bins come back as a GeoJSON FeatureCollection of points with `properties.count`, plus `total` and `truncated`. These are not OSM features (no `osm_id` or tags). Omit `cell_deg` for 0.1. `type` omitted is nodes. `tags` or `or_tags` is required. `limit` is the max occupied cells (the key's `max_limit` when omitted).
+
+A Europe box (`-26,33,52,72`, about 3042 deg²) fits the density area cap (4000 deg²) and the 80° span. It is above `max_units_per_request` on every non-enterprise tier, so pass `disable_budget_warning=True` to run it. The same box still 400s on count (area cap 400 deg²). A unit-cap 400 on count can use that flag the same way. A bbox-area 400 cannot.
+
+```python
+client.density(
+    bbox="-26,33,52,72",
+    tags=["place"],
+    cell_deg=0.1,
+    disable_budget_warning=True,
+)
+```
+
+CLI: `osmfeatures density --bbox -26,33,52,72 --tags place --cell-deg 0.1 --disable-budget-warning`.
+
+
 ### Async client
 
 Async methods mirror the sync API (`query_async`, `query_all_async`):
@@ -220,7 +239,7 @@ Results come back as summaries (ids, names, OSM tags, lon/lat scalars, `distance
 - Places: `places_search`, `places_nearby`, `places_details`
 - Geocode: `geocode` (Nominatim interim)
 - Routes: `routes_isochrone`, `routes_path`, `routes_optimized_path`
-- Generic OSM: `query`, `count` (histogram / total)
+- Generic OSM: `query`, `count` (histogram / total), `density` (grid bins; `preview_map` the id)
 - Local (no HTTP): `nearest_within`, `pairs_within`, `filter_open`, `point_in_polygon`, `points_in_polygon`
 - Draw / export: `preview_map`, `export_geojson`
 
@@ -284,6 +303,7 @@ Planner rules: you pick tags, bbox or location+radius, budgets, `openNow`/`asOf`
 | "Cafes on a tour of Gamla Stan" | `places_search`, `filter_open` + `routes_optimized_path` (`loop=true`) |
 | "Suggest a walk to a bar, a restaurant, and a cafe, no particular order" | `routes_optimized_path` with `loop=false` |
 | "Is the office a 20-minute walk from the apartment?" | `routes_isochrone` from A, `point_in_polygon` for B |
+| "Amenity heatmap for Sweden" | `geocode` (bbox), `density` (`amenity`; `disable_budget_warning` if the unit cap 400s), `preview_map` |
 | "Show this on a map" | `preview_map(collection_id)` after a search or route |
 
 The same operations exist on `OSMFeaturesClient` when you are not going through an LLM (see [Places and routes](#places-and-routes)).

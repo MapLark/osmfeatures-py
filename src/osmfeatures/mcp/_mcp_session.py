@@ -20,10 +20,10 @@ from typing import Any
 
 from .._geo_agent import normalize_travel_mode
 from ..geometry import point_in_geometry
-from ..models import OSMFeatureCollection
+from ..models import DensityFeatureCollection, OSMFeatureCollection
 from ..nearest import MAX_COMPARISONS, nearest_within, pairs_within
 from ._geocode import nominatim_geocode
-from ._preview import normalize_save_as, validate_collection_id
+from ._preview import is_density_grid, normalize_save_as, validate_collection_id
 
 # Planner summaries list at most this many items; ``count`` is still the full total.
 SUMMARY_ITEM_CAP = 40
@@ -126,7 +126,9 @@ def feature_name(feat: dict[str, Any]) -> str | None:
 def _as_fc_dict(payload: Any) -> dict[str, Any]:
     if isinstance(payload, OSMFeatureCollection):
         return payload.to_dict()
-    if isinstance(payload, dict) and payload.get("type") == "FeatureCollection":
+    if isinstance(payload, DensityFeatureCollection) or (
+        isinstance(payload, dict) and payload.get("type") == "FeatureCollection"
+    ):
         return {
             "type": "FeatureCollection",
             "features": list(payload.get("features") or []),
@@ -140,17 +142,24 @@ def _fc_with_origin(payload: Any, features: list[dict[str, Any]]) -> dict[str, A
     origin = search_origin_of(payload)
     if origin is not None:
         fc["search_origin"] = origin
+    if is_density_grid(payload) or is_density_grid(fc):
+        fc["kind"] = "density"
+        if isinstance(payload, dict):
+            if payload.get("total") is not None:
+                fc["total"] = payload["total"]
+            if "truncated" in payload:
+                fc["truncated"] = bool(payload["truncated"])
     return fc
 
 
 def _features_from_payload(payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, list):
         return [p for p in payload if isinstance(p, dict) and p.get("type") == "Feature"]
-    if isinstance(payload, OSMFeatureCollection):
+    if isinstance(payload, (OSMFeatureCollection, DensityFeatureCollection)):
         return [dict(f) for f in payload.get("features") or []]
     if not isinstance(payload, dict):
         return []
-    if payload.get("type") == "FeatureCollection":
+    if payload.get("type") in ("FeatureCollection", "DensityFeatureCollection"):
         return list(payload.get("features") or [])
     if payload.get("type") == "Feature":
         return [payload]
@@ -213,6 +222,39 @@ def _lon_lat(feat: dict[str, Any]) -> tuple[float, float] | None:
     return None
 
 
+def _summarize_density(collection_id: str, payload: Any) -> dict[str, Any]:
+    """Planner summary of occupied bins. lon/lat/count scalars, no coordinate arrays.
+
+    ``count`` is the number of cells returned. ``total`` is the feature sum
+    before ``limit``. Items are the densest cells (the API orders by count).
+    """
+    if not isinstance(payload, dict) or not (
+        payload.get("type") in ("FeatureCollection", "DensityFeatureCollection")
+        or is_density_grid(payload)
+    ):
+        raise TypeError("expected a density FeatureCollection")
+    feats = _feature_seq(payload)
+    items: list[dict[str, Any]] = []
+    for feat in feats:
+        if len(items) >= SUMMARY_ITEM_CAP:
+            break
+        if not isinstance(feat, dict):
+            continue
+        pt = _lon_lat(feat)
+        if pt is None:
+            continue
+        props = feat.get("properties") or {}
+        items.append({"lon": pt[0], "lat": pt[1], "count": props.get("count")})
+    out = _summary_items(collection_id, len(feats), items)
+    out["total"] = payload.get("total", 0)
+    out["truncated"] = bool(payload.get("truncated"))
+    return out
+
+
+def _is_density_grid(payload: Any) -> bool:
+    return is_density_grid(payload)
+
+
 def _summarize_count(payload: Any) -> dict[str, Any]:
     """Planner-facing histogram. No collection_id (nothing to draw).
 
@@ -237,6 +279,8 @@ def _summarize_count(payload: Any) -> dict[str, Any]:
 
 def _non_places_reason(payload: Any) -> str | None:
     """Join/route payloads have no place list; filtering them looked like count 0."""
+    if _is_density_grid(payload):
+        return "is a density grid"
     if isinstance(payload, dict) and payload.get("type") == "PairList":
         return "is a nearest_within/pairs_within result"
     if (
@@ -381,7 +425,11 @@ def _place_item(feat: dict[str, Any], *, distance_m: float | None = None) -> dic
 
 def _feature_seq(payload: Any) -> list[Any]:
     """Feature list without copying each feature to a new dict."""
-    if isinstance(payload, dict) and payload.get("type") == "FeatureCollection":
+    if isinstance(payload, dict) and payload.get("type") in (
+        "FeatureCollection",
+        "DensityFeatureCollection",
+        "OSMFeatureCollection",
+    ):
         feats = payload.get("features") or []
         return feats if isinstance(feats, list) else list(feats)
     return _features_from_payload(payload)
@@ -817,6 +865,43 @@ class GeoAgentSession:
         )
         return _summarize_count(payload)
 
+    async def density(
+        self,
+        *,
+        cell_deg: float | None = None,
+        bbox: str | None = None,
+        location: str | None = None,
+        radius: float | None = None,
+        type: str | list[str] | None = None,  # noqa: A002
+        way_shape: str | None = None,
+        tags: list[str] | str | None = None,
+        or_tags: list[str] | str | None = None,
+        not_tags: list[str] | str | None = None,
+        within: str | None = None,
+        limit: int | None = None,
+        disable_budget_warning: bool = False,
+        save_as: str | None = None,
+    ) -> dict[str, Any]:
+        """Occupied grid bins. Stores the FeatureCollection; summary is cells, not coordinates."""
+        payload = await invoke_client(
+            self._client,
+            "density",
+            cell_deg=cell_deg,
+            bbox=bbox,
+            location=location,
+            radius=radius,
+            type=type,
+            way_shape=way_shape,
+            tags=tags,
+            or_tags=or_tags,
+            not_tags=not_tags,
+            within=within,
+            limit=limit,
+            disable_budget_warning=disable_budget_warning,
+        )
+        cid = self._put(payload, save_as=save_as)
+        return _summarize_density(cid, payload)
+
     def _summarize_query(self, collection_id: str, payload: Any) -> dict[str, Any]:
         feats = _feature_seq(payload)
         out = _summary_items(
@@ -1033,8 +1118,9 @@ class GeoAgentSession:
             return _fc_with_origin(payload, features)
         if isinstance(payload, dict) and payload.get("type") == "Feature":
             return _fc_with_origin(payload, [payload])
-        if isinstance(payload, OSMFeatureCollection) or (
-            isinstance(payload, dict) and payload.get("type") == "FeatureCollection"
+        if isinstance(payload, (OSMFeatureCollection, DensityFeatureCollection)) or (
+            isinstance(payload, dict)
+            and payload.get("type") in ("FeatureCollection", "DensityFeatureCollection")
         ):
             return _fc_with_origin(payload, _as_fc_dict(payload)["features"])
         feats = _features_from_payload(payload)

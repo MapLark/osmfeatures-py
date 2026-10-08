@@ -14,6 +14,7 @@ from osmfeatures.mcp._preview import (
     feature_osm_id,
     geojson_for_map,
     geojson_for_map_many,
+    is_density_grid,
     normalize_save_as,
     parse_collection_ids,
     preview_html,
@@ -112,6 +113,38 @@ def test_preview_html_uses_openfreemap_and_relative_geojson():
     # Origin marker popup escapes lon/lat (same helper as feature popups).
     assert 'escapeHtml(fc.search_origin.lng)' in html
     assert 'escapeHtml(fc.search_origin.lat)' in html
+    assert 'fc.kind === "density"' in html
+    assert 'id: "overlay-heat"' in html
+    assert 'type: "heatmap"' in html
+    assert 'id="heat-controls"' in html
+    assert 'id="heat-intensity"' in html
+    assert 'id="heat-radius"' in html
+    assert "applyHeatPaint" in html
+    assert "heatmap-intensity" in html
+    assert "heatmap-radius" in html
+    assert "Scale with zoom" in html
+    assert 'id="bar-title"' in html
+
+
+def test_geojson_for_map_marks_density_heatmap():
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [18.1, 59.3]},
+                "properties": {"count": 12},
+            }
+        ],
+        "total": 12,
+        "truncated": False,
+    }
+    assert is_density_grid(fc)
+    out = geojson_for_map(fc)
+    assert out["kind"] == "density"
+    assert out["total"] == 12
+    assert out["truncated"] is False
+    assert out["features"][0]["properties"]["count"] == 12
 
 
 def test_geojson_for_map_promotes_tags_name():
@@ -301,3 +334,39 @@ def test_http_combined_places_and_route(preview):
     combined = server.open(["fc_1", "fc_2"], open_browser=False)
     assert combined["collection_ids"] == ["fc_1", "fc_2"]
     assert combined["preview_url"].endswith("/preview/fc_1,fc_2")
+
+
+def test_http_density_geojson_is_heatmap_kind():
+    client = type("C", (), {})()
+    session = GeoAgentSession(client)
+    session._put(
+        {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [18.1, 59.3]},
+                    "properties": {"count": 12},
+                }
+            ],
+            "total": 12,
+            "truncated": False,
+        }
+    )
+    server = PreviewServer(session)
+    try:
+        with urlopen(f"{server.base_url}/preview/fc_1", timeout=2) as resp:
+            html = resp.read().decode()
+        assert 'type: "heatmap"' in html
+        assert 'id="heat-intensity"' in html
+        assert 'id="heat-radius"' in html
+        assert "applyHeatPaint" in html
+        with urlopen(f"{server.base_url}/collections/fc_1.geojson", timeout=2) as resp:
+            body = json.loads(resp.read())
+        assert body["kind"] == "density"
+        assert body["total"] == 12
+        assert body["features"][0]["properties"]["count"] == 12
+        preview = server.open("fc_1", open_browser=False)
+        assert_no_coordinate_arrays(preview)
+    finally:
+        server.close()

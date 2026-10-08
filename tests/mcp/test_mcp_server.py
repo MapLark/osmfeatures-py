@@ -28,6 +28,7 @@ _EXPECTED_TOOLS = frozenset(
         "routes_optimized_path",
         "query",
         "count",
+        "density",
         "nearest_within",
         "pairs_within",
         "filter_open",
@@ -85,6 +86,7 @@ class FakeClient:
         self.optimized: dict | None = None
         self.query_result: dict | None = None
         self.count_result: dict | None = None
+        self.density_result: dict | None = None
 
     def places_search(self, **kwargs):
         self.calls.append(("places_search", kwargs))
@@ -117,6 +119,10 @@ class FakeClient:
     def count(self, **kwargs):
         self.calls.append(("count", kwargs))
         return self.count_result
+
+    def density(self, **kwargs):
+        self.calls.append(("density", kwargs))
+        return self.density_result
 
 
 class _FakePreview:
@@ -179,6 +185,8 @@ async def test_build_server_wires_instructions_and_tools():
     assert 'numeric "lat,lng"' in mcp.instructions
     assert "start=one of those items" in mcp.instructions
     assert "Opening hours:" in mcp.instructions
+    assert "as_of stamps openNow (closed places still return)" in mcp.instructions
+    assert "open_now filters to open" in mcp.instructions
     assert "Treat hotels as always open" in mcp.instructions
     assert "tour,\ncrawl, or loop" in mcp.instructions
     assert "walk, bike, route, path, or loop" not in mcp.instructions
@@ -189,7 +197,9 @@ async def test_build_server_wires_instructions_and_tools():
     assert "count, not query" in mcp.instructions
     assert "Choose a tool:" in mcp.instructions
     assert "n(n-1)/2" in mcp.instructions
-    assert "Do not retry with disable_budget_warning" in mcp.instructions
+    assert "pass disable_budget_warning=true" in mcp.instructions
+    assert "Heatmap, density map" in mcp.instructions
+    assert "draws the heatmap" in mcp.instructions
     assert f"over {MAX_COMPARISONS} comparisons" in mcp.instructions
     tools = await mcp.list_tools()
     names = {tool.name for tool in tools}
@@ -205,6 +215,11 @@ async def test_build_server_wires_instructions_and_tools():
     assert "group_by" not in count.inputSchema.get("required", [])
     assert "group_by" in count.inputSchema["properties"]
     assert "bbox" in count.inputSchema["properties"]
+    density = next(t for t in tools if t.name == "density")
+    assert "preview_map" in (density.description or "")
+    assert "heatmap" in (density.description or "")
+    assert "cell_deg" in density.inputSchema["properties"]
+    assert "cell_deg" not in density.inputSchema.get("required", [])
     assert "result_too_large" in mcp.instructions
     assert "gather all features present in database" not in mcp.instructions
     assert "Scale (query and places_search)" in mcp.instructions
@@ -234,6 +249,12 @@ async def test_build_server_wires_instructions_and_tools():
     assert "City-scale bbox" in (search.description or "")
     assert "bbox only" in (search.description or "")
     assert "does not apply to lat/lng/radius" in (search.description or "")
+    assert "as_of stamps openNow" in (search.description or "")
+    assert "closed places still return" in (search.description or "")
+    assert "open_now=true keeps only open" in (search.description or "")
+    nearby = next(t for t in tools if t.name == "places_nearby")
+    assert "as_of stamps openNow" in (nearby.description or "")
+    assert "open_now=true keeps only open" in (nearby.description or "")
     assert "places_search with auto_split" in mcp.instructions
     assert "bbox-only" in mcp.instructions
     preview = next(t for t in tools if t.name == "preview_map")
@@ -653,6 +674,40 @@ async def test_call_tool_count(stack):
     assert "collection_id" not in out
     assert client.calls[-1][0] == "count"
     assert client.calls[-1][1]["group_by"] == "amenity"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_density(stack):
+    client, mcp = stack
+    client.density_result = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [18.07, 59.33]},
+                "properties": {"count": 12},
+            }
+        ],
+        "total": 12,
+        "truncated": False,
+    }
+    out = await _call(
+        mcp,
+        "density",
+        bbox="18.05,59.32,18.10,59.34",
+        tags=["place"],
+        cell_deg=0.1,
+    )
+    assert out["total"] == 12
+    assert out["count"] == 1
+    assert out["items"] == [{"lon": 18.07, "lat": 59.33, "count": 12}]
+    assert "coordinates" not in out["items"][0]
+    preview = await _call(
+        mcp, "preview_map", collection_ids=[out["collection_id"]], open_browser=False
+    )
+    assert preview["collection_ids"] == [out["collection_id"]]
+    assert client.calls[0][0] == "density"
+    assert client.calls[0][1]["cell_deg"] == 0.1
 
 
 @pytest.mark.asyncio

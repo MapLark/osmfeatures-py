@@ -41,6 +41,7 @@ from .convenience import (
 )
 from .models import (
     BinaryQueryResult,
+    DensityFeatureCollection,
     OSMFeature,
     OSMFeatureCollection,
     OSMFeaturesAPIError,
@@ -65,6 +66,7 @@ __all__ = [
     # Models
     "OSMFeature",
     "OSMFeatureCollection",
+    "DensityFeatureCollection",
     "BinaryQueryResult",
     "ResponseMeta",
     # Exceptions

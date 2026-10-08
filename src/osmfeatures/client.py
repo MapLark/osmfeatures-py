@@ -33,6 +33,7 @@ from ._http import (
 )
 from .models import (
     BinaryQueryResult,
+    DensityFeatureCollection,
     OSMFeatureCollection,
 )
 from ._pagination import DEFAULT_QUERY_ALL_TIMEOUT_S
@@ -327,6 +328,99 @@ class OSMFeaturesClient:
         )
         raise_for_response(resp)
         return resp.json()  # type: ignore[no-any-return]
+
+    def density(
+        self,
+        *,
+        cell_deg: float | None = None,
+        bbox: str | None = None,
+        location: str | None = None,
+        radius: float | None = None,
+        type: ElementType | list[ElementType] | None = None,  # noqa: A002
+        way_shape: ShapeType | None = None,
+        within: str | None = None,
+        tags: list[str] | str | None = None,
+        or_tags: list[str] | str | None = None,
+        not_tags: list[str] | str | None = None,
+        limit: int | None = None,
+        min_length_m: float | None = None,
+        max_length_m: float | None = None,
+        min_area_m2: float | None = None,
+        max_area_m2: float | None = None,
+        disable_budget_warning: bool = False,
+    ) -> DensityFeatureCollection:
+        """``GET /v2/osm_features/density``: occupied grid bins as points.
+
+        Omit ``cell_deg`` for the API default (0.1). ``type`` omitted is nodes.
+        Requires ``tags`` or ``or_tags``. ``limit`` is max occupied cells (the
+        key's ``max_limit`` when omitted). Returns a density FeatureCollection
+        (``properties.count``, ``total``, ``truncated``), not OSM features.
+        A continent box can 400 on the per-request unit cap; pass
+        ``disable_budget_warning=True`` to run it. Example::
+
+            client.density(
+                bbox="-26,33,52,72",
+                tags=["place"],
+                cell_deg=0.1,
+                disable_budget_warning=True,
+            )
+        """
+        params: dict[str, Any] = {}
+        if cell_deg is not None:
+            params["cell_deg"] = cell_deg
+        if bbox is not None:
+            params["bbox"] = bbox
+        if location is not None:
+            params["location"] = location
+        if radius is not None:
+            params["radius"] = radius
+        if type is not None:
+            params["type"] = type
+        if way_shape is not None:
+            params["way_shape"] = way_shape
+        if within is not None:
+            params["within"] = within
+        if tags is not None:
+            params["tags"] = tags
+        if or_tags is not None:
+            params["or_tags"] = or_tags
+        if not_tags is not None:
+            params["not_tags"] = not_tags
+        if limit is not None:
+            params["limit"] = limit
+        if min_length_m is not None:
+            params["min_length_m"] = min_length_m
+        if max_length_m is not None:
+            params["max_length_m"] = max_length_m
+        if min_area_m2 is not None:
+            params["min_area_m2"] = min_area_m2
+        if max_area_m2 is not None:
+            params["max_area_m2"] = max_area_m2
+        if disable_budget_warning:
+            params["disable_budget_warning"] = disable_budget_warning
+
+        param_list = build_params(params)
+
+        def _do() -> requests.Response:
+            return self._session.get(
+                f"{self._base_url}/v2/osm_features/density",
+                params=param_list,
+                timeout=self._timeout,
+            )
+
+        resp = retry(
+            _do,
+            self._retry,
+            get_status=lambda r: r.status_code,
+            get_headers=lambda r: dict(r.headers),
+            is_rate_limit_error=is_429_retryable,
+            build_rate_limit_error=build_rate_limit_error,
+        )
+        raise_for_response(resp)
+        body = resp.json()
+        if not isinstance(body, dict):
+            raise ValueError("density response was not a JSON object")
+        return DensityFeatureCollection.from_api(body)
 
     # ------------------------------------------------------------------
     # Geo-agent (/v1/places/*, /v1/routes/*)

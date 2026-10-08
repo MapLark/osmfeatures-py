@@ -8,12 +8,14 @@ from urllib.parse import parse_qs, urlsplit
 
 from osmfeatures import (
     BinaryQueryResult,
+    DensityFeatureCollection,
     OSMFeaturesAuthError,
     OSMFeaturesAPIError,
     OSMFeaturesRateLimitError,
     OSMFeatureCollection,
 )
 from tests.conftest import (
+    DENSITY_URL,
     FEATURES_V3_URL,
     STATS_URL,
     make_test_feature,
@@ -150,6 +152,47 @@ def test_count_forwards_group_by(client):
     parsed = parse_qs(urlsplit(rsps.calls[0].request.url).query)
     assert parsed["group_by"] == ["amenity"]
     assert parsed["tags"] == ["amenity"]
+
+
+@rsps.activate
+def test_density_forwards_cell_deg(client):
+    rsps.add(
+        rsps.GET,
+        DENSITY_URL,
+        json={
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [18.1, 59.3]},
+                    "properties": {"count": 4},
+                }
+            ],
+            "total": 4,
+            "truncated": False,
+        },
+    )
+    out = client.density(
+        bbox="18.06,59.32,18.09,59.34",
+        tags=["place"],
+        cell_deg=0.1,
+        disable_budget_warning=True,
+    )
+    assert isinstance(out, DensityFeatureCollection)
+    assert not isinstance(out, OSMFeatureCollection)
+    assert out["type"] == "FeatureCollection"
+    assert out.total == 4
+    assert out.truncated is False
+    feat = out["features"][0]
+    assert feat["geometry"]["type"] == "Point"
+    assert feat["properties"] == {"count": 4}
+    assert feat.get("id") is None
+    parsed = parse_qs(urlsplit(rsps.calls[0].request.url).query)
+    assert urlsplit(rsps.calls[0].request.url).path.endswith("/v2/osm_features/density")
+    assert parsed["cell_deg"] == ["0.1"]
+    assert parsed["tags"] == ["place"]
+    assert parsed["disable_budget_warning"] == ["true"]
+    assert "group_by" not in parsed
 
 
 @rsps.activate

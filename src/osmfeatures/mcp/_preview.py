@@ -21,6 +21,20 @@ _MAPLIBRE_JS = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"
 _MAPLIBRE_CSS = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css"
 
 
+def is_density_grid(payload: Any) -> bool:
+    """Occupied density bins: Point features with ``properties.count`` and no OSM id."""
+    if not isinstance(payload, dict):
+        return False
+    feats = payload.get("features") or []
+    if not isinstance(feats, list) or not feats or not isinstance(feats[0], dict):
+        return False
+    first = feats[0]
+    if first.get("id"):
+        return False
+    props = first.get("properties") or {}
+    return isinstance(props, dict) and "count" in props
+
+
 def feature_popup_name(feat: dict[str, Any]) -> str | None:
     """OSM ``tags.name``, else ``properties.name``. MapLibre keeps top-level strings."""
     props = feat.get("properties")
@@ -67,6 +81,12 @@ def geojson_for_map(fc: dict[str, Any]) -> dict[str, Any]:
         out["properties"] = props
         features.append(out)
     mapped: dict[str, Any] = {"type": "FeatureCollection", "features": features}
+    if is_density_grid(fc):
+        mapped["kind"] = "density"
+        if fc.get("total") is not None:
+            mapped["total"] = fc["total"]
+        if "truncated" in fc:
+            mapped["truncated"] = bool(fc["truncated"])
     origin = fc.get("search_origin")
     if isinstance(origin, dict) and origin.get("lat") is not None:
         lng = origin.get("lng", origin.get("lon"))
@@ -89,6 +109,11 @@ def geojson_for_map_many(fcs: list[dict[str, Any]]) -> dict[str, Any]:
     out: dict[str, Any] = {"type": "FeatureCollection", "features": features}
     if origin is not None:
         out["search_origin"] = origin
+    if any(is_density_grid(fc) for fc in fcs):
+        out["kind"] = "density"
+        totals = [fc.get("total") for fc in fcs if isinstance(fc, dict) and fc.get("total") is not None]
+        if totals:
+            out["total"] = sum(int(t) for t in totals)
     return out
 
 
@@ -140,8 +165,25 @@ def preview_html(collection_ids: str | list[str]) -> str:
     html, body, #map {{ margin: 0; height: 100%; background: #e8e4dc; }}
     #bar {{
       position: absolute; z-index: 1; top: 10px; left: 10px;
-      font: 13px/1.4 system-ui, sans-serif; background: #fff; padding: 6px 10px;
+      font: 13px/1.4 system-ui, sans-serif; background: #fff; padding: 8px 12px;
       border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,.15);
+      max-width: min(280px, calc(100vw - 24px));
+    }}
+    #heat-controls {{
+      display: flex; flex-direction: column; gap: 6px; margin-top: 8px;
+      padding-top: 8px; border-top: 1px solid #e5e5e5;
+    }}
+    #heat-controls[hidden] {{ display: none !important; }}
+    .heat-row {{
+      display: grid; grid-template-columns: 68px 1fr 52px;
+      align-items: center; gap: 6px; font-size: 12px; color: #333;
+    }}
+    .heat-row input[type="range"] {{ width: 100%; margin: 0; }}
+    .heat-row output {{
+      font-variant-numeric: tabular-nums; text-align: right; color: #555;
+    }}
+    .heat-check {{
+      display: flex; align-items: center; gap: 6px; font-size: 12px; color: #333;
     }}
     .ml-popup {{
       font: 12px/1.35 system-ui, sans-serif;
@@ -164,7 +206,30 @@ def preview_html(collection_ids: str | list[str]) -> str:
   </style>
 </head>
 <body>
-  <div id="bar">MapLark {cid}</div>
+  <div id="bar">
+    <div id="bar-title">MapLark {cid}</div>
+    <div id="heat-controls" hidden>
+      <label class="heat-row">
+        <span>Intensity</span>
+        <input id="heat-intensity" type="range" min="0" max="100" value="76"/>
+        <output id="heat-intensity-val" for="heat-intensity">0.80</output>
+      </label>
+      <label class="heat-row">
+        <span>Radius</span>
+        <input id="heat-radius" type="range" min="1" max="120" value="28"/>
+        <output id="heat-radius-val" for="heat-radius">28</output>
+      </label>
+      <label class="heat-row">
+        <span>Opacity</span>
+        <input id="heat-opacity" type="range" min="0" max="100" value="88"/>
+        <output id="heat-opacity-val" for="heat-opacity">0.88</output>
+      </label>
+      <label class="heat-check">
+        <input id="heat-zoom" type="checkbox" checked/>
+        Scale with zoom
+      </label>
+    </div>
+  </div>
   <div id="map"></div>
   <script src="{_MAPLIBRE_JS}"></script>
   <script>
@@ -202,40 +267,131 @@ def preview_html(collection_ids: str | list[str]) -> str:
     return n ? [[minX, minY], [maxX, maxY]] : null;
   }}
 
+  function intensityFromSlider(v) {{
+    return Math.pow(10, -4 + (Number(v) / 100) * 5);
+  }}
+  function formatIntensity(x) {{
+    if (x >= 0.01) return x.toFixed(2);
+    if (x >= 0.001) return x.toFixed(4);
+    return x.toExponential(1);
+  }}
+  function applyHeatPaint() {{
+    const intensity = intensityFromSlider(document.getElementById("heat-intensity").value);
+    const radius = Number(document.getElementById("heat-radius").value);
+    const opacity = Number(document.getElementById("heat-opacity").value) / 100;
+    const scaleZoom = document.getElementById("heat-zoom").checked;
+    document.getElementById("heat-intensity-val").textContent = formatIntensity(intensity);
+    document.getElementById("heat-radius-val").textContent = String(radius);
+    document.getElementById("heat-opacity-val").textContent = opacity.toFixed(2);
+    if (!map.getLayer("overlay-heat")) return;
+    if (scaleZoom) {{
+      map.setPaintProperty("overlay-heat", "heatmap-intensity", [
+        "interpolate", ["linear"], ["zoom"],
+        2, intensity * 0.06,
+        5, intensity * 0.22,
+        8, intensity * 0.7,
+        11, intensity,
+        14, intensity * 1.55
+      ]);
+      map.setPaintProperty("overlay-heat", "heatmap-radius", [
+        "interpolate", ["exponential", 2], ["zoom"],
+        2, Math.max(6, radius * 0.3),
+        6, Math.max(10, radius * 0.55),
+        9, radius,
+        12, Math.min(120, radius * 2.8),
+        15, Math.min(120, radius * 5.5)
+      ]);
+    }} else {{
+      map.setPaintProperty("overlay-heat", "heatmap-intensity", intensity);
+      map.setPaintProperty("overlay-heat", "heatmap-radius", radius);
+    }}
+    map.setPaintProperty("overlay-heat", "heatmap-opacity", opacity);
+  }}
+
   map.on("load", async () => {{
     const res = await fetch(COLLECTION_ID + ".geojson");
     if (!res.ok) {{
-      document.getElementById("bar").textContent = "No geometry for " + COLLECTION_ID;
+      document.getElementById("bar-title").textContent = "No geometry for " + COLLECTION_ID;
       return;
     }}
     const fc = await res.json();
+    const isDensity = fc.kind === "density";
     map.addSource("overlay", {{ type: "geojson", data: fc }});
-    map.addLayer({{
-      id: "overlay-fill",
-      type: "fill",
-      source: "overlay",
-      filter: ["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]],
-      paint: {{ "fill-color": "#1d4ed8", "fill-opacity": 0.22 }}
-    }});
-    map.addLayer({{
-      id: "overlay-line",
-      type: "line",
-      source: "overlay",
-      filter: ["in", ["geometry-type"], ["literal", ["LineString", "MultiLineString", "Polygon", "MultiPolygon"]]],
-      paint: {{ "line-color": "#1d4ed8", "line-width": 2.5 }}
-    }});
-    map.addLayer({{
-      id: "overlay-point",
-      type: "circle",
-      source: "overlay",
-      filter: ["in", ["geometry-type"], ["literal", ["Point", "MultiPoint"]]],
-      paint: {{
-        "circle-radius": 6,
-        "circle-color": "#1d4ed8",
-        "circle-stroke-width": 1.5,
-        "circle-stroke-color": "#fff"
-      }}
-    }});
+    if (isDensity) {{
+      const counts = (fc.features || []).map((f) => Number(f.properties && f.properties.count) || 0);
+      const maxCount = Math.max(1, ...counts);
+      const lnMax = Math.log(1 + maxCount);
+      map.addLayer({{
+        id: "overlay-heat",
+        type: "heatmap",
+        source: "overlay",
+        paint: {{
+          "heatmap-weight": [
+            "interpolate", ["linear"],
+            ["/", ["ln", ["+", ["coalesce", ["to-number", ["get", "count"]], 0], 1]], lnMax],
+            0, 0, 1, 1
+          ],
+          "heatmap-intensity": 0.8,
+          "heatmap-radius": 28,
+          "heatmap-opacity": 0.88,
+          "heatmap-color": [
+            "interpolate", ["linear"], ["heatmap-density"],
+            0, "rgba(29,78,216,0)",
+            0.08, "rgba(29,78,216,0.35)",
+            0.25, "#38bdf8",
+            0.45, "#fbbf24",
+            0.7, "#ea580c",
+            1, "#9f1239"
+          ]
+        }}
+      }});
+      map.addLayer({{
+        id: "overlay-point",
+        type: "circle",
+        source: "overlay",
+        paint: {{
+          "circle-radius": 10,
+          "circle-color": "#1d4ed8",
+          "circle-opacity": 0,
+          "circle-stroke-width": 0
+        }}
+      }});
+      document.getElementById("heat-controls").hidden = false;
+      applyHeatPaint();
+      ["heat-intensity", "heat-radius", "heat-opacity", "heat-zoom"].forEach((id) => {{
+        document.getElementById(id).addEventListener("input", applyHeatPaint);
+      }});
+      const n = fc.total != null ? fc.total : (fc.features || []).length;
+      document.getElementById("bar-title").textContent =
+        "MapLark " + COLLECTION_ID + " · heatmap · " + n + " features";
+    }} else {{
+      map.addLayer({{
+        id: "overlay-fill",
+        type: "fill",
+        source: "overlay",
+        filter: ["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]],
+        paint: {{ "fill-color": "#1d4ed8", "fill-opacity": 0.22 }}
+      }});
+      map.addLayer({{
+        id: "overlay-line",
+        type: "line",
+        source: "overlay",
+        filter: ["in", ["geometry-type"], ["literal", ["LineString", "MultiLineString", "Polygon", "MultiPolygon"]]],
+        paint: {{ "line-color": "#1d4ed8", "line-width": 2.5 }}
+      }});
+      map.addLayer({{
+        id: "overlay-point",
+        type: "circle",
+        source: "overlay",
+        filter: ["in", ["geometry-type"], ["literal", ["Point", "MultiPoint"]]],
+        paint: {{
+          "circle-radius": 6,
+          "circle-color": "#1d4ed8",
+          "circle-stroke-width": 1.5,
+          "circle-stroke-color": "#fff"
+        }}
+      }});
+    }}
     function escapeHtml(s) {{
       return String(s)
         .replace(/&/g, "&amp;")
@@ -257,7 +413,9 @@ def preview_html(collection_ids: str | list[str]) -> str:
           '<div class="ml-popup"><table class="ml-popup-tags">' + originRows + "</table></div>"
         ))
         .addTo(map);
-      document.getElementById("bar").textContent = "MapLark " + COLLECTION_ID + " · origin marked";
+      if (!isDensity) {{
+        document.getElementById("bar-title").textContent = "MapLark " + COLLECTION_ID + " · origin marked";
+      }}
     }}
     const b = boundsOf(fc);
     if (b) map.fitBounds(b, {{ padding: 48, maxZoom: 16 }});
@@ -358,8 +516,11 @@ def preview_html(collection_ids: str | list[str]) -> str:
       return "<div class=\\"ml-popup\\">" + escapeHtml(fallback) + "</div>";
     }}
     map.on("click", (e) => {{
+      const hitLayers = isDensity
+        ? ["overlay-point"]
+        : ["overlay-fill", "overlay-line", "overlay-point"];
       const hit = map.queryRenderedFeatures(e.point, {{
-        layers: ["overlay-fill", "overlay-line", "overlay-point"]
+        layers: hitLayers.filter((id) => map.getLayer(id))
       }})[0];
       if (!hit) return;
       new maplibregl.Popup({{ maxWidth: "360px" }})

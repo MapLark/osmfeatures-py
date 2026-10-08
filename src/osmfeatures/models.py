@@ -112,6 +112,7 @@ class OSMFeatureCollection(_geojson.FeatureCollection):
         **extra: Any,
     ) -> None:
         super().__init__(features=features or [], **extra)
+        self["type"] = "FeatureCollection"
         self._meta = meta if meta is not None else ResponseMeta(returned=0, has_more=False)
 
     @property
@@ -128,6 +129,57 @@ class OSMFeatureCollection(_geojson.FeatureCollection):
             "type": "FeatureCollection",
             "features": [dict(f) for f in self["features"]],
         }
+
+
+class DensityFeatureCollection(_geojson.FeatureCollection):
+    """Occupied grid bins from ``GET /v2/osm_features/density``.
+
+    Not OSM features: points have ``properties.count`` and no ``id`` or tags.
+    ``total`` is the window sum before ``limit``.
+    """
+
+    def __init__(
+        self,
+        features: list[Any] | None = None,
+        *,
+        total: int = 0,
+        truncated: bool = False,
+        hint: str | None = None,
+    ) -> None:
+        super().__init__(features=features or [])
+        self["type"] = "FeatureCollection"
+        self["total"] = int(total)
+        self["truncated"] = bool(truncated)
+        if hint:
+            self["hint"] = hint
+
+    @property
+    def total(self) -> int:
+        return int(self["total"])
+
+    @property
+    def truncated(self) -> bool:
+        return bool(self["truncated"])
+
+    @classmethod
+    def from_api(cls, body: dict[str, Any]) -> "DensityFeatureCollection":
+        features = []
+        for raw in body.get("features") or []:
+            if not isinstance(raw, dict):
+                continue
+            features.append(
+                _geojson.Feature(
+                    geometry=raw.get("geometry"),
+                    properties=raw.get("properties") or {},
+                )
+            )
+        hint = body.get("hint")
+        return cls(
+            features,
+            total=int(body.get("total") or 0),
+            truncated=bool(body.get("truncated")),
+            hint=hint if isinstance(hint, str) else None,
+        )
 
 
 # ---------------------------------------------------------------------------

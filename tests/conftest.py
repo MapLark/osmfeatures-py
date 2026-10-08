@@ -17,6 +17,7 @@ FAKE_API_KEY = "sk-test-1234"
 BASE_URL = "http://testserver"
 FEATURES_V3_URL = f"{BASE_URL}/v3/osm_features"
 STATS_URL = f"{BASE_URL}/v2/osm_features/count"
+DENSITY_URL = f"{BASE_URL}/v2/osm_features/density"
 ACCOUNT_TIER_URL = f"{BASE_URL}/v1/account/tier"
 # Current free-tier catalog default (GET /v1/account/tier max_limit).
 FREE_TIER_MAX_LIMIT = 75_000

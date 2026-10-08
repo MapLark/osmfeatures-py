@@ -130,7 +130,7 @@ def build_server(
         auto_split: bool = False,
         save_as: str | None = None,
     ) -> dict[str, Any]:
-        """Places in a bbox or location+radius (not both). Known-small windows go direct. City-scale bbox: auto_split (bbox only; counts first, then fetch). auto_split does not apply to lat/lng/radius. A bbox area / result_too_large 400 is not retried; pass auto_split or shrink. auto_split stops at 32 tiles (area too large → smaller named place or ask the user; still too dense → ask, else add tags). Polygon POIs come back as centroid points."""
+        """Places in a bbox or location+radius (not both). Known-small windows go direct. City-scale bbox: auto_split (bbox only; counts first, then fetch). auto_split does not apply to lat/lng/radius. A bbox area / result_too_large 400 is not retried; pass auto_split or shrink. auto_split stops at 32 tiles (area too large → smaller named place or ask the user; still too dense → ask, else add tags). Polygon POIs come back as centroid points. as_of stamps openNow at that clock (closed places still return). open_now=true keeps only open places. Both require an opening_hours tag."""
         location = places_search_point(lat, lng, radius)
         require_places_search_spatial(bbox, location)
         return await get_session().places_search(
@@ -158,7 +158,7 @@ def build_server(
         as_of: str | None = None,
         save_as: str | None = None,
     ) -> dict[str, Any]:
-        """Places ranked from a point, nearest first (straight-line metres)."""
+        """Places ranked from a point, nearest first (straight-line metres). as_of stamps openNow at that clock (closed places still return). open_now=true keeps only open places. Both require an opening_hours tag."""
         return await get_session().places_nearby(
             location={"lat": lat, "lng": lng},
             radius=radius,
@@ -306,6 +306,39 @@ def build_server(
             within=within,
             limit=limit,
             disable_budget_warning=disable_budget_warning,
+        )
+
+    @mcp.tool()
+    async def density(
+        cell_deg: float | None = None,
+        bbox: str | None = None,
+        location: str | None = None,
+        radius: float | None = None,
+        type: str | None = None,
+        way_shape: str | None = None,
+        tags: list[str] | None = None,
+        or_tags: list[str] | None = None,
+        not_tags: list[str] | None = None,
+        within: str | None = None,
+        limit: int | None = None,
+        disable_budget_warning: bool = False,
+        save_as: str | None = None,
+    ) -> dict[str, Any]:
+        """Where features are dense. Occupied degree-grid bins. tags or or_tags required. Omit cell_deg for 0.1. Europe bbox -26,33,52,72 stays under 80 degrees and 4000 deg²; pass disable_budget_warning=true if the unit cap 400s. Then preview_map the collection_id; the preview draws a heatmap. Summary is lon/lat/count scalars, not coordinates."""
+        return await get_session().density(
+            cell_deg=cell_deg,
+            bbox=bbox,
+            location=location,
+            radius=radius,
+            type=type,
+            way_shape=way_shape,
+            tags=tags,
+            or_tags=or_tags,
+            not_tags=not_tags,
+            within=within,
+            limit=limit,
+            disable_budget_warning=disable_budget_warning,
+            save_as=save_as,
         )
 
     @mcp.tool()

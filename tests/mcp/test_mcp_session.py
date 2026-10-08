@@ -14,6 +14,7 @@ from osmfeatures.mcp._mcp_session import (
 )
 from osmfeatures.geometry import point_in_geometry
 from osmfeatures.models import (
+    DensityFeatureCollection,
     OSMFeature,
     OSMFeatureCollection,
     OSMFeaturesAPIError,
@@ -101,6 +102,7 @@ class FakeClient:
         self.query_result: dict | None = None
         self.query_errors: list[BaseException] = []
         self.count_result: dict | None = None
+        self.density_result: dict | None = None
 
     def places_search(self, **kwargs):
         self.calls.append(("places_search", kwargs))
@@ -137,6 +139,10 @@ class FakeClient:
     def count(self, **kwargs):
         self.calls.append(("count", kwargs))
         return self.count_result
+
+    def density(self, **kwargs):
+        self.calls.append(("density", kwargs))
+        return self.density_result
 
 
 async def test_point_in_geometry_square():
@@ -687,6 +693,70 @@ async def test_count_summarizes_histogram():
             "disable_budget_warning": False,
         },
     )
+
+
+def _bin(lon: float, lat: float, count: int) -> dict:
+    return {
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [lon, lat]},
+        "properties": {"count": count},
+    }
+
+
+async def test_density_stores_bins_and_summarizes_scalars():
+    client = FakeClient()
+    features = [_bin(18.1, 59.3, 40)] + [_bin(18.0 + i * 0.01, 59.2, 1) for i in range(SUMMARY_ITEM_CAP)]
+    client.density_result = {
+        "type": "FeatureCollection",
+        "features": features,
+        "total": 80,
+        "truncated": False,
+    }
+    session = GeoAgentSession(client)
+    out = await session.density(
+        bbox="-26,33,52,72",
+        tags=["place"],
+        cell_deg=0.1,
+        disable_budget_warning=True,
+        save_as="europe_place",
+    )
+    assert_no_coordinate_arrays(out)
+    assert out["collection_id"] == "europe_place"
+    assert out["count"] == 1 + SUMMARY_ITEM_CAP
+    assert out["total"] == 80
+    assert out["truncated"] is False
+    assert out["items_truncated"] is True
+    assert out["items"][0] == {"lon": 18.1, "lat": 59.3, "count": 40}
+    assert len(out["items"]) == SUMMARY_ITEM_CAP
+    assert "coordinates" not in out["items"][0]
+    exported = session.export_geojson(out["collection_id"])
+    assert exported["features"][0]["properties"]["count"] == 40
+    assert exported["kind"] == "density"
+    assert exported["total"] == 80
+    assert client.calls[0][0] == "density"
+    assert client.calls[0][1]["cell_deg"] == 0.1
+    assert client.calls[0][1]["disable_budget_warning"] is True
+    assert client.calls[0][1]["tags"] == ["place"]
+
+
+async def test_density_summarizes_typed_collection():
+    client = FakeClient()
+    client.density_result = DensityFeatureCollection.from_api(
+        {
+            "type": "FeatureCollection",
+            "features": [_bin(18.1, 59.3, 40)],
+            "total": 40,
+            "truncated": False,
+        }
+    )
+    session = GeoAgentSession(client)
+    out = await session.density(bbox="18.06,59.32,18.09,59.34", tags=["amenity"])
+    assert_no_coordinate_arrays(out)
+    assert out["total"] == 40
+    assert out["items"] == [{"lon": 18.1, "lat": 59.3, "count": 40}]
+    exported = session.export_geojson(out["collection_id"])
+    assert exported["kind"] == "density"
+    assert exported["type"] == "FeatureCollection"
 
 
 async def test_query_and_details_summaries():

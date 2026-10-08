@@ -53,6 +53,7 @@ or rarely tagged classes (hotels, EV chargers, waste baskets, benches, ATMs,
 toilets): as_of requires an opening_hours tag, so those searches come back
 empty even when the thing is 24/7. Treat hotels as always open. Hours status
 is openNow at evaluated_at; never quote or interpret tags.opening_hours.
+as_of stamps openNow (closed places still return); open_now filters to open.
 as_of defaults to now. If the user named a clock, use that. For a tour,
 crawl, or loop, retry once with a naive clock if every item is closed
 (cafes 10:00, lunch 12:00, bars 20:00), then filter_open. If hours still
@@ -74,6 +75,14 @@ Choose a tool:
   filter_open.
 - How many or a breakdown (cuisine): count. Neighborhood name lists stay
   places_search; group the items prefix by tags.cuisine when items_truncated.
+- Heatmap, density map, or where features concentrate: density, then preview_map
+  (not query). Named country or region: geocode for bbox, then density. Building
+  footprints: tags=building, type=way, way_shape=polygon. Occupied degree-grid
+  bins; preview_map on the collection_id draws the heatmap (do not dump GeoJSON).
+  Europe place=* is bbox -26,33,52,72 (under 80 degrees and 4000 deg²) with
+  cell_deg 0.1. tags or or_tags required. Omit cell_deg for 0.1. If the unit cap
+  400s, pass disable_budget_warning=true. Empty space is cold because those
+  cells were not returned.
 - Generic geometry: neighborhood query; city bbox query with auto_split;
   state or country totals count, not query.
 - Within N metres of another set: two searches (save_as=restaurants,
@@ -92,6 +101,7 @@ bbox-area or result_too_large 400; pass auto_split or shrink. A count window
 that 400s on bbox area is not split. If there are too many bbox tiles or the
 area is too large: smaller named place, or ask. Still too dense: ask; if they do not answer,
 tighter tags and a smaller place. Do not bisect leftover rectangles. within,
-radius, and osm_ids cannot split. count: report total, not a GeoJSON page. If
-the unit cap 400s, shrink the bbox or add tags. Do not retry with disable_budget_warning.
+radius, and osm_ids cannot split. count: report total, not a GeoJSON page. A
+bbox-area 400 is not retried with disable_budget_warning; shrink the window.
+If the unit cap 400s on count or density, pass disable_budget_warning=true.
 Do not group_by name, ref, or addr:housenumber.
