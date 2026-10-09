@@ -200,6 +200,10 @@ async def test_build_server_wires_instructions_and_tools():
     assert "pass disable_budget_warning=true" in mcp.instructions
     assert "Heatmap, density map" in mcp.instructions
     assert "draws the heatmap" in mcp.instructions
+    assert 'tags=["amenity"]' in mcp.instructions
+    assert 'or_tags=["amenity"]' in mcp.instructions
+    assert "amenity=*" in mcp.instructions
+    assert "Europe place=*" not in mcp.instructions
     assert f"over {MAX_COMPARISONS} comparisons" in mcp.instructions
     tools = await mcp.list_tools()
     names = {tool.name for tool in tools}
@@ -212,12 +216,19 @@ async def test_build_server_wires_instructions_and_tools():
     assert "auto_split" in query.inputSchema["properties"]
     count = next(t for t in tools if t.name == "count")
     assert "scalar total" in (count.description or "")
+    assert "key-only" in (count.description or "").lower()
     assert "group_by" not in count.inputSchema.get("required", [])
     assert "group_by" in count.inputSchema["properties"]
     assert "bbox" in count.inputSchema["properties"]
     density = next(t for t in tools if t.name == "density")
     assert "preview_map" in (density.description or "")
     assert "heatmap" in (density.description or "")
+    assert "prefer tags" in (density.description or "").lower()
+    tags_schema = density.inputSchema["properties"]["tags"]
+    or_schema = density.inputSchema["properties"]["or_tags"]
+    assert "Key only" in (tags_schema.get("description") or "")
+    assert "Key only" in (or_schema.get("description") or "")
+    assert "bicycle" in (or_schema.get("description") or "")
     assert "cell_deg" in density.inputSchema["properties"]
     assert "cell_deg" not in density.inputSchema.get("required", [])
     assert "result_too_large" in mcp.instructions

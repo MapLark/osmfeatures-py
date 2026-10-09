@@ -14,6 +14,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.testclient import TestClient
 
 from osmfeatures.mcp.mcp_server import HTTP_SESSION_IDLE_TIMEOUT, HttpSessionStore, build_http_app, public_origin
+from osmfeatures.models import OSMFeaturesAPIError
 
 _MCP_HEADERS = {
     "Authorization": "Bearer sk-a",
@@ -350,6 +351,80 @@ def test_http_tools_call_binds_session_from_mcp_request():
             assert structured["total"] == 12
             bound = store.get_or_create(headers["mcp-session-id"], "sk-a")
             assert bound.client.count_calls
+    finally:
+        store.close_all()
+
+
+def test_http_tools_call_names_api_error_when_body_is_empty():
+    class BoomClient(_FakeClient):
+        def count(self, **kwargs) -> dict:
+            raise OSMFeaturesAPIError("API error (HTTP 502): empty response body", 502)
+
+    app, store = _app(client_factory=lambda key, url: BoomClient(key, url))
+    try:
+        with TestClient(app) as client:
+            headers = _handshake(client)
+            called = client.post(
+                "/mcp",
+                headers=headers,
+                json=_rpc(
+                    "tools/call",
+                    {
+                        "name": "count",
+                        "arguments": {"bbox": "5.8,47.2,15.1,55.1", "tags": ["amenity"]},
+                    },
+                ),
+            )
+            assert called.status_code == 200, called.text
+            payload = called.json()
+            result = payload.get("result") or {}
+            assert result.get("isError") is True, payload
+            texts = [block.get("text") or "" for block in (result.get("content") or [])]
+            joined = " ".join(texts)
+            assert "502" in joined, payload
+            assert "empty response body" in joined
+    finally:
+        store.close_all()
+
+
+def test_http_tools_call_surfaces_api_error_text():
+    class BoomClient(_FakeClient):
+        def count(self, **kwargs) -> dict:
+            raise OSMFeaturesAPIError(
+                "API error (HTTP 400): Query exceeded statement timeout. "
+                "Do not retry the same request.",
+                400,
+            )
+
+    app, store = _app(client_factory=lambda key, url: BoomClient(key, url))
+    try:
+        with TestClient(app) as client:
+            headers = _handshake(client)
+            called = client.post(
+                "/mcp",
+                headers=headers,
+                json=_rpc(
+                    "tools/call",
+                    {
+                        "name": "count",
+                        "arguments": {
+                            "bbox": "5.8,47.2,15.1,55.1",
+                            "tags": ["amenity"],
+                            "disable_budget_warning": True,
+                        },
+                    },
+                ),
+            )
+            assert called.status_code == 200, called.text
+            payload = called.json()
+            result = payload.get("result") or {}
+            assert result.get("isError") is True, payload
+            texts = [block.get("text") or "" for block in (result.get("content") or [])]
+            joined = " ".join(texts)
+            assert joined.strip(), payload
+            assert "400" in joined
+            assert "timeout" in joined.lower()
+            assert "Do not retry" in joined
     finally:
         store.close_all()
 

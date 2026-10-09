@@ -662,7 +662,6 @@ class GeoAgentSession:
                 open_now=open_now,
                 as_of=as_of,
                 auto_split=auto_split,
-                timeout=120,
             ),
             location,
         )
@@ -825,7 +824,6 @@ class GeoAgentSession:
             centroid=True,
             limit=limit,
             auto_split=auto_split,
-            timeout=120,
         )
         cid = self._put(payload, save_as=save_as)
         return self._summarize_query(cid, payload)

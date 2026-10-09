@@ -16,7 +16,9 @@ from .models import (
 DEFAULT_BASE_URL = "https://api.maplark.com"
 ACCOUNT_TIER_PATH = "/v1/account/tier"
 GEOJSON_ACCEPT = "application/geo+json"
-DEFAULT_TIMEOUT = 60.0
+# SDK ceiling for HTTP reads. The API enforces statement timeout; this only
+# prevents indefinite hangs (610s > 600s statement timeout so JSON can arrive).
+DEFAULT_TIMEOUT = 610.0
 _LOG_BODY_MAX = 4000
 logger = logging.getLogger("osmfeatures.http")
 
@@ -79,6 +81,12 @@ def _clip(text: str, limit: int = _LOG_BODY_MAX) -> str:
     return text if len(text) <= limit else text[:limit] + "…"
 
 
+def _response_text(resp: Any, limit: int = 300) -> str:
+    """Body snippet for exception messages. Empty bodies still need a phrase for MCP."""
+    text = (getattr(resp, "text", None) or "").strip()
+    return text[:limit] if text else "empty response body"
+
+
 def _log_failed_response(resp: Any) -> None:
     req = getattr(resp, "request", None)
     raw = b""
@@ -107,9 +115,13 @@ def raise_for_response(resp: Any) -> None:
     if not (200 <= status < 300):
         _log_failed_response(resp)
     if status == 401:
-        raise OSMFeaturesAuthError(f"Authentication failed (HTTP 401): {resp.text[:200]}")
+        raise OSMFeaturesAuthError(
+            f"Authentication failed (HTTP 401): {_response_text(resp)}"
+        )
     if status == 403:
-        raise OSMFeaturesForbiddenError(f"Access denied (HTTP 403): {resp.text[:200]}")
+        raise OSMFeaturesForbiddenError(
+            f"Access denied (HTTP 403): {_response_text(resp)}"
+        )
     if status == 429:
         body: dict[str, Any] = {}
         try:
@@ -124,7 +136,10 @@ def raise_for_response(resp: Any) -> None:
             except (TypeError, ValueError):
                 pass
         raise OSMFeaturesRateLimitError(
-            body.get("detail", body.get("message", f"Rate limit exceeded (HTTP 429): {resp.text[:200]}")),
+            body.get(
+                "detail",
+                body.get("message", f"Rate limit exceeded (HTTP 429): {_response_text(resp)}"),
+            ),
             error_code=body.get("error", ""),
             tier=body.get("tier", ""),
             units=body.get("units"),
@@ -133,7 +148,7 @@ def raise_for_response(resp: Any) -> None:
         )
     if not (200 <= status < 300):
         raise OSMFeaturesAPIError(
-            f"API error (HTTP {status}): {resp.text[:200]}",
+            f"API error (HTTP {status}): {_response_text(resp)}",
             status_code=status,
         )
 

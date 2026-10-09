@@ -23,6 +23,7 @@ from ._places import execute_places_search_sync
 from ._http import (
     ACCOUNT_TIER_PATH,
     DEFAULT_BASE_URL,
+    DEFAULT_TIMEOUT,
     GEOJSON_ACCEPT,
     ElementType,
     ShapeType,
@@ -60,7 +61,8 @@ class OSMFeaturesClient:
         Retry / backoff settings.  Defaults to 3 retries with exponential
         backoff and jitter.
     timeout:
-        HTTP request timeout in seconds.  Defaults to 60.
+        HTTP request timeout in seconds.  Defaults to
+        :data:`~osmfeatures.DEFAULT_TIMEOUT`.
     """
 
     def __init__(
@@ -68,7 +70,7 @@ class OSMFeaturesClient:
         api_key: str,
         base_url: str = DEFAULT_BASE_URL,
         retry_config: RetryConfig | None = None,
-        timeout: float = 60.0,
+        timeout: float = DEFAULT_TIMEOUT,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout

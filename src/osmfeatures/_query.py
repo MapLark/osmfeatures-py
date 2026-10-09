@@ -63,7 +63,10 @@ auto_split:
     tiles. Default False. Slower: a count per tile.
     ``split_until_fit`` is a deprecated alias.
 timeout:
-    Wall-clock seconds for this call. Defaults to 60. ``None`` is no cap.
+    Wall-clock seconds for tiled walks (``auto_split`` / ``bbox_tiles``).
+    Defaults to :data:`osmfeatures.DEFAULT_QUERY_ALL_TIMEOUT_S`.
+    A single HTTP request uses the client :data:`~osmfeatures.DEFAULT_TIMEOUT`.
+    ``None`` is no cap.
     A genuine deadline miss is :class:`OSMFeaturesTimeoutError`.
     ``auto_split`` walks at most 32 tiles (five longest-side bisections).
     Covering the bbox would need more tiles:

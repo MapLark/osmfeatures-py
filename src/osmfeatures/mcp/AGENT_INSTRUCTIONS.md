@@ -11,6 +11,12 @@ or location+radius as "here". If they named a city or neighborhood, call geocode
 first and use the returned bbox (or lat/lng + radius when bbox is null). Do not
 invent a lon/lat. query location is numeric "lat,lng", not a place name.
 
+Tag filters: tags is AND, or_tags is OR, not_tags excludes.
+Key only (bare key) works on tags or or_tags — any value for that key. Example:
+or_tags=["bicycle", "highway=cycleway"]. tags=["amenity"] matches every amenity
+(heatmap or count). Exact: tags=["amenity=cafe"]. Comparisons: tags=["ele>500"].
+OR of values: or_tags=["amenity=cafe", "amenity=bar"].
+
 travel_mode is WALK or BICYCLE. Route summaries include status and,
 when not ok, reason plus search_buffer_m / snap fields. Read those before retrying.
 If start_unreachable or no_path_within_area, start from a searched place (a bar),
@@ -76,12 +82,14 @@ Choose a tool:
 - How many or a breakdown (cuisine): count. Neighborhood name lists stay
   places_search; group the items prefix by tags.cuisine when items_truncated.
 - Heatmap, density map, or where features concentrate: density, then preview_map
-  (not query). Named country or region: geocode for bbox, then density. Building
-  footprints: tags=building, type=way, way_shape=polygon. Occupied degree-grid
+  (not query). Named country or region: geocode for bbox, then density with
+  tags=["amenity"] for an amenity heatmap (prefer tags over or_tags=["amenity"];
+  not amenity=*). Building
+  footprints: tags=["building"], type=way, way_shape=polygon. Occupied degree-grid
   bins; preview_map on the collection_id draws the heatmap (do not dump GeoJSON).
-  Europe place=* is bbox -26,33,52,72 (under 80 degrees and 4000 deg²) with
-  cell_deg 0.1. tags or or_tags required. Omit cell_deg for 0.1. If the unit cap
-  400s, pass disable_budget_warning=true. Empty space is cold because those
+  Europe tags=["place"] is bbox -26,33,52,72 (under 80 degrees and 4000 deg²)
+  with cell_deg 0.1. tags or or_tags required. Omit cell_deg for 0.1. If the unit
+  cap 400s, pass disable_budget_warning=true. Empty space is cold because those
   cells were not returned.
 - Generic geometry: neighborhood query; city bbox query with auto_split;
   state or country totals count, not query.

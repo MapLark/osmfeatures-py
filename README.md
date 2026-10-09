@@ -139,7 +139,6 @@ all_restaurants = client.query(
     bbox="18.063,59.322,18.082,59.332",
     tags="amenity=restaurant",
     auto_split=True,
-    timeout=60,
 )
 ```
 

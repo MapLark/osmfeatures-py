@@ -13,6 +13,8 @@ from .chunking import (
     split_bbox_tiles,
     tile_count_for_corridor,
 )
+from ._http import DEFAULT_TIMEOUT
+from ._pagination import DEFAULT_QUERY_ALL_TIMEOUT_S
 from .client import OSMFeaturesClient
 from .geometry import point_in_geometry
 from .nearest import nearest_within, pairs_within
@@ -63,6 +65,8 @@ __all__ = [
     "AsyncOSMFeaturesClient",
     # Config
     "RetryConfig",
+    "DEFAULT_TIMEOUT",
+    "DEFAULT_QUERY_ALL_TIMEOUT_S",
     # Models
     "OSMFeature",
     "OSMFeatureCollection",

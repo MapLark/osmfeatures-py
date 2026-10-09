@@ -809,7 +809,7 @@ async def test_query_forwards_within():
     assert client.calls[0][1]["within"] == "relation/155790"
     assert client.calls[0][1]["limit"] is None
     assert client.calls[0][1]["auto_split"] is False
-    assert client.calls[0][1]["timeout"] == 120
+    assert "timeout" not in client.calls[0][1]
     await session.query(within="relation/155790", type="node", tags=["amenity"], limit=50)
     assert client.calls[-1][1]["limit"] == 50
 
@@ -836,7 +836,7 @@ async def test_places_search_forwards_auto_split():
         auto_split=True,
     )
     assert client.calls[0][1]["auto_split"] is True
-    assert client.calls[0][1]["timeout"] == 120
+    assert "timeout" not in client.calls[0][1]
 
 
 async def test_places_search_does_not_retry_bbox_area():
