@@ -31,6 +31,7 @@ from ._http import (
     build_rate_limit_error,
     is_429_retryable,
     raise_for_response,
+    response_headers_dict,
 )
 from .models import (
     BinaryQueryResult,
@@ -283,7 +284,11 @@ class AsyncOSMFeaturesClient:
             build_rate_limit_error=build_rate_limit_error,
         )
         raise_for_response(resp)
-        return resp.json()  # type: ignore[no-any-return]
+        body = resp.json()
+        if not isinstance(body, dict):
+            raise ValueError("count response was not a JSON object")
+        body["response_headers"] = response_headers_dict(resp.headers)
+        return body  # type: ignore[no-any-return]
 
     async def density_async(
         self,
@@ -361,7 +366,7 @@ class AsyncOSMFeaturesClient:
         body = resp.json()
         if not isinstance(body, dict):
             raise ValueError("density response was not a JSON object")
-        return DensityFeatureCollection.from_api(body)
+        return DensityFeatureCollection.from_http(body, resp.headers)
 
     async def account_tier_async(self) -> dict[str, Any]:
         """Return this API key's plan limits (``GET /v1/account/tier``).

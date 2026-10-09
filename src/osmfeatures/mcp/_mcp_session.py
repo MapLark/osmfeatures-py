@@ -41,6 +41,15 @@ _ROUTE_HINT_KEYS = (
 )
 
 
+def _forward_response_headers(payload: Any) -> dict[str, Any]:
+    """Pass through upstream HTTP headers stored on the client payload."""
+    if isinstance(payload, dict):
+        headers = payload.get("response_headers")
+        if isinstance(headers, dict):
+            return {"response_headers": dict(headers)}
+    return {}
+
+
 def _context_fields(
     payload: Any,
     *,
@@ -248,6 +257,7 @@ def _summarize_density(collection_id: str, payload: Any) -> dict[str, Any]:
     out = _summary_items(collection_id, len(feats), items)
     out["total"] = payload.get("total", 0)
     out["truncated"] = bool(payload.get("truncated"))
+    out.update(_forward_response_headers(payload))
     return out
 
 
@@ -266,7 +276,7 @@ def _summarize_count(payload: Any) -> dict[str, Any]:
     groups = payload.get("groups") or []
     if not isinstance(groups, list):
         groups = []
-    return {
+    out = {
         "total": payload.get("total", 0),
         "truncated": bool(payload.get("truncated")),
         "groups": [
@@ -275,6 +285,8 @@ def _summarize_count(payload: Any) -> dict[str, Any]:
             if isinstance(g, dict)
         ],
     }
+    out.update(_forward_response_headers(payload))
+    return out
 
 
 def _non_places_reason(payload: Any) -> str | None:
@@ -910,6 +922,7 @@ class GeoAgentSession:
         meta = getattr(payload, "meta", None)
         if meta is not None:
             out["has_more"] = bool(getattr(meta, "has_more", False))
+        out.update(_forward_response_headers(payload))
         return out
 
     def nearest_within(

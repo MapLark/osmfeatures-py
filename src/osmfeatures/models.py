@@ -121,8 +121,12 @@ class OSMFeatureCollection(_geojson.FeatureCollection):
 
     @classmethod
     def from_http(cls, body: dict[str, Any], headers: Mapping[str, str]) -> "OSMFeatureCollection":
+        from ._http import response_headers_dict
+
         features = [OSMFeature.from_dict(f) for f in body.get("features", [])]
-        return cls(features=features, meta=ResponseMeta.from_headers(headers))
+        fc = cls(features=features, meta=ResponseMeta.from_headers(headers))
+        fc["response_headers"] = response_headers_dict(headers)
+        return fc
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -180,6 +184,14 @@ class DensityFeatureCollection(_geojson.FeatureCollection):
             truncated=bool(body.get("truncated")),
             hint=hint if isinstance(hint, str) else None,
         )
+
+    @classmethod
+    def from_http(cls, body: dict[str, Any], headers: Mapping[str, str]) -> "DensityFeatureCollection":
+        from ._http import response_headers_dict
+
+        fc = cls.from_api(body)
+        fc["response_headers"] = response_headers_dict(headers)
+        return fc
 
 
 # ---------------------------------------------------------------------------

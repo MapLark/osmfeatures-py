@@ -31,6 +31,7 @@ from ._http import (
     build_rate_limit_error,
     is_429_retryable,
     raise_for_response,
+    response_headers_dict,
 )
 from .models import (
     BinaryQueryResult,
@@ -329,7 +330,11 @@ class OSMFeaturesClient:
             build_rate_limit_error=build_rate_limit_error,
         )
         raise_for_response(resp)
-        return resp.json()  # type: ignore[no-any-return]
+        body = resp.json()
+        if not isinstance(body, dict):
+            raise ValueError("count response was not a JSON object")
+        body["response_headers"] = response_headers_dict(resp.headers)
+        return body  # type: ignore[no-any-return]
 
     def density(
         self,
@@ -422,7 +427,7 @@ class OSMFeaturesClient:
         body = resp.json()
         if not isinstance(body, dict):
             raise ValueError("density response was not a JSON object")
-        return DensityFeatureCollection.from_api(body)
+        return DensityFeatureCollection.from_http(body, resp.headers)
 
     # ------------------------------------------------------------------
     # Geo-agent (/v1/places/*, /v1/routes/*)

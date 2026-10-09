@@ -171,6 +171,7 @@ def test_density_forwards_cell_deg(client):
             "total": 4,
             "truncated": False,
         },
+        headers={"X-Usage-Units-Charged": "3"},
     )
     out = client.density(
         bbox="18.06,59.32,18.09,59.34",
@@ -193,6 +194,7 @@ def test_density_forwards_cell_deg(client):
     assert parsed["tags"] == ["place"]
     assert parsed["disable_budget_warning"] == ["true"]
     assert "group_by" not in parsed
+    assert out["response_headers"]["X-Usage-Units-Charged"] == "3"
 
 
 @rsps.activate

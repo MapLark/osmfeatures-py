@@ -52,6 +52,12 @@ def fold_way_shape(kwargs: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def response_headers_dict(headers: Any) -> dict[str, str]:
+    """Plain copy of upstream response headers for MCP / SDK forwarding."""
+    items = headers.items() if hasattr(headers, "items") else headers
+    return {str(k): str(v) for k, v in items}
+
+
 def build_params(kwargs: dict[str, Any]) -> list[tuple[str, Any]]:
     """Convert SDK kwargs to a list of (key, value) pairs for requests.
 

@@ -711,6 +711,7 @@ async def test_density_stores_bins_and_summarizes_scalars():
         "features": features,
         "total": 80,
         "truncated": False,
+        "response_headers": {"X-Usage-Units-Charged": "12"},
     }
     session = GeoAgentSession(client)
     out = await session.density(
@@ -737,6 +738,7 @@ async def test_density_stores_bins_and_summarizes_scalars():
     assert client.calls[0][1]["cell_deg"] == 0.1
     assert client.calls[0][1]["disable_budget_warning"] is True
     assert client.calls[0][1]["tags"] == ["place"]
+    assert out["response_headers"] == {"X-Usage-Units-Charged": "12"}
 
 
 async def test_density_summarizes_typed_collection():
