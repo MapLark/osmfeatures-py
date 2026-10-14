@@ -119,9 +119,12 @@ Common filters:
 - `bbox="min_lon,min_lat,max_lon,max_lat"`
 - `location="lat,lng"` with `radius` in metres
 - `within="relation/155790"` or `within="way/123"` (ST_Covers, including the boundary; not with bbox / radius / osm_ids)
-- `tags=["amenity=restaurant"]` or `tags=["ele>500"]` (AND; `>` is URL-encoded by the client)
-- `or_tags=["bicycle=yes", "bicycle=designated"]` (OR)
-- `not_tags=["access=private"]` (exclude)
+- `tags=["amenity=restaurant"]` or `tags=["ele>500"]` (list items AND together, sent as one `tags=a,b` value; `>` is URL-encoded by the client)
+- `tags=["bicycle=yes|bicycle=designated"]` (OR inside one item)
+- `tags=["amenity=cafe|amenity=bar", "wheelchair=yes"]` (AND of ORs)
+- `tags=["a|(b,c)"]` (OR of ANDs: parentheses group one operator)
+- `tags=["!access=private"]` (exclude)
+- Quote a value that contains `|` or `&`: `tags=['name="Ben & Jerry\'s"']`. Unquoted `&` is not AND.
 - `type="node" | "way" | "relation"`
 - `way_shape="polygon" | "line" | "all"` (omit = both shapes; `all` also means both)
 - `clip_geometry=True | False` (omit for the API default; set `False` to keep full geometry outside bbox)
@@ -163,7 +166,7 @@ client.count(
 
 #### Density
 
-`client.density` calls `GET /v2/osm_features/density`. Occupied grid bins come back as a GeoJSON FeatureCollection of points with `properties.count`, plus `total` and `truncated`. These are not OSM features (no `osm_id` or tags). Omit `cell_deg` for 0.1. `type` omitted is nodes. `tags` or `or_tags` is required. `limit` is the max occupied cells (the key's `max_limit` when omitted).
+`client.density` calls `GET /v2/osm_features/density`. Occupied grid bins come back as a GeoJSON FeatureCollection of points with `properties.count`, plus `total` and `truncated`. These are not OSM features (no `osm_id` or tags). Omit `cell_deg` for 0.1. `type` omitted is nodes. A positive `tags` filter is required (`tags=["place"]` or `tags=["a|b"]`). `limit` is the max occupied cells (the key's `max_limit` when omitted).
 
 A Europe box (`-26,33,52,72`, about 3042 deg²) fits the density area cap (4000 deg²) and the 80° span. It is above `max_units_per_request` on every non-enterprise tier, so pass `disable_budget_warning=True` to run it. The same box still 400s on count (area cap 400 deg²). A unit-cap 400 on count can use that flag the same way. A bbox-area 400 cannot.
 
@@ -318,7 +321,7 @@ Runnable Python chains live in `tests/example_apps/test_geo_agent.py`. Full HTTP
 
 ### Places search
 
-`places_search()` finds places in a bounding box **or** a `location` plus `radius` (not both). Optional `tags` (AND) and `or_tags` (OR) use the same OSM filters as `query()`. Omit `limit` to use the API default (100). Paid keys may raise `limit` up to their `/v3` `max_limit`; `asOf` / `openNow` still cap hours parse at 10_000.
+`places_search()` finds places in a bounding box **or** a `location` plus `radius` (not both). `tags` items are AND (JSON array). `|` inside one item is OR (`tags=["amenity=cafe|amenity=bar"]`). A leading `!` excludes. Quote a value that contains `|` or `&`. Unquoted `&` is not AND. Omit `limit` to use the API default (100). Paid keys may raise `limit` up to their `/v3` `max_limit`; `asOf` / `openNow` still cap hours parse at 10_000.
 
 `bbox_tiles` and `auto_split` **only apply to bbox search** (same names as `query()`). Pass `bbox_tiles=2` (or 4, 8, ...) to split a bbox up front. Pass `auto_split=True` to count first via `GET /v2/osm_features/count` with `way_shape=polygon`, then fetch. No hours: split on `total` vs the key's `max_limit`. With `asOf` / `openNow`: AND `opening_hours`. An `asOf` page `limit` (default 100) truncates; density-split vs the 10k parse cap only when `limit` is raised above 10k. `openNow` density-splits vs that 10k scan cap even with a small fill limit. A search that exceeds the tagged **fetch** area cap 400s; that 400 is split in one jump from the limit in the message, not by probing every quarter, up to 32 tiles. A `count bbox area` 400 is not split (the window is still too big to count). location+radius is a circle and cannot split. To tile a radius window, convert it first with `around_to_bbox` (a square that contains the circle; corner hits can fall outside the original radius):
 
@@ -326,14 +329,14 @@ Runnable Python chains live in `tests/example_apps/test_geo_agent.py`. Full HTTP
 from osmfeatures import around_to_bbox
 
 bbox = around_to_bbox(lon=18.075, lat=59.316, radius_m=800)
-cafes = client.places_search(bbox=bbox, or_tags=["amenity=cafe"], auto_split=True)
+cafes = client.places_search(bbox=bbox, tags=["amenity=cafe"], auto_split=True)
 ```
 
 ```python
 cafes = client.places_search(
     location={"lat": 59.316, "lng": 18.075},
     radius=800,
-    or_tags=["amenity=cafe"],
+    tags=["amenity=cafe"],
     open_now=True,
     as_of="2026-08-10T18:00:00+02:00",
 )
@@ -345,12 +348,12 @@ Response is a GeoJSON FeatureCollection plus `metadata.evaluated_at` (UTC instan
 
 ### Nearby (ranked from a point)
 
-`places_nearby()` answers "X near this point". It requires `tags` or `or_tags`. Results are ranked by straight-line spheroid distance, nearest first. Omit `radius` / `limit` to use the API defaults (1000 m / 100).
+`places_nearby()` answers "X near this point". It requires `tags`. Results are ranked by straight-line spheroid distance, nearest first. Omit `radius` / `limit` to use the API defaults (1000 m / 100).
 
 ```python
 nearby = client.places_nearby(
     location={"lat": 59.316, "lng": 18.075},
-    or_tags=["amenity=cafe"],
+    tags=["amenity=cafe"],
     limit=5,
     open_now=True,
     as_of="2026-08-10T18:00:00+02:00",
@@ -393,8 +396,8 @@ Hours use each place's IANA timezone from its coordinates. There is no request `
 from osmfeatures import nearest_within
 
 bbox = "18.05,59.33,18.10,59.36"
-restaurants = client.places_search(bbox=bbox, or_tags=["amenity=restaurant"])
-stations = client.places_search(bbox=bbox, or_tags=["railway=station"])
+restaurants = client.places_search(bbox=bbox, tags=["amenity=restaurant"])
+stations = client.places_search(bbox=bbox, tags=["railway=station"])
 pairs = nearest_within(restaurants, stations, max_distance_m=150, limit=20)
 
 for pair in pairs:

@@ -73,6 +73,41 @@ def test_query_v3_fit_does_not_count(client):
 
 
 @rsps.activate
+def test_query_forwards_response_headers(client):
+    """One-request query returns the API collection as-is (usage headers included)."""
+    from tests.conftest import make_feature_collection, pagination_headers
+
+    rsps.add(
+        rsps.GET,
+        FEATURES_V3_URL,
+        json=make_feature_collection([make_test_feature("way/1")]),
+        headers={
+            **pagination_headers([make_test_feature("way/1")]),
+            "X-Usage-Units-Charged": "7",
+        },
+    )
+    result = client.query(bbox="0,0,1,1", tags=["building"])
+    assert result["response_headers"]["X-Usage-Units-Charged"] == "7"
+
+
+@rsps.activate
+def test_query_within_forwards_response_headers(client):
+    from tests.conftest import make_feature_collection, pagination_headers
+
+    rsps.add(
+        rsps.GET,
+        FEATURES_V3_URL,
+        json=make_feature_collection([make_test_feature("node/1")]),
+        headers={
+            **pagination_headers([make_test_feature("node/1")]),
+            "X-Usage-Units-Charged": "4",
+        },
+    )
+    result = client.query(within="relation/155790", type="node", tags=["amenity"])
+    assert result["response_headers"]["X-Usage-Units-Charged"] == "4"
+
+
+@rsps.activate
 def test_query_bbox_tiles_splits_upfront(client):
     bbox = "0,0,2,1"
     tiles = split_bbox_tiles(bbox, 2)
@@ -85,9 +120,39 @@ def test_query_bbox_tiles_splits_upfront(client):
     assert _bboxes("/v3/osm_features") == tiles
 
 
+@rsps.activate
+def test_query_bbox_tiles_sums_usage_headers(client):
+    from tests.conftest import make_feature_collection, pagination_headers
+
+    bbox = "0,0,2,1"
+    tiles = split_bbox_tiles(bbox, 2)
+    for fid, units in (("way/1", "3"), ("way/2", "5")):
+        rsps.add(
+            rsps.GET,
+            FEATURES_V3_URL,
+            json=make_feature_collection([make_test_feature(fid)]),
+            headers={
+                **pagination_headers([make_test_feature(fid)]),
+                "X-Usage-Units-Charged": units,
+            },
+        )
+
+    result = client.query(bbox=bbox, bbox_tiles=2, tags=["building"])
+
+    assert [f.id for f in result.features] == ["way/1", "way/2"]
+    assert _bboxes("/v3/osm_features") == tiles
+    assert result["response_headers"]["X-Usage-Units-Charged"] == "8"
+
+
 def test_query_bbox_tiles_requires_bbox(client):
     with pytest.raises(ValueError, match="bbox_tiles requires bbox"):
         client.query(within="relation/155790", bbox_tiles=2, tags=["amenity"])
+
+
+def test_query_auto_split_requires_bbox(client):
+    with pytest.raises(ValueError, match="auto_split requires bbox"):
+        client.query(location="0,0", radius=100, auto_split=True)
+    assert len(rsps.calls) == 0
 
 
 def _add_too_large() -> None:
@@ -247,19 +312,35 @@ def test_query_auto_split_does_not_split_for_page_limit(client):
 
 
 @rsps.activate
-def test_query_auto_split_counts_or_tags(client):
+def test_query_auto_split_counts_tags(client):
     add_account_tier_response()
     _add_stats_total(1)
     add_features_response([make_test_feature("way/1")], url=FEATURES_V3_URL)
-    client.query(bbox="0,0,1,1", or_tags=["amenity=cafe"], auto_split=True)
+    client.query(bbox="0,0,1,1", tags=["amenity=cafe"], auto_split=True)
     count_call = next(
         c for c in rsps.calls
         if urlsplit(c.request.url).path == "/v2/osm_features/count"
     )
     assert urlsplit(rsps.calls[0].request.url).path == "/v1/account/tier"
     parsed = parse_qs(urlsplit(count_call.request.url).query)
-    assert parsed["or_tags"] == ["amenity=cafe"]
+    assert parsed["tags"] == ["amenity=cafe"]
     assert "group_by" not in parsed
+
+
+@rsps.activate
+def test_query_auto_split_count_gets_the_same_joined_tags(client):
+    add_account_tier_response()
+    _add_stats_total(1)
+    add_features_response([make_test_feature("way/1")], url=FEATURES_V3_URL)
+    client.query(
+        bbox="0,0,1,1", tags=["amenity=cafe|amenity=bar", "!access=private"], auto_split=True,
+    )
+    count_call = next(
+        c for c in rsps.calls
+        if urlsplit(c.request.url).path == "/v2/osm_features/count"
+    )
+    parsed = parse_qs(urlsplit(count_call.request.url).query)
+    assert parsed["tags"] == ["amenity=cafe|amenity=bar,!access=private"]
 
 
 @rsps.activate

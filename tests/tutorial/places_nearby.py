@@ -7,7 +7,7 @@ client = OSMFeaturesClient(
 )
 nearby = client.places_nearby(
     location={"lat": 59.316, "lng": 18.075},
-    or_tags=["amenity=pharmacy"],
+    tags=["amenity=pharmacy"],
     radius=1000,
     limit=5,
 )

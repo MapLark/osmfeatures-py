@@ -21,6 +21,7 @@ from collections.abc import Callable
 from typing import Any
 
 from ._geo_agent import places_search_body
+from ._http import normalize_tags
 from ._pagination import DEFAULT_QUERY_ALL_TIMEOUT_S
 from ._split import (
     await_maybe,
@@ -98,9 +99,7 @@ async def execute_places_search(
     bbox: str | None = None,
     location: dict[str, float] | None = None,
     radius: float | None = None,
-    type: str | None = None,  # noqa: A002
-    tags: list[str] | None = None,
-    or_tags: list[str] | None = None,
+    tags: list[str] | str | None = None,
     limit: int | None = None,
     open_now: bool = False,
     as_of: str | None = None,
@@ -115,15 +114,14 @@ async def execute_places_search(
         raise ValueError(BBOX_TILES_REQUIRES_BBOX)
     if auto_split and not isinstance(bbox, str):
         raise ValueError(AUTO_SPLIT_REQUIRES_BBOX)
+    tags = normalize_tags(tags)
 
     def _body(*, tile: str | None = None) -> dict[str, Any]:
         return places_search_body(
             bbox=tile if tile is not None else bbox,
             location=location,
             radius=radius,
-            type=type,
             tags=tags,
-            or_tags=or_tags,
             limit=limit,
             open_now=open_now,
             as_of=as_of,
@@ -137,8 +135,6 @@ async def execute_places_search(
     count_kwargs: dict[str, Any] = {"way_shape": "polygon"}
     if tags is not None:
         count_kwargs["tags"] = list(tags)
-    if or_tags is not None:
-        count_kwargs["or_tags"] = list(or_tags)
     hours_on = _hours_on(open_now, as_of)
     if hours_on:
         count_kwargs["tags"] = [*count_kwargs.get("tags", []), "opening_hours"]

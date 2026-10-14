@@ -134,6 +134,7 @@ class AsyncOSMFeaturesClient:
         return OSMFeatureCollection.from_http(resp.json(), resp.headers)
 
     async def _post_json(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        """POST JSON; retries only transient 429 (places/routes may be billed on 5xx)."""
         client = await self._get_client()
 
         async def _do() -> httpx.Response:
@@ -141,7 +142,7 @@ class AsyncOSMFeaturesClient:
 
         resp = await retry_async(
             _do,
-            self._retry,
+            self._retry.for_non_idempotent(),
             get_status=lambda r: r.status_code,
             get_headers=lambda r: dict(r.headers),
             is_rate_limit_error=is_429_retryable,
@@ -177,22 +178,60 @@ class AsyncOSMFeaturesClient:
     async def query_async(
         self,
         *,
+        bbox: str | None = None,
+        location: str | None = None,
+        radius: float | None = None,
+        type: ElementType | list[ElementType] | str | None = None,  # noqa: A002
+        way_shape: ShapeType | None = None,
+        shape: ShapeType | None = None,
+        osm_ids: str | None = None,
+        within: str | None = None,
+        tags: list[str] | str | None = None,
+        zoom: float | None = None,
+        min_length_m: float | None = None,
+        max_length_m: float | None = None,
+        min_area_m2: float | None = None,
+        max_area_m2: float | None = None,
+        centroid: bool | None = None,
+        clip_geometry: bool | None = None,
+        geometry: Any = None,
+        accept: str | None = None,
+        limit: int | None = None,
+        disable_budget_warning: bool = False,
         bbox_tiles: int = 1,
         auto_split: bool = False,
         split_until_fit: bool | None = None,
         timeout: float | None = DEFAULT_QUERY_ALL_TIMEOUT_S,
-        **params: Any,
     ) -> OSMFeatureCollection | BinaryQueryResult:
         return await execute_query(
             raw_query=self._raw_query,
             request=self._request,
             count=self.count_async,
             account_tier=self.account_tier_async,
+            bbox=bbox,
+            location=location,
+            radius=radius,
+            type=type,
+            way_shape=way_shape,
+            shape=shape,
+            osm_ids=osm_ids,
+            within=within,
+            tags=tags,
+            zoom=zoom,
+            min_length_m=min_length_m,
+            max_length_m=max_length_m,
+            min_area_m2=min_area_m2,
+            max_area_m2=max_area_m2,
+            centroid=centroid,
+            clip_geometry=clip_geometry,
+            geometry=geometry,
+            accept=accept,
+            limit=limit,
+            disable_budget_warning=disable_budget_warning,
             bbox_tiles=bbox_tiles,
             auto_split=auto_split,
             split_until_fit=split_until_fit,
             timeout=timeout,
-            **params,
         )
 
     query_async.__doc__ = QUERY_DOC
@@ -212,8 +251,6 @@ class AsyncOSMFeaturesClient:
         way_shape: ShapeType | None = None,
         within: str | None = None,
         tags: list[str] | str | None = None,
-        or_tags: list[str] | str | None = None,
-        not_tags: list[str] | str | None = None,
         limit: int | None = None,
         min_length_m: float | None = None,
         max_length_m: float | None = None,
@@ -249,10 +286,6 @@ class AsyncOSMFeaturesClient:
             params["within"] = within
         if tags is not None:
             params["tags"] = tags
-        if or_tags is not None:
-            params["or_tags"] = or_tags
-        if not_tags is not None:
-            params["not_tags"] = not_tags
         if limit is not None:
             params["limit"] = limit
         if min_length_m is not None:
@@ -301,8 +334,6 @@ class AsyncOSMFeaturesClient:
         way_shape: ShapeType | None = None,
         within: str | None = None,
         tags: list[str] | str | None = None,
-        or_tags: list[str] | str | None = None,
-        not_tags: list[str] | str | None = None,
         limit: int | None = None,
         min_length_m: float | None = None,
         max_length_m: float | None = None,
@@ -328,10 +359,6 @@ class AsyncOSMFeaturesClient:
             params["within"] = within
         if tags is not None:
             params["tags"] = tags
-        if or_tags is not None:
-            params["or_tags"] = or_tags
-        if not_tags is not None:
-            params["not_tags"] = not_tags
         if limit is not None:
             params["limit"] = limit
         if min_length_m is not None:
@@ -388,9 +415,7 @@ class AsyncOSMFeaturesClient:
         bbox: str | None = None,
         location: dict[str, float] | None = None,
         radius: float | None = None,
-        type: str | None = None,  # noqa: A002
-        tags: list[str] | None = None,
-        or_tags: list[str] | None = None,
+        tags: list[str] | str | None = None,
         limit: int | None = None,
         open_now: bool = False,
         as_of: str | None = None,
@@ -422,9 +447,7 @@ class AsyncOSMFeaturesClient:
             bbox=bbox,
             location=location,
             radius=radius,
-            type=type,
             tags=tags,
-            or_tags=or_tags,
             limit=limit,
             open_now=open_now,
             as_of=as_of,
@@ -439,9 +462,7 @@ class AsyncOSMFeaturesClient:
         *,
         location: dict[str, float],
         radius: float | None = None,
-        type: str | None = None,  # noqa: A002
-        tags: list[str] | None = None,
-        or_tags: list[str] | None = None,
+        tags: list[str] | str | None = None,
         limit: int | None = None,
         open_now: bool = False,
         as_of: str | None = None,
@@ -452,9 +473,7 @@ class AsyncOSMFeaturesClient:
             places_nearby_body(
                 location=location,
                 radius=radius,
-                type=type,
                 tags=tags,
-                or_tags=or_tags,
                 limit=limit,
                 open_now=open_now,
                 as_of=as_of,

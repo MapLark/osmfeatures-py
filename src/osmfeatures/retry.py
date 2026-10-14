@@ -4,10 +4,17 @@ from __future__ import annotations
 
 import random
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable
 
 from .models import OSMFeaturesRateLimitError
+
+# Safe for GET (query/count/density). Omit 504: a gateway timeout means the
+# first query is still holding an OSM pool slot.
+DEFAULT_RETRY_ON_STATUS: frozenset[int] = frozenset({429, 500, 502, 503})
+# Places/routes POSTs are billed; a 5xx may already be charged. Only retry
+# transient per-second 429 (see ``is_429_retryable``).
+NON_IDEMPOTENT_RETRY_ON_STATUS: frozenset[int] = frozenset({429})
 
 
 @dataclass
@@ -21,7 +28,8 @@ class RetryConfig:
         jitter: Add +/-25% random jitter to the backoff delay.
         retry_on_status: HTTP status codes that trigger a retry.
             Defaults omit 504: a gateway timeout means the first query is
-            still holding an OSM pool slot.
+            still holding an OSM pool slot. POSTs use
+            :meth:`for_non_idempotent` (429 only).
     """
 
     max_retries: int = 3
@@ -29,8 +37,15 @@ class RetryConfig:
     backoff_max: float = 60.0
     jitter: bool = True
     retry_on_status: frozenset[int] = field(
-        default_factory=lambda: frozenset({429, 500, 502, 503})
+        default_factory=lambda: DEFAULT_RETRY_ON_STATUS
     )
+
+    def for_non_idempotent(self) -> "RetryConfig":
+        """Copy for POSTs that may already be billed (places/routes).
+
+        Keeps backoff / max_retries; only retries HTTP 429.
+        """
+        return replace(self, retry_on_status=NON_IDEMPOTENT_RETRY_ON_STATUS)
 
 
 def _backoff_delay(attempt: int, config: RetryConfig) -> float:

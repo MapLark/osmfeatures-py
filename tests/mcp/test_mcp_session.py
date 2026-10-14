@@ -190,7 +190,7 @@ async def test_cafes_near_me_place_list():
         "evaluated_at": "2026-08-10T16:00:00Z",
     }
     session = GeoAgentSession(client)
-    out = await session.places_nearby(location={"lat": 59.316, "lng": 18.075}, or_tags=["amenity=cafe"], limit=5)
+    out = await session.places_nearby(location={"lat": 59.316, "lng": 18.075}, tags=["amenity=cafe"], limit=5)
     assert_no_coordinate_arrays(out)
     assert out["collection_id"] == "fc_1"
     assert out["count"] == 2
@@ -232,7 +232,7 @@ async def test_summaries_include_osm_tags():
         ),
     )
     session = GeoAgentSession(client)
-    out = await session.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=restaurant"])
+    out = await session.places_search(bbox="18.05,59.31,18.10,59.33", tags=["amenity=restaurant"])
     assert_no_coordinate_arrays(out)
     assert out["items"][0]["tags"] == {
         "name": "Pelikan",
@@ -278,11 +278,11 @@ async def test_restaurants_near_stations_pairs():
     client.search = _fc(
         _feat("node/r1", 18.0702, 59.316, name="Pelikan", amenity="restaurant", cuisine="swedish")
     )
-    restaurants = await session.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=restaurant"])
+    restaurants = await session.places_search(bbox="18.05,59.31,18.10,59.33", tags=["amenity=restaurant"])
     client.search = _fc(
         _feat("node/s1", 18.07, 59.316, name="Medborgarplatsen", railway="station")
     )
-    stations = await session.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["railway=station"])
+    stations = await session.places_search(bbox="18.05,59.31,18.10,59.33", tags=["railway=station"])
     pairs = session.nearest_within(restaurants["collection_id"], stations["collection_id"], max_distance_m=150)
     assert_no_coordinate_arrays(pairs)
     assert pairs["count"] == 1
@@ -316,9 +316,9 @@ async def test_nearest_within_keeps_every_primary_and_caps_items():
     client = FakeClient()
     session = GeoAgentSession(client)
     client.search = _fc(*[_feat(f"node/r{i}", 18.0702, 59.316, name=f"R{i}") for i in range(45)])
-    restaurants = await session.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=restaurant"])
+    restaurants = await session.places_search(bbox="18.05,59.31,18.10,59.33", tags=["amenity=restaurant"])
     client.search = _fc(_feat("node/s1", 18.07, 59.316, name="Medborgarplatsen"))
-    stations = await session.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["railway=station"])
+    stations = await session.places_search(bbox="18.05,59.31,18.10,59.33", tags=["railway=station"])
     pairs = session.nearest_within(restaurants["collection_id"], stations["collection_id"], max_distance_m=150)
     assert_no_coordinate_arrays(pairs)
     assert pairs["count"] == 45
@@ -331,9 +331,9 @@ async def test_nearest_within_rejects_over_comparison_cap(monkeypatch):
     client = FakeClient()
     session = GeoAgentSession(client)
     client.search = _fc(*[_feat(f"node/r{i}", 18.0702, 59.316, name=f"R{i}") for i in range(5)])
-    restaurants = await session.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=restaurant"])
+    restaurants = await session.places_search(bbox="18.05,59.31,18.10,59.33", tags=["amenity=restaurant"])
     client.search = _fc(*[_feat(f"node/s{i}", 18.07, 59.316, name=f"S{i}") for i in range(5)])
-    stations = await session.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["railway=station"])
+    stations = await session.places_search(bbox="18.05,59.31,18.10,59.33", tags=["railway=station"])
     with pytest.raises(ValueError, match=r"5×5 comparisons"):
         session.nearest_within(restaurants["collection_id"], stations["collection_id"], max_distance_m=150)
 
@@ -345,9 +345,9 @@ async def test_pairs_within_two_sets_and_self_join():
         _feat("node/r1", 18.0702, 59.316, name="Pelikan"),
         _feat("node/r2", 18.0703, 59.316, name="Other"),
     )
-    restaurants = await session.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=restaurant"])
+    restaurants = await session.places_search(bbox="18.05,59.31,18.10,59.33", tags=["amenity=restaurant"])
     client.search = _fc(_feat("node/s1", 18.07, 59.316, name="Medborgarplatsen"))
-    stations = await session.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["railway=station"])
+    stations = await session.places_search(bbox="18.05,59.31,18.10,59.33", tags=["railway=station"])
     pairs = session.pairs_within(
         restaurants["collection_id"], stations["collection_id"], max_distance_m=150
     )
@@ -372,7 +372,7 @@ async def test_open_at_clock_filter():
     page = await session.places_search(
         location={"lat": 59.316, "lng": 18.075},
         radius=1200,
-        or_tags=["amenity=bar", "amenity=pub"],
+        tags=["amenity=bar|amenity=pub"],
         as_of="2026-08-10T20:00:00",
         open_now=False,
     )
@@ -400,7 +400,7 @@ async def test_filter_open_keeps_nearby_distance():
         "evaluated_at": "2026-08-10T16:00:00Z",
     }
     session = GeoAgentSession(client)
-    nearby = await session.places_nearby(location={"lat": 59.316, "lng": 18.075}, or_tags=["amenity=cafe"])
+    nearby = await session.places_nearby(location={"lat": 59.316, "lng": 18.075}, tags=["amenity=cafe"])
     opened = session.filter_open(nearby["collection_id"])
     assert_no_coordinate_arrays(opened)
     assert opened["count"] == 2
@@ -572,7 +572,7 @@ async def test_export_route_pins_matching_places():
         "geometry": {"type": "LineString", "coordinates": [[18.07, 59.316], [18.08, 59.318]]},
     }
     session = GeoAgentSession(client)
-    await session.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=pub"])
+    await session.places_search(bbox="18.05,59.31,18.10,59.33", tags=["amenity=pub"])
     opt = await session.routes_optimized_path(
         start={"lon": 18.07, "lat": 59.316},
         stops=[{"lon": 18.08, "lat": 59.318}],
@@ -620,7 +620,7 @@ async def test_points_in_polygon_filters_search():
     )
     client.isochrone = {"status": "ok", "geometry": SQUARE, "distance_m": 1000.0, "duration_s": 714.0}
     session = GeoAgentSession(client)
-    cafes = await session.places_search(location={"lat": 59.316, "lng": 18.075}, radius=1500, or_tags=["amenity=cafe"])
+    cafes = await session.places_search(location={"lat": 59.316, "lng": 18.075}, radius=1500, tags=["amenity=cafe"])
     iso = await session.routes_isochrone(origin={"lon": 18.075, "lat": 59.316}, max_distance_m=1000)
     inside = session.points_in_polygon(cafes["collection_id"], iso["collection_id"])
     assert_no_coordinate_arrays(inside)
@@ -642,7 +642,7 @@ async def test_points_in_polygon_keeps_nearby_distance():
     }
     client.isochrone = {"status": "ok", "geometry": SQUARE, "distance_m": 1000.0, "duration_s": 714.0}
     session = GeoAgentSession(client)
-    nearby = await session.places_nearby(location={"lat": 59.316, "lng": 18.075}, or_tags=["amenity=cafe"])
+    nearby = await session.places_nearby(location={"lat": 59.316, "lng": 18.075}, tags=["amenity=cafe"])
     iso = await session.routes_isochrone(origin={"lon": 18.075, "lat": 59.316}, max_distance_m=1000)
     inside = session.points_in_polygon(nearby["collection_id"], iso["collection_id"])
     assert_no_coordinate_arrays(inside)
@@ -686,8 +686,6 @@ async def test_count_summarizes_histogram():
             "type": None,
             "way_shape": None,
             "tags": ["amenity=pub"],
-            "or_tags": None,
-            "not_tags": None,
             "within": None,
             "limit": None,
             "disable_budget_warning": False,
@@ -834,7 +832,7 @@ async def test_places_search_forwards_auto_split():
     session = GeoAgentSession(client)
     await session.places_search(
         bbox="18.05,59.31,18.10,59.33",
-        or_tags=["amenity=cafe"],
+        tags=["amenity=cafe"],
         auto_split=True,
     )
     assert client.calls[0][1]["auto_split"] is True
@@ -852,7 +850,7 @@ async def test_places_search_does_not_retry_bbox_area():
     session = GeoAgentSession(client)
     with pytest.raises(OSMFeaturesAPIError, match="bbox area"):
         await session.places_search(
-            bbox="17.24,58.48,20.00,60.30", or_tags=["amenity=cafe"]
+            bbox="17.24,58.48,20.00,60.30", tags=["amenity=cafe"]
         )
     assert len(client.calls) == 1
     assert client.calls[0][1]["auto_split"] is False
@@ -894,7 +892,7 @@ async def test_query_summary_caps_items_not_count():
     assert parks["count"] == 45
     assert len(parks["items"]) == SUMMARY_ITEM_CAP
     assert parks["items_truncated"] is True
-    cafes = await session.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=cafe"])
+    cafes = await session.places_search(bbox="18.05,59.31,18.10,59.33", tags=["amenity=cafe"])
     assert cafes["count"] == 45
     assert len(cafes["items"]) == SUMMARY_ITEM_CAP
     assert cafes["items_truncated"] is True
@@ -909,7 +907,7 @@ async def test_query_polygons_join_via_centroid():
     session = GeoAgentSession(client)
     parks = await session.query(bbox="18.00,59.31,18.10,59.33", tags=["leisure=park"], way_shape="polygon")
     client.search = _fc(_feat("node/s1", 18.07, 59.316, name="Medborgarplatsen"))
-    stations = await session.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["railway=station"])
+    stations = await session.places_search(bbox="18.05,59.31,18.10,59.33", tags=["railway=station"])
     pairs = session.nearest_within(parks["collection_id"], stations["collection_id"], max_distance_m=150)
     assert_no_coordinate_arrays(pairs)
     assert pairs["count"] == 1
@@ -951,7 +949,7 @@ async def test_unknown_collection_and_missing_polygon():
     client = FakeClient()
     client.search = _fc(_feat("node/1", 18.07, 59.32, name="Cafe"))
     session = GeoAgentSession(client)
-    page = await session.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=cafe"])
+    page = await session.places_search(bbox="18.05,59.31,18.10,59.33", tags=["amenity=cafe"])
     with pytest.raises(ValueError, match="Polygon"):
         session.point_in_polygon(page["collection_id"], 18.07, 59.32)
 
@@ -976,19 +974,19 @@ async def test_session_store_evicts_lru_collections():
     client = FakeClient()
     client.search = _fc(_feat("node/1", 18.07, 59.32, name="Cafe"))
     session = GeoAgentSession(client, max_collections=2)
-    first = await session.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=cafe"])
-    second = await session.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=cafe"])
+    first = await session.places_search(bbox="18.05,59.31,18.10,59.33", tags=["amenity=cafe"])
+    second = await session.places_search(bbox="18.05,59.31,18.10,59.33", tags=["amenity=cafe"])
     session.get(first["collection_id"])
-    third = await session.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=cafe"])
+    third = await session.places_search(bbox="18.05,59.31,18.10,59.33", tags=["amenity=cafe"])
     session.get(first["collection_id"])
     session.get(third["collection_id"])
     with pytest.raises(KeyError):
         session.get(second["collection_id"])
 
     unused = GeoAgentSession(client, max_collections=2)
-    a = await unused.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=cafe"])
-    b = await unused.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=cafe"])
-    c = await unused.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=cafe"])
+    a = await unused.places_search(bbox="18.05,59.31,18.10,59.33", tags=["amenity=cafe"])
+    b = await unused.places_search(bbox="18.05,59.31,18.10,59.33", tags=["amenity=cafe"])
+    c = await unused.places_search(bbox="18.05,59.31,18.10,59.33", tags=["amenity=cafe"])
     with pytest.raises(KeyError):
         unused.get(a["collection_id"])
     unused.get(b["collection_id"])
@@ -1004,7 +1002,7 @@ async def test_save_as_names_collection_from_planner():
     session = GeoAgentSession(client)
     page = await session.places_search(
         bbox="18.05,59.31,18.10,59.33",
-        or_tags=["amenity=pub"],
+        tags=["amenity=pub"],
         as_of="2026-08-10T20:00:00",
         save_as="pubs",
     )
@@ -1021,14 +1019,14 @@ async def test_save_as_reuse_keeps_earlier_collection():
     client.search = _fc(_feat("node/1", 13.4, 52.5, name="Noon Pub", amenity="pub"))
     noon = await session.places_search(
         bbox="13.3,52.4,13.5,52.6",
-        or_tags=["amenity=pub"],
+        tags=["amenity=pub"],
         as_of="2026-08-10T12:00:00",
         save_as="pubs",
     )
     client.search = _fc(_feat("node/2", 13.41, 52.51, name="Evening Pub", amenity="pub", status="open"))
     evening = await session.places_search(
         bbox="13.3,52.4,13.5,52.6",
-        or_tags=["amenity=pub"],
+        tags=["amenity=pub"],
         as_of="2026-08-10T18:00:00",
         save_as="pubs",
     )
@@ -1043,14 +1041,14 @@ async def test_save_as_reuse_keeps_earlier_collection():
     client.search = _fc(_feat("node/3", 13.42, 52.52, name="Late Pub", amenity="pub"))
     taken = await session.places_search(
         bbox="13.3,52.4,13.5,52.6",
-        or_tags=["amenity=pub"],
+        tags=["amenity=pub"],
         save_as="pubs_2",
     )
     assert taken["collection_id"] == "pubs_2_2"
     assert session.get("pubs_2")["features"][0]["properties"]["tags"]["name"] == "Evening Pub"
     third = await session.places_search(
         bbox="13.3,52.4,13.5,52.6",
-        or_tags=["amenity=pub"],
+        tags=["amenity=pub"],
         save_as="pubs",
     )
     assert third["collection_id"] == "pubs_3"
@@ -1068,7 +1066,7 @@ async def test_filter_open_defaults_to_latest_collection():
         session.filter_open()
     await session.places_search(
         bbox="18.05,59.31,18.10,59.33",
-        or_tags=["amenity=pub"],
+        tags=["amenity=pub"],
         as_of="2026-08-10T20:00:00",
     )
     opened = session.filter_open()
@@ -1077,7 +1075,7 @@ async def test_filter_open_defaults_to_latest_collection():
     with pytest.raises(ValueError, match="invalid collection_id"):
         await session.places_search(
             bbox="18.05,59.31,18.10,59.33",
-            or_tags=["amenity=pub"],
+            tags=["amenity=pub"],
             save_as="../secret",
         )
 
@@ -1088,13 +1086,13 @@ async def test_save_as_slugifies_hyphens_and_spaces():
     session = GeoAgentSession(client)
     spaced = await session.places_search(
         bbox="18.05,59.31,18.10,59.33",
-        or_tags=["amenity=pub"],
+        tags=["amenity=pub"],
         save_as="pubs in Berlin",
     )
     assert spaced["collection_id"] == "pubs_in_Berlin"
     hyphen = await session.places_search(
         bbox="18.05,59.31,18.10,59.33",
-        or_tags=["amenity=pub"],
+        tags=["amenity=pub"],
         save_as="open-pubs",
     )
     assert hyphen["collection_id"] == "open_pubs"
@@ -1106,10 +1104,10 @@ async def test_save_as_long_reuse_does_not_alias_prefix():
     session = GeoAgentSession(client)
     long_id = "a" * 64
     first = await session.places_search(
-        bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=pub"], save_as=long_id
+        bbox="18.05,59.31,18.10,59.33", tags=["amenity=pub"], save_as=long_id
     )
     second = await session.places_search(
-        bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=pub"], save_as=long_id
+        bbox="18.05,59.31,18.10,59.33", tags=["amenity=pub"], save_as=long_id
     )
     assert first["collection_id"] == long_id
     assert second["collection_id"] != long_id
@@ -1126,11 +1124,11 @@ async def test_filter_open_rejects_join_and_route():
         _feat("node/2", 18.0703, 59.316, name="Other"),
     )
     restaurants = await session.places_search(
-        bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=restaurant"]
+        bbox="18.05,59.31,18.10,59.33", tags=["amenity=restaurant"]
     )
     client.search = _fc(_feat("node/s1", 18.07, 59.316, name="Medborgarplatsen"))
     stations = await session.places_search(
-        bbox="18.05,59.31,18.10,59.33", or_tags=["railway=station"]
+        bbox="18.05,59.31,18.10,59.33", tags=["railway=station"]
     )
     pairs = session.nearest_within(
         restaurants["collection_id"], stations["collection_id"], max_distance_m=150
@@ -1166,7 +1164,7 @@ async def test_filter_open_omitted_id_skips_later_route():
     session = GeoAgentSession(client)
     pubs = await session.places_search(
         bbox="18.05,59.31,18.10,59.33",
-        or_tags=["amenity=pub"],
+        tags=["amenity=pub"],
         as_of="2026-08-10T20:00:00",
     )
     path = await session.routes_path(
@@ -1197,7 +1195,7 @@ async def test_invoke_client_prefers_async_methods():
     client = AsyncOnly()
     session = GeoAgentSession(client)
     out = await session.places_search(
-        bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=cafe"]
+        bbox="18.05,59.31,18.10,59.33", tags=["amenity=cafe"]
     )
     assert client.called == 1
     assert out["items"][0]["name"] == "Drop Coffee"
@@ -1207,9 +1205,9 @@ async def test_export_geojson_file_defaults_to_latest(tmp_path):
     client = FakeClient()
     client.search = _fc(_feat("node/1", 18.07, 59.32, name="Cafe"))
     session = GeoAgentSession(client)
-    first = await session.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=cafe"])
+    first = await session.places_search(bbox="18.05,59.31,18.10,59.33", tags=["amenity=cafe"])
     second = await session.places_search(
-        bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=cafe"], save_as="cafes"
+        bbox="18.05,59.31,18.10,59.33", tags=["amenity=cafe"], save_as="cafes"
     )
     out = session.export_geojson_file(directory=tmp_path)
     assert out["collection_id"] == second["collection_id"] == "cafes"

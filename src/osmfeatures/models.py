@@ -208,11 +208,11 @@ class OSMFeaturesAuthError(OSMFeaturesError):
 
 
 class OSMFeaturesForbiddenError(OSMFeaturesError):
-    """Raised on HTTP 403 - unknown tier or access denied."""
+    """Raised on HTTP 403 - unknown tier, or free-tier monthly quota exhausted (``quota_exceeded``)."""
 
 
 class OSMFeaturesRateLimitError(OSMFeaturesError):
-    """Raised on HTTP 429 - per-second or monthly budget exceeded, or query too expensive."""
+    """Raised on HTTP 429 - per-second limit exceeded, or query too expensive."""
 
     def __init__(
         self,

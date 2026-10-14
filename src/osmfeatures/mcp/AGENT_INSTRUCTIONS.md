@@ -6,16 +6,19 @@ copy arguments from a sibling tool.
 You must not: compute haversine, decide which place is nearest another set, parse
 opening_hours strings, invent coordinates, distances, or walk times.
 
-Spatial default: if the user did not name a place, they must give a viewport bbox
-or location+radius as "here". If they named a city or neighborhood, call geocode
-first and use the returned bbox (or lat/lng + radius when bbox is null). Do not
+Spatial default: if the user named a city or neighborhood, call geocode
+first and use the returned bbox (or lat/lng + radius when bbox is null). If they
+said "me", "here", "near me", or similar and you have no viewport bbox or
+location+radius, stop and ask for a specific place. Do not geocode "me". Do not
 invent a lon/lat. query location is numeric "lat,lng", not a place name.
 
-Tag filters: tags is AND, or_tags is OR, not_tags excludes.
-Key only (bare key) works on tags or or_tags — any value for that key. Example:
-or_tags=["bicycle", "highway=cycleway"]. tags=["amenity"] matches every amenity
-(heatmap or count). Exact: tags=["amenity=cafe"]. Comparisons: tags=["ele>500"].
-OR of values: or_tags=["amenity=cafe", "amenity=bar"].
+Tag filters: list items AND together (sent as one tags value joined by commas). Inside one item,
+| is OR and a leading ! excludes. Key only (bare key) matches any value.
+Example: tags=["bicycle|highway=cycleway"]. tags=["amenity"] matches every amenity (heatmap or count).
+Exact: tags=["amenity=cafe"]. Comparisons: tags=["ele>500"].
+OR of values: tags=["amenity=cafe|amenity=bar"]. AND of exclusions: tags=["!bicycle=no", "!access=private"].
+AND of ORs: tags=["a|b", "c"]. OR of ANDs: tags=["a|(b,c)"].
+Quote a value that contains | or &: name="Ben & Jerry's". Unquoted & is not an operator.
 
 travel_mode is WALK or BICYCLE. Route summaries include status and,
 when not ok, reason plus search_buffer_m / snap fields. Read those before retrying.
@@ -83,12 +86,12 @@ Choose a tool:
   places_search; group the items prefix by tags.cuisine when items_truncated.
 - Heatmap, density map, or where features concentrate: density, then preview_map
   (not query). Named country or region: geocode for bbox, then density with
-  tags=["amenity"] for an amenity heatmap (prefer tags over or_tags=["amenity"];
+  tags=["amenity"] for an amenity heatmap (prefer tags=["amenity"] over a value list;
   not amenity=*). Building
   footprints: tags=["building"], type=way, way_shape=polygon. Occupied degree-grid
   bins; preview_map on the collection_id draws the heatmap (do not dump GeoJSON).
   Europe tags=["place"] is bbox -26,33,52,72 (under 80 degrees and 4000 deg²)
-  with cell_deg 0.1. tags or or_tags required. Omit cell_deg for 0.1. If the unit
+  with cell_deg 0.1. A positive tags filter is required (tags=["place"] or tags=["a|b"]). If the unit
   cap 400s, pass disable_budget_warning=true. Empty space is cold because those
   cells were not returned.
 - Generic geometry: neighborhood query; city bbox query with auto_split;

@@ -270,7 +270,7 @@ def test_count_forwards_group_by():
     MockClient.return_value.count.assert_called_once_with(
         group_by="amenity",
         bbox="18.06,59.32,18.09,59.34",
-        tags=["amenity"],
+        tags="amenity",
     )
 
 
@@ -304,7 +304,7 @@ def test_density_forwards_cell_deg():
     MockClient.return_value.density.assert_called_once_with(
         cell_deg=0.1,
         bbox="18.06,59.32,18.09,59.34",
-        tags=["place"],
+        tags="place",
     )
 
 
@@ -327,5 +327,5 @@ def test_count_omits_group_by_for_scalar_total():
     assert parsed["total"] == 412
     MockClient.return_value.count.assert_called_once_with(
         bbox="18.06,59.32,18.09,59.34",
-        tags=["amenity"],
+        tags="amenity",
     )

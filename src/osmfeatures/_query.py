@@ -14,7 +14,7 @@ from .chunking import (
     merge_features,
     shapely_to_bbox,
 )
-from ._http import is_geojson_accept
+from ._http import ElementType, ShapeType, is_geojson_accept, merge_response_headers
 from .models import (
     BinaryQueryResult,
     OSMFeature,
@@ -42,8 +42,8 @@ is HTTP 400 ``result_too_large``. ``auto_split=True`` reads ``max_limit`` from `
 counts first, and jumps to a power-of-2 tile grid when that match set
 exceeds the key's ``max_limit``. A leftover dense leaf may jump once
 more. A lower ``limit`` truncates. That adds latency.
-``within``, radius, and ``osm_ids`` cannot be split, so the API error
-propagates.
+``auto_split`` requires ``bbox``: ``within``, radius, and ``osm_ids``
+raise ``ValueError`` instead of sending one unsplit request.
 
 Parameters
 ----------
@@ -72,12 +72,21 @@ timeout:
     Covering the bbox would need more tiles:
     :class:`OSMFeaturesTooManyTilesError` (area too large). A tile still
     overflows at that cap: :class:`OSMFeaturesTooDenseError`.
-**params:
-    Filter kwargs: ``bbox``, ``location``, ``radius``, ``type``,
-    ``way_shape``, ``shape``, ``osm_ids``, ``within``, ``tags``,
-    ``or_tags``, ``not_tags``, ``zoom``, size bounds, ``centroid``,
-    ``clip_geometry``, ``geometry``, ``accept``, ``limit``. No
-    ``cursor``. ``disable_budget_warning`` is count-only.
+bbox, location, radius, type, way_shape, shape, osm_ids, within, tags,
+zoom, min_length_m, max_length_m, min_area_m2, max_area_m2, centroid,
+clip_geometry, geometry, accept, limit, disable_budget_warning:
+    Filters for ``GET /v3/osm_features``. No ``cursor``.
+    ``disable_budget_warning`` is count-only (``auto_split``).
+
+    ``tags`` is a string or list of strings, sent as one ``tags`` query value.
+    A list is ANDed with ``,``. ``|`` inside one item is OR. Parentheses
+    group one operator: ``a|(b,c)`` is ``a OR (b AND c)``, ``(a|b),c`` is
+    ``(a OR b) AND c``. ``!`` prefixes one clause (``!key``, ``!key=value``);
+    ``key!=value`` and ``key!~regex`` also negate. Clause forms: ``key``,
+    ``key=value``, ``key>n`` / ``>=`` / ``<`` / ``<=``, ``key~regex``. Quote a
+    value that contains ``|`` or ``&`` (``'name="Ben & Jerry\'s"'``). Unquoted
+    ``&`` is not an operator (HTTP 400). Regex cannot use an index, so AND it
+    with an indexed tag.
     ``auto_split`` counts with a scalar ``GET /v2/osm_features/count``
     (no ``group_by``).
 
@@ -116,29 +125,118 @@ def _with_limit(params: dict[str, Any], limit: int | None) -> dict[str, Any]:
     return out
 
 
+def _query_filters(
+    *,
+    bbox: str | None = None,
+    location: str | None = None,
+    radius: float | None = None,
+    type: ElementType | list[ElementType] | str | None = None,  # noqa: A002
+    way_shape: ShapeType | None = None,
+    shape: ShapeType | None = None,
+    osm_ids: str | None = None,
+    within: str | None = None,
+    tags: list[str] | str | None = None,
+    zoom: float | None = None,
+    min_length_m: float | None = None,
+    max_length_m: float | None = None,
+    min_area_m2: float | None = None,
+    max_area_m2: float | None = None,
+    centroid: bool | None = None,
+    clip_geometry: bool | None = None,
+    geometry: Any = None,
+) -> dict[str, Any]:
+    """Omit ``None`` so the API keeps its defaults."""
+    params: dict[str, Any] = {}
+    if bbox is not None:
+        params["bbox"] = bbox
+    if location is not None:
+        params["location"] = location
+    if radius is not None:
+        params["radius"] = radius
+    if type is not None:
+        params["type"] = type
+    if way_shape is not None:
+        params["way_shape"] = way_shape
+    if shape is not None:
+        params["shape"] = shape
+    if osm_ids is not None:
+        params["osm_ids"] = osm_ids
+    if within is not None:
+        params["within"] = within
+    if tags is not None:
+        params["tags"] = tags
+    if zoom is not None:
+        params["zoom"] = zoom
+    if min_length_m is not None:
+        params["min_length_m"] = min_length_m
+    if max_length_m is not None:
+        params["max_length_m"] = max_length_m
+    if min_area_m2 is not None:
+        params["min_area_m2"] = min_area_m2
+    if max_area_m2 is not None:
+        params["max_area_m2"] = max_area_m2
+    if centroid is not None:
+        params["centroid"] = centroid
+    if clip_geometry is not None:
+        params["clip_geometry"] = clip_geometry
+    if geometry is not None:
+        params["geometry"] = geometry
+    return params
+
+
 async def execute_query(
     *,
     raw_query: Callable[..., Any],
     request: Callable[..., Any],
     count: Callable[..., Any],
     account_tier: Callable[..., Any] | None = None,
+    bbox: str | None = None,
+    location: str | None = None,
+    radius: float | None = None,
+    type: ElementType | list[ElementType] | str | None = None,  # noqa: A002
+    way_shape: ShapeType | None = None,
+    shape: ShapeType | None = None,
+    osm_ids: str | None = None,
+    within: str | None = None,
+    tags: list[str] | str | None = None,
+    zoom: float | None = None,
+    min_length_m: float | None = None,
+    max_length_m: float | None = None,
+    min_area_m2: float | None = None,
+    max_area_m2: float | None = None,
+    centroid: bool | None = None,
+    clip_geometry: bool | None = None,
+    geometry: Any = None,
+    accept: str | None = None,
+    limit: int | None = None,
+    disable_budget_warning: bool = False,
     bbox_tiles: int = 1,
     auto_split: bool = False,
     split_until_fit: bool | None = None,
     timeout: float | None = DEFAULT_QUERY_ALL_TIMEOUT_S,
-    **params: Any,
 ) -> OSMFeatureCollection | BinaryQueryResult:
     """Run a v3 query via *raw_query* / *request* / *count* (sync or async)."""
     auto_split = fold_auto_split(auto_split, split_until_fit)
-    if "cursor" in params:
-        raise ValueError("query does not take cursor")
-    if "max_features" in params:
-        raise ValueError("query does not take max_features; pass limit to cap the server page")
-    # v3 rejects this; keep it only for count() during auto_split.
-    disable_budget_warning = bool(params.pop("disable_budget_warning", False))
-    limit = _resolve_query_limit(params.pop("limit", None))
-    accept = params.pop("accept", None)
-    params = {k: v for k, v in params.items() if v is not None}
+    limit = _resolve_query_limit(limit)
+    params = _query_filters(
+        bbox=bbox,
+        location=location,
+        radius=radius,
+        type=type,
+        way_shape=way_shape,
+        shape=shape,
+        osm_ids=osm_ids,
+        within=within,
+        tags=tags,
+        zoom=zoom,
+        min_length_m=min_length_m,
+        max_length_m=max_length_m,
+        min_area_m2=min_area_m2,
+        max_area_m2=max_area_m2,
+        centroid=centroid,
+        clip_geometry=clip_geometry,
+        geometry=geometry,
+    )
     if not is_geojson_accept(accept):
         if auto_split:
             raise ValueError("auto_split only works with GeoJSON")
@@ -161,13 +259,31 @@ async def execute_query(
         params["bbox"] = shapely_to_bbox(geom)
 
     bbox = params.get("bbox")
+    if bbox_tiles != 1 and not isinstance(bbox, str):
+        raise ValueError("bbox_tiles requires bbox")
+    if auto_split and not isinstance(bbox, str):
+        raise ValueError("auto_split requires bbox")
+    # One request: return the API FeatureCollection as-is (body + headers).
+    if bbox_tiles == 1 and not auto_split:
+        return await _await_maybe(  # type: ignore[no-any-return]
+            raw_query(
+                _with_limit(params, limit),
+                path=_V3_PATH,
+            )
+        )
+
+    assert isinstance(bbox, str)
     api_truncated = False
+    header_blobs: list[dict[str, str]] = []
 
     async def _fetch_tile(tile: str) -> list[dict[str, Any]]:
         nonlocal api_truncated
         collection = await _await_maybe(
             raw_query(_with_limit({**params, "bbox": tile}, limit), path=_V3_PATH)
         )
+        headers = collection.get("response_headers")
+        if isinstance(headers, dict):
+            header_blobs.append(dict(headers))
         features = list(collection.get("features", []))
         if collection.meta.has_more:
             api_truncated = True
@@ -179,21 +295,6 @@ async def execute_query(
             tile,
             params,
             disable_budget_warning=disable_budget_warning,
-        )
-
-    if not isinstance(bbox, str):
-        if bbox_tiles != 1:
-            raise ValueError("bbox_tiles requires bbox")
-        collection = await _await_maybe(
-            raw_query(
-                _with_limit(params, limit),
-                path=_V3_PATH,
-            )
-        )
-        page = list(collection.get("features", []))
-        return OSMFeatureCollection(
-            features=[OSMFeature.from_dict(f) for f in page],
-            meta=ResponseMeta(returned=len(page), has_more=collection.meta.has_more),
         )
 
     feature_lists: list[list[dict[str, Any]]] = []
@@ -217,13 +318,17 @@ async def execute_query(
         feature_lists.append(page)
 
     all_features = merge_features(feature_lists)
-    return OSMFeatureCollection(
+    out = OSMFeatureCollection(
         features=[OSMFeature.from_dict(f) for f in all_features],
         meta=ResponseMeta(
             returned=len(all_features),
             has_more=api_truncated,
         ),
     )
+    merged = merge_response_headers(header_blobs)
+    if merged is not None:
+        out["response_headers"] = merged
+    return out
 
 
 def execute_query_sync(
@@ -232,11 +337,7 @@ def execute_query_sync(
     request: Callable[..., Any],
     count: Callable[..., Any],
     account_tier: Callable[..., Any] | None = None,
-    bbox_tiles: int = 1,
-    auto_split: bool = False,
-    split_until_fit: bool | None = None,
-    timeout: float | None = DEFAULT_QUERY_ALL_TIMEOUT_S,
-    **params: Any,
+    **kwargs: Any,
 ) -> OSMFeatureCollection | BinaryQueryResult:
     """Run :func:`execute_query` on a private loop (or a worker thread if nested)."""
     return run_sync(
@@ -245,9 +346,5 @@ def execute_query_sync(
         request=request,
         count=count,
         account_tier=account_tier,
-        bbox_tiles=bbox_tiles,
-        auto_split=auto_split,
-        split_until_fit=split_until_fit,
-        timeout=timeout,
-        **params,
+        **kwargs,
     )

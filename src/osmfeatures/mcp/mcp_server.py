@@ -87,25 +87,14 @@ TagsAnd = Annotated[
     list[str] | None,
     Field(
         description=(
-            "AND filters: every entry must match. Key only (e.g. amenity) matches "
-            "any value for that key. Exact: amenity=cafe. Not Overpass: amenity=* "
-            "and amenity~. are invalid."
+            "Tag filters. Each string is one AND term. '|' inside a string is OR "
+            "(amenity=cafe|amenity=bar). A leading '!' excludes (!bicycle=no). "
+            "Key only (amenity) matches any value. Exact: amenity=cafe. "
+            "Numeric: ele>500. Quote a value that contains | or &. "
+            "Not Overpass: amenity=* and amenity~. are invalid. "
+            "Unquoted & is not AND. Parentheses group one operator: a|(b,c) is a OR (b AND c)."
         ),
     ),
-]
-TagsOr = Annotated[
-    list[str] | None,
-    Field(
-        description=(
-            "OR filters: any one entry may match. Key only (e.g. bicycle) or exact "
-            "(amenity=cafe). Example: or_tags=[\"bicycle\", \"highway=cycleway\"]. "
-            "Not Overpass: amenity=* and amenity~. are invalid."
-        ),
-    ),
-]
-TagsNot = Annotated[
-    list[str] | None,
-    Field(description="Exclude filters. Same syntax as tags."),
 ]
 
 
@@ -150,7 +139,6 @@ def build_server(
         lng: float | None = None,
         radius: float | None = None,
         tags: TagsAnd = None,
-        or_tags: TagsOr = None,
         limit: int | None = None,
         open_now: bool = False,
         as_of: str | None = None,
@@ -165,7 +153,6 @@ def build_server(
             location=location,
             radius=radius,
             tags=tags,
-            or_tags=or_tags,
             limit=limit,
             open_now=open_now,
             as_of=as_of,
@@ -179,7 +166,6 @@ def build_server(
         lng: float,
         radius: float | None = None,
         tags: TagsAnd = None,
-        or_tags: TagsOr = None,
         limit: int | None = None,
         open_now: bool = False,
         as_of: str | None = None,
@@ -190,7 +176,6 @@ def build_server(
             location={"lat": lat, "lng": lng},
             radius=radius,
             tags=tags,
-            or_tags=or_tags,
             limit=limit,
             open_now=open_now,
             as_of=as_of,
@@ -273,8 +258,6 @@ def build_server(
         type: str | None = None,
         way_shape: str | None = None,
         tags: TagsAnd = None,
-        or_tags: TagsOr = None,
-        not_tags: TagsNot = None,
         within: str | None = None,
         zoom: float | None = None,
         limit: int | None = None,
@@ -295,8 +278,6 @@ def build_server(
             type=type,
             way_shape=way_shape,
             tags=tags,
-            or_tags=or_tags,
-            not_tags=not_tags,
             within=within,
             zoom=zoom,
             limit=limit,
@@ -313,13 +294,11 @@ def build_server(
         type: str | None = None,
         way_shape: str | None = None,
         tags: TagsAnd = None,
-        or_tags: TagsOr = None,
-        not_tags: TagsNot = None,
         within: str | None = None,
         limit: int | None = None,
         disable_budget_warning: bool = False,
     ) -> dict[str, Any]:
-        """Count features. Omit group_by for a scalar total; set it for a histogram. Report total. Not a GeoJSON page. location is numeric lat,lng. tags AND (key-only or exact); or_tags OR (key-only or exact). For every amenity use tags amenity, not a lone or_tags amenity."""
+        """Count features. Omit group_by for a scalar total; set it for a histogram. Report total. Not a GeoJSON page. location is numeric lat,lng. tags AND together; '|' inside one string is OR; a leading '!' excludes. For every amenity use tags amenity, not amenity=*."""
         return await get_session().count(
             group_by=group_by,
             bbox=bbox,
@@ -328,8 +307,6 @@ def build_server(
             type=type,
             way_shape=way_shape,
             tags=tags,
-            or_tags=or_tags,
-            not_tags=not_tags,
             within=within,
             limit=limit,
             disable_budget_warning=disable_budget_warning,
@@ -337,21 +314,29 @@ def build_server(
 
     @mcp.tool()
     async def density(
-        cell_deg: float | None = None,
+        cell_deg: Annotated[
+            float | None,
+            Field(
+                description=(
+                    "Grid cell size in degrees. Pick from the geocode bbox span; "
+                    "do not keep 0.1 on a city. Country or large region "
+                    "(many degrees): omit (0.1). Large metro (~0.5–2°, Berlin, "
+                    "London): 0.0012. Compact city or neighborhood (Stockholm): 0.0008."
+                )
+            ),
+        ] = None,
         bbox: str | None = None,
         location: str | None = None,
         radius: float | None = None,
         type: str | None = None,
         way_shape: str | None = None,
         tags: TagsAnd = None,
-        or_tags: TagsOr = None,
-        not_tags: TagsNot = None,
         within: str | None = None,
         limit: int | None = None,
         disable_budget_warning: bool = False,
         save_as: str | None = None,
     ) -> dict[str, Any]:
-        """Where features are dense. Occupied degree-grid bins. tags or or_tags required. Amenity heatmap: prefer tags amenity over or_tags amenity (not amenity=*). Omit cell_deg for 0.1. Europe bbox -26,33,52,72 stays under 80 degrees and 4000 deg²; pass disable_budget_warning=true if the unit cap 400s. Then preview_map the collection_id; the preview draws a heatmap. Summary is lon/lat/count scalars, not coordinates."""
+        """Where features are dense. Occupied degree-grid bins. A positive tags filter is required (tags=['place'] or tags=['a|b']). Amenity heatmap: tags=['amenity'], not amenity=*. Europe bbox -26,33,52,72 stays under 80 degrees and 4000 deg²; pass disable_budget_warning=true if the unit cap 400s. Then preview_map the collection_id; the preview draws a heatmap. Summary is lon/lat/count scalars, not coordinates."""
         return await get_session().density(
             cell_deg=cell_deg,
             bbox=bbox,
@@ -360,8 +345,6 @@ def build_server(
             type=type,
             way_shape=way_shape,
             tags=tags,
-            or_tags=or_tags,
-            not_tags=not_tags,
             within=within,
             limit=limit,
             disable_budget_warning=disable_budget_warning,

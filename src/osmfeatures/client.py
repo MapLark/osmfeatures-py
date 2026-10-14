@@ -125,7 +125,10 @@ class OSMFeaturesClient:
         return OSMFeatureCollection.from_http(resp.json(), resp.headers)
 
     def _post_json(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
-        """POST JSON to a geo-agent path; raise SDK errors on non-2xx."""
+        """POST JSON to a geo-agent path; raise SDK errors on non-2xx.
+
+        Retries only transient 429. Places/routes may already be billed on 5xx.
+        """
 
         def _do() -> requests.Response:
             return self._session.post(
@@ -136,7 +139,7 @@ class OSMFeaturesClient:
 
         resp = retry(
             _do,
-            self._retry,
+            self._retry.for_non_idempotent(),
             get_status=lambda r: r.status_code,
             get_headers=lambda r: dict(r.headers),
             is_rate_limit_error=is_429_retryable,
@@ -174,22 +177,60 @@ class OSMFeaturesClient:
     def query(
         self,
         *,
+        bbox: str | None = None,
+        location: str | None = None,
+        radius: float | None = None,
+        type: ElementType | list[ElementType] | str | None = None,  # noqa: A002
+        way_shape: ShapeType | None = None,
+        shape: ShapeType | None = None,
+        osm_ids: str | None = None,
+        within: str | None = None,
+        tags: list[str] | str | None = None,
+        zoom: float | None = None,
+        min_length_m: float | None = None,
+        max_length_m: float | None = None,
+        min_area_m2: float | None = None,
+        max_area_m2: float | None = None,
+        centroid: bool | None = None,
+        clip_geometry: bool | None = None,
+        geometry: Any = None,
+        accept: str | None = None,
+        limit: int | None = None,
+        disable_budget_warning: bool = False,
         bbox_tiles: int = 1,
         auto_split: bool = False,
         split_until_fit: bool | None = None,
         timeout: float | None = DEFAULT_QUERY_ALL_TIMEOUT_S,
-        **params: Any,
     ) -> OSMFeatureCollection | BinaryQueryResult:
         return execute_query_sync(
             raw_query=self._raw_query,
             request=self._request,
             count=self.count,
             account_tier=self.account_tier,
+            bbox=bbox,
+            location=location,
+            radius=radius,
+            type=type,
+            way_shape=way_shape,
+            shape=shape,
+            osm_ids=osm_ids,
+            within=within,
+            tags=tags,
+            zoom=zoom,
+            min_length_m=min_length_m,
+            max_length_m=max_length_m,
+            min_area_m2=min_area_m2,
+            max_area_m2=max_area_m2,
+            centroid=centroid,
+            clip_geometry=clip_geometry,
+            geometry=geometry,
+            accept=accept,
+            limit=limit,
+            disable_budget_warning=disable_budget_warning,
             bbox_tiles=bbox_tiles,
             auto_split=auto_split,
             split_until_fit=split_until_fit,
             timeout=timeout,
-            **params,
         )
 
     query.__doc__ = QUERY_DOC
@@ -249,8 +290,6 @@ class OSMFeaturesClient:
         way_shape: ShapeType | None = None,
         within: str | None = None,
         tags: list[str] | str | None = None,
-        or_tags: list[str] | str | None = None,
-        not_tags: list[str] | str | None = None,
         limit: int | None = None,
         min_length_m: float | None = None,
         max_length_m: float | None = None,
@@ -265,13 +304,20 @@ class OSMFeaturesClient:
         Same tag filters as :meth:`query` except ``osm_ids``. Spatial windows are larger
         than :meth:`query` when tags or ``group_by`` are set (country-scale on every
         tier) and billed count-only.
+        ``tags`` is a string or list of strings, sent as one ``tags`` value. A list is
+        ANDed with ``,``. ``|`` inside one item is OR, and ``a|(b,c)`` is ``a OR (b AND c)``.
+        ``!`` prefixes one clause (``!key``, ``!key=value``); ``key!=value`` and
+        ``key!~regex`` also negate. Clause forms: ``key``, ``key=value``, ``key>n`` /
+        ``>=`` / ``<`` / ``<=``, ``key~regex``. Quote a value that contains ``|`` or ``&``
+        (``'name="Ben & Jerry\'s"'``). Unquoted ``&`` is not an operator
+        (HTTP 400). Regex cannot use an index, so AND it with an indexed tag.
         ``limit`` is max histogram buckets (API default 100, max 10000). Example::
 
             client.count(
                 group_by="amenity",
                 bbox="18.05,59.32,18.10,59.34",
                 type="node",
-                tags=["amenity"],
+                tags=["amenity", "!amenity=bench"],
             )
             # {"groups": [{"value": "restaurant", "count": 184},
             #             {"value": "cafe", "count": 91},
@@ -295,10 +341,6 @@ class OSMFeaturesClient:
             params["within"] = within
         if tags is not None:
             params["tags"] = tags
-        if or_tags is not None:
-            params["or_tags"] = or_tags
-        if not_tags is not None:
-            params["not_tags"] = not_tags
         if limit is not None:
             params["limit"] = limit
         if min_length_m is not None:
@@ -347,8 +389,6 @@ class OSMFeaturesClient:
         way_shape: ShapeType | None = None,
         within: str | None = None,
         tags: list[str] | str | None = None,
-        or_tags: list[str] | str | None = None,
-        not_tags: list[str] | str | None = None,
         limit: int | None = None,
         min_length_m: float | None = None,
         max_length_m: float | None = None,
@@ -359,15 +399,22 @@ class OSMFeaturesClient:
         """``GET /v2/osm_features/density``: occupied grid bins as points.
 
         Omit ``cell_deg`` for the API default (0.1). ``type`` omitted is nodes.
-        Requires ``tags`` or ``or_tags``. ``limit`` is max occupied cells (the
-        key's ``max_limit`` when omitted). Returns a density FeatureCollection
+        Requires a positive ``tags`` filter (``tags="place"`` or ``tags="a|b"``).
+        ``tags`` is a string or list of strings, sent as one ``tags`` value. A list is
+        ANDed with ``,``. ``|`` inside one item is OR, and ``a|(b,c)`` is ``a OR (b AND c)``.
+        ``!`` prefixes one clause (``!key``, ``!key=value``); ``key!=value`` and
+        ``key!~regex`` also negate. Clause forms: ``key``, ``key=value``, ``key>n`` /
+        ``>=`` / ``<`` / ``<=``, ``key~regex``. Quote a value that contains ``|`` or ``&``
+        (``'name="Ben & Jerry\'s"'``). Unquoted ``&`` is not an operator
+        (HTTP 400). Regex cannot use an index, so AND it with an indexed tag.
+        ``limit`` is max occupied cells (the key's ``max_limit`` when omitted). Returns a density FeatureCollection
         (``properties.count``, ``total``, ``truncated``), not OSM features.
         A continent box can 400 on the per-request unit cap; pass
         ``disable_budget_warning=True`` to run it. Example::
 
             client.density(
                 bbox="-26,33,52,72",
-                tags=["place"],
+                tags="place",
                 cell_deg=0.1,
                 disable_budget_warning=True,
             )
@@ -389,10 +436,6 @@ class OSMFeaturesClient:
             params["within"] = within
         if tags is not None:
             params["tags"] = tags
-        if or_tags is not None:
-            params["or_tags"] = or_tags
-        if not_tags is not None:
-            params["not_tags"] = not_tags
         if limit is not None:
             params["limit"] = limit
         if min_length_m is not None:
@@ -439,9 +482,7 @@ class OSMFeaturesClient:
         bbox: str | None = None,
         location: dict[str, float] | None = None,
         radius: float | None = None,
-        type: str | None = None,  # noqa: A002
-        tags: list[str] | None = None,
-        or_tags: list[str] | None = None,
+        tags: list[str] | str | None = None,
         limit: int | None = None,
         open_now: bool = False,
         as_of: str | None = None,
@@ -451,6 +492,13 @@ class OSMFeaturesClient:
         timeout: float | None = DEFAULT_QUERY_ALL_TIMEOUT_S,
     ) -> dict[str, Any]:
         """Find places via ``POST /v1/places/search`` (GeoJSON FeatureCollection).
+
+        ``tags`` is a string or list of strings, sent as a JSON array that is ANDed.
+        ``|`` inside one item is OR, and ``a|(b,c)`` is ``a OR (b AND c)``. ``!`` prefixes
+        one clause (``!key``, ``!key=value``); ``key!=value`` and ``key!~regex`` also
+        negate. Quote a value that contains ``|`` or ``&``
+        (``'name="Ben & Jerry\'s"'``). Unquoted ``&`` is not an operator
+        (HTTP 400). Regex cannot use an index, so AND it with an indexed tag.
 
         ``bbox_tiles`` and ``auto_split`` are client-side, like :meth:`query`,
         and **only apply to bbox search**. ``bbox_tiles`` splits the bbox up
@@ -475,9 +523,7 @@ class OSMFeaturesClient:
             bbox=bbox,
             location=location,
             radius=radius,
-            type=type,
             tags=tags,
-            or_tags=or_tags,
             limit=limit,
             open_now=open_now,
             as_of=as_of,
@@ -492,22 +538,26 @@ class OSMFeaturesClient:
         *,
         location: dict[str, float],
         radius: float | None = None,
-        type: str | None = None,  # noqa: A002
-        tags: list[str] | None = None,
-        or_tags: list[str] | None = None,
+        tags: list[str] | str | None = None,
         limit: int | None = None,
         open_now: bool = False,
         as_of: str | None = None,
     ) -> dict[str, Any]:
-        """Nearest places ranked by straight-line distance (``POST /v1/places/nearby``)."""
+        """Nearest places ranked by straight-line distance (``POST /v1/places/nearby``).
+
+        ``tags`` is a string or list of strings, sent as a JSON array that is ANDed.
+        ``|`` inside one item is OR, and ``a|(b,c)`` is ``a OR (b AND c)``. ``!`` prefixes
+        one clause (``!key``, ``!key=value``); ``key!=value`` and ``key!~regex`` also
+        negate. Quote a value that contains ``|`` or ``&``
+        (``'name="Ben & Jerry\'s"'``). Unquoted ``&`` is not an operator
+        (HTTP 400). Regex cannot use an index, so AND it with an indexed tag.
+        """
         return self._post_json(
             PLACES_NEARBY_PATH,
             places_nearby_body(
                 location=location,
                 radius=radius,
-                type=type,
                 tags=tags,
-                or_tags=or_tags,
                 limit=limit,
                 open_now=open_now,
                 as_of=as_of,

@@ -100,7 +100,7 @@ def _search_open_at_clock(
     *,
     location: dict[str, float],
     radius: float,
-    or_tags: list[str],
+    tags: list[str],
     hour: int,
     want: int,
     page: int = 30,
@@ -113,7 +113,7 @@ def _search_open_at_clock(
         fc = client.places_search(
             location=location,
             radius=radius,
-            or_tags=or_tags,
+            tags=["|".join(tags)],
             as_of=as_of,
             limit=limit,
         )
@@ -222,7 +222,7 @@ def test_bar_crawl_sodermalm_stockholm(client: OSMFeaturesClient):
     search = client.places_search(
         location=location,
         radius=_WALK_RADIUS_M,
-        or_tags=["amenity=bar", "amenity=pub"],
+        tags=["amenity=bar|amenity=pub"],
         limit=30,
     )
     features = search.get("features") or []
@@ -234,7 +234,7 @@ def test_bar_crawl_sodermalm_stockholm(client: OSMFeaturesClient):
     evening = client.places_search(
         location=location,
         radius=_WALK_RADIUS_M,
-        or_tags=["amenity=bar", "amenity=pub"],
+        tags=["amenity=bar|amenity=pub"],
         limit=30,
         open_now=True,
         as_of=_at_clock(18),
@@ -298,7 +298,7 @@ def test_bike_parks_cafe_stockholm(client: OSMFeaturesClient):
         location={"lat": origin["lat"], "lng": origin["lon"]},
         radius=_BIKE_RADIUS_M,
         limit=50,
-        or_tags=[f"amenity={a}" for a in _REFRESHMENT_AMENITIES],
+        tags=["|".join(f"amenity={a}" for a in _REFRESHMENT_AMENITIES)],
         open_now=True,
         as_of=_at_clock(15),
     )
@@ -377,7 +377,7 @@ def test_filter_then_search_bike_isochrone_stockholm(client: OSMFeaturesClient):
     search = client.places_search(
         location={"lat": hotel["lat"], "lng": hotel["lon"]},
         radius=budget_m,
-        or_tags=["amenity=cafe", "amenity=restaurant"],
+        tags=["amenity=cafe|amenity=restaurant"],
         open_now=True,
         as_of=_at_clock(20),
         limit=50,
@@ -477,7 +477,7 @@ def test_client_open_after_clock_stockholm(client: OSMFeaturesClient):
         client,
         location=location,
         radius=_WALK_RADIUS_M,
-        or_tags=["amenity=bar", "amenity=pub"],
+        tags=["amenity=bar|amenity=pub"],
         hour=20,
         want=want,
     )

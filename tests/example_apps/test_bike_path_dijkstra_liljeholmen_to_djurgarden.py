@@ -22,8 +22,7 @@ Algorithm notes:
   - Grade-separated crossings are handled via the layer-aware node tuples
     produced by ``build_nx_graph`` (see ``graph_utils.py``).
 
-API calls: ``query_all`` per tile with ``or_tags=[bicycle, highway=cycleway]``
-and ``not_tags`` filtering non-rideable values.
+API calls: ``query_all`` per tile with ``tags=['bicycle|highway=cycleway', '!bicycle=no', ...]``.
 """
 
 import pytest
@@ -42,10 +41,8 @@ CORRIDOR_TILES = [
 
 def test_bike_path_dijkstra_liljeholmen_to_djurgarden(client: OSMFeaturesClient):
     # Query each corridor tile separately; results are merged client-side.
-    # or_tags=bicycle matches any way carrying a bicycle key.
-    # or_tags=highway=cycleway catches dedicated cycleways that carry no
-    # explicit bicycle tag (permission implied by way type).
-    # not_tags excludes the known non-bikeable values.
+    # tags=bicycle|highway=cycleway matches a bicycle key or a dedicated cycleway.
+    # Leading ! excludes the known non-bikeable values.
     all_features: list = []
     seen_tile_ids: set[str] = set()
 
@@ -55,8 +52,13 @@ def test_bike_path_dijkstra_liljeholmen_to_djurgarden(client: OSMFeaturesClient)
             type="way",
             way_shape="line",
             clip_geometry=False,
-            or_tags=["bicycle", "highway=cycleway"],
-            not_tags=["bicycle=no", "bicycle=private", "bicycle=dismount", "bicycle=use_sidepath"],
+            tags=[
+                "bicycle|highway=cycleway",
+                "!bicycle=no",
+                "!bicycle=private",
+                "!bicycle=dismount",
+                "!bicycle=use_sidepath",
+            ],
         )
         assert isinstance(tile_data, OSMFeatureCollection)
         for f in tile_data["features"]:

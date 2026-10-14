@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 import responses as rsps
@@ -12,6 +13,8 @@ from osmfeatures._geo_agent import (
     normalize_travel_mode,
     parse_place_ref,
     places_details_path,
+    places_nearby_body,
+    places_search_body,
     routes_optimized_path_body,
 )
 from osmfeatures._places import _merge_place_collections
@@ -41,7 +44,7 @@ def test_places_search_posts_camelcase_body(client: OSMFeaturesClient):
     out = client.places_search(
         location={"lat": 59.316, "lon": 18.075},
         radius=500,
-        or_tags=["amenity=cafe"],
+        tags=["amenity=cafe"],
         open_now=True,
         as_of="2026-08-10T18:00:00+02:00",
         limit=10,
@@ -49,10 +52,38 @@ def test_places_search_posts_camelcase_body(client: OSMFeaturesClient):
     assert out["type"] == "FeatureCollection"
     body = json.loads(rsps.calls[0].request.body)
     assert body["location"] == {"lat": 59.316, "lng": 18.075}
-    assert body["orTags"] == ["amenity=cafe"]
+    assert body["tags"] == ["amenity=cafe"]
     assert body["openNow"] is True
     assert body["asOf"] == "2026-08-10T18:00:00+02:00"
     assert body["limit"] == 10
+    assert "type" not in body
+
+
+@rsps.activate
+def test_places_search_sends_tags_as_json_array(client: OSMFeaturesClient):
+    rsps.add(
+        rsps.POST,
+        f"{BASE_URL}/v1/places/search",
+        json={"type": "FeatureCollection", "features": []},
+    )
+    client.places_search(
+        bbox="18.05,59.31,18.10,59.33",
+        tags=["amenity=cafe|amenity=bar", "!bicycle=no"],
+    )
+    body = json.loads(rsps.calls[0].request.body)
+    assert body["tags"] == ["amenity=cafe|amenity=bar", "!bicycle=no"]
+
+
+@rsps.activate
+def test_places_search_string_tags_same_as_one_list_item(client: OSMFeaturesClient):
+    rsps.add(
+        rsps.POST,
+        f"{BASE_URL}/v1/places/search",
+        json={"type": "FeatureCollection", "features": []},
+    )
+    client.places_search(bbox="18.05,59.31,18.10,59.33", tags="amenity=cafe")
+    body = json.loads(rsps.calls[0].request.body)
+    assert body["tags"] == ["amenity=cafe"]
 
 
 @rsps.activate
@@ -111,6 +142,17 @@ def test_normalize_travel_mode():
     assert body["travelMode"] == "WALK"
 
 
+def test_places_bodies_omit_type():
+    search = places_search_body(
+        bbox="18.05,59.31,18.10,59.33", tags=["amenity=cafe"]
+    )
+    nearby = places_nearby_body(
+        location={"lat": 59.3, "lng": 18.0}, tags=["amenity=cafe"]
+    )
+    assert "type" not in search
+    assert "type" not in nearby
+
+
 @rsps.activate
 def test_usage(client: OSMFeaturesClient):
     rsps.add(
@@ -128,7 +170,7 @@ def test_places_nearby(client: OSMFeaturesClient):
     rsps.add(rsps.POST, f"{BASE_URL}/v1/places/nearby", json={"status": "ok", "items": []})
     nearby = client.places_nearby(
         location={"lat": 59.3, "lng": 18.0},
-        type="cafe",
+        tags=["amenity=cafe"],
         limit=3,
         open_now=True,
         as_of="2026-08-10T18:00:00+02:00",
@@ -139,7 +181,17 @@ def test_places_nearby(client: OSMFeaturesClient):
     assert body["openNow"] is True
     assert body["asOf"] == "2026-08-10T18:00:00+02:00"
     assert body["limit"] == 3
+    assert body["tags"] == ["amenity=cafe"]
     assert "radius" not in body
+    assert "type" not in body
+
+
+@rsps.activate
+def test_places_nearby_string_tags_same_as_one_list_item(client: OSMFeaturesClient):
+    rsps.add(rsps.POST, f"{BASE_URL}/v1/places/nearby", json={"status": "ok", "items": []})
+    client.places_nearby(location={"lat": 59.3, "lng": 18.0}, tags="amenity=cafe")
+    body = json.loads(rsps.calls[0].request.body)
+    assert body["tags"] == ["amenity=cafe"]
 
 
 @rsps.activate
@@ -150,14 +202,16 @@ def test_places_and_routes_omit_api_defaults(client: OSMFeaturesClient):
         json={"type": "FeatureCollection", "features": []},
     )
     rsps.add(rsps.POST, f"{BASE_URL}/v1/places/nearby", json={"status": "ok", "items": []})
-    client.places_search(bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=cafe"])
+    client.places_search(bbox="18.05,59.31,18.10,59.33", tags=["amenity=cafe"])
     search_body = json.loads(rsps.calls[0].request.body)
     assert "limit" not in search_body
     assert "openNow" not in search_body
-    client.places_nearby(location={"lat": 59.3, "lng": 18.0}, or_tags=["amenity=cafe"])
+    assert "type" not in search_body
+    client.places_nearby(location={"lat": 59.3, "lng": 18.0}, tags=["amenity=cafe"])
     nearby_body = json.loads(rsps.calls[1].request.body)
     assert "limit" not in nearby_body
     assert "radius" not in nearby_body
+    assert "type" not in nearby_body
 
 
 def _places_search_bboxes() -> list[str]:
@@ -242,7 +296,7 @@ def test_places_search_bbox_tiles_splits_upfront(client: OSMFeaturesClient):
             "metadata": {"units": 7, "evaluated_at": "2026-08-10T16:00:01Z"},
         },
     )
-    out = client.places_search(bbox=bbox, or_tags=["amenity=cafe"], bbox_tiles=2)
+    out = client.places_search(bbox=bbox, tags=["amenity=cafe"], bbox_tiles=2)
     assert [f["id"] for f in out["features"]] == ["node/1", "node/2"]
     assert _places_search_bboxes() == tiles
     assert out["metadata"]["units"] == 9
@@ -254,7 +308,7 @@ def test_places_search_bbox_tiles_requires_bbox(client: OSMFeaturesClient):
         client.places_search(
             location={"lat": 59.3, "lng": 18.0},
             radius=500,
-            or_tags=["amenity=cafe"],
+            tags=["amenity=cafe"],
             bbox_tiles=2,
         )
 
@@ -264,7 +318,7 @@ def test_places_search_auto_split_requires_bbox(client: OSMFeaturesClient):
         client.places_search(
             location={"lat": 59.3, "lng": 18.0},
             radius=500,
-            or_tags=["amenity=cafe"],
+            tags=["amenity=cafe"],
             auto_split=True,
         )
 
@@ -278,7 +332,7 @@ def test_places_search_area_overflow_is_the_api_error(client: OSMFeaturesClient)
         status=400,
     )
     with pytest.raises(OSMFeaturesAPIError, match="bbox area") as exc:
-        client.places_search(bbox="0,0,2,2", or_tags=["amenity=cafe"])
+        client.places_search(bbox="0,0,2,2", tags=["amenity=cafe"])
     assert "auto_split" not in str(exc.value)
     assert len(rsps.calls) == 1
 
@@ -313,7 +367,7 @@ def test_places_search_auto_split_counts_then_quarters_area_overflow(
             },
         )
     out = client.places_search(
-        bbox=bbox, or_tags=["amenity=cafe"], auto_split=True
+        bbox=bbox, tags=["amenity=cafe"], auto_split=True
     )
     assert {f["id"] for f in out["features"]} == {"node/0", "node/1", "node/2", "node/3"}
     assert _places_search_bboxes() == [bbox, *quarters]
@@ -342,7 +396,7 @@ def test_places_search_auto_split_does_not_jump_on_count_window(
     )
     with pytest.raises(OSMFeaturesAPIError, match="count bbox area") as exc:
         client.places_search(
-            bbox="0,0,30,20", or_tags=["amenity=cafe"], auto_split=True
+            bbox="0,0,30,20", tags=["amenity=cafe"], auto_split=True
         )
     assert "auto_split" not in str(exc.value)
     assert _places_search_bboxes() == []
@@ -370,7 +424,7 @@ def test_places_search_auto_split_keeps_page_limit(
     )
     out = client.places_search(
         bbox="0,0,1,1",
-        or_tags=["amenity=cafe"],
+        tags=["amenity=cafe"],
         limit=40,
         auto_split=True,
     )
@@ -426,7 +480,7 @@ def test_places_search_auto_split_jumps_area_without_probe_tree(
         content_type="application/json",
     )
     out = client.places_search(
-        bbox=bbox, or_tags=["amenity=cafe"], auto_split=True
+        bbox=bbox, tags=["amenity=cafe"], auto_split=True
     )
     assert post_400s["n"] == 1
     assert _places_search_bboxes() == [bbox, *leaves]
@@ -453,7 +507,7 @@ def test_places_search_auto_split_dedupes_shared_edges(client: OSMFeaturesClient
         f"{BASE_URL}/v1/places/search",
         json={"type": "FeatureCollection", "features": [feat]},
     )
-    out = client.places_search(bbox=bbox, or_tags=["amenity=cafe"], bbox_tiles=2)
+    out = client.places_search(bbox=bbox, tags=["amenity=cafe"], bbox_tiles=2)
     assert [f["id"] for f in out["features"]] == ["node/1"]
     assert _places_search_bboxes() == tiles
 
@@ -519,14 +573,14 @@ def test_count_scalar_places_set(client: OSMFeaturesClient):
     )
     out = client.count(
         bbox="18.05,59.31,18.10,59.33",
-        or_tags=["amenity=cafe"],
+        tags=["amenity=cafe"],
         way_shape="polygon",
     )
     assert out["total"] == 18420
     assert out["groups"] == []
     url = rsps.calls[0].request.url
     assert "/v2/osm_features/count" in url
-    assert "or_tags=amenity%3Dcafe" in url
+    assert "tags=amenity%3Dcafe" in url
     assert "way_shape=polygon" in url
     assert "group_by" not in url
 
@@ -553,7 +607,7 @@ def test_places_search_auto_split_hours_ands_opening_hours(
     )
     out = client.places_search(
         bbox="0,0,1,1",
-        or_tags=["amenity=cafe"],
+        tags=["amenity=cafe"],
         as_of="2026-08-10T18:00:00+02:00",
         auto_split=True,
     )
@@ -562,9 +616,9 @@ def test_places_search_auto_split_hours_ands_opening_hours(
     assert all("/v1/account/tier" not in c.request.url for c in rsps.calls)
     assert _search_bodies()[0]["asOf"] == "2026-08-10T18:00:00+02:00"
     count_url = _features_count_urls()[0]
-    assert "tags=opening_hours" in count_url
-    assert "way_shape=polygon" in count_url
-    assert "or_tags=amenity%3Dcafe" in count_url
+    parsed = parse_qs(urlsplit(count_url).query)
+    assert parsed["tags"] == ["amenity=cafe,opening_hours"]
+    assert parsed["way_shape"] == ["polygon"]
 
 
 @rsps.activate
@@ -591,7 +645,7 @@ def test_places_search_auto_split_hours_page_limit_does_not_split(
     )
     out = client.places_search(
         bbox=bbox,
-        or_tags=["amenity=cafe"],
+        tags=["amenity=cafe"],
         as_of="2026-08-10T18:00:00+02:00",
         auto_split=True,
     )
@@ -636,7 +690,7 @@ def test_places_search_auto_split_hours_keeps_parse_cap_when_limit_raised(
         )
     out = client.places_search(
         bbox=bbox,
-        or_tags=["amenity=cafe"],
+        tags=["amenity=cafe"],
         as_of="2026-08-10T18:00:00+02:00",
         limit=20_000,
         auto_split=True,
@@ -686,7 +740,7 @@ def test_places_search_auto_split_jumps_on_hours_parse_limit_fetch(
         )
     out = client.places_search(
         bbox=bbox,
-        or_tags=["amenity=cafe"],
+        tags=["amenity=cafe"],
         as_of="2026-08-10T18:00:00+02:00",
         auto_split=True,
     )
@@ -730,7 +784,7 @@ def test_places_search_auto_split_open_now_splits_on_scan_cap(
         )
     out = client.places_search(
         bbox=bbox,
-        or_tags=["amenity=cafe"],
+        tags=["amenity=cafe"],
         open_now=True,
         auto_split=True,
     )
@@ -740,7 +794,8 @@ def test_places_search_auto_split_open_now_splits_on_scan_cap(
     assert "limit" not in _search_bodies()[0]
     assert all(c.request.url != ACCOUNT_TIER_URL for c in rsps.calls)
     count_url = _features_count_urls()[0]
-    assert "tags=opening_hours" in count_url
+    parsed = parse_qs(urlsplit(count_url).query)
+    assert parsed["tags"] == ["amenity=cafe,opening_hours"]
 
 
 @rsps.activate
@@ -782,10 +837,40 @@ def test_places_search_auto_split_jumps_when_total_exceeds_tier(
             },
         )
     out = client.places_search(
-        bbox=bbox, or_tags=["amenity=cafe"], auto_split=True
+        bbox=bbox, tags=["amenity=cafe"], auto_split=True
     )
     assert {f["id"] for f in out["features"]} == {"node/0", "node/1"}
     assert _places_search_bboxes() == tiles
+
+
+@rsps.activate
+def test_places_search_auto_split_string_tags_not_character_split(
+    client: OSMFeaturesClient,
+):
+    add_account_tier_response()
+    rsps.add(rsps.GET, STATS_URL, body=_count_payload(1))
+    rsps.add(
+        rsps.POST,
+        f"{BASE_URL}/v1/places/search",
+        json={
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "id": "node/1",
+                    "geometry": None,
+                    "properties": {},
+                }
+            ],
+        },
+    )
+    out = client.places_search(
+        bbox="0,0,1,1", tags="amenity=cafe", auto_split=True
+    )
+    assert [f["id"] for f in out["features"]] == ["node/1"]
+    parsed = parse_qs(urlsplit(_features_count_urls()[0]).query)
+    assert parsed["tags"] == ["amenity=cafe"]
+    assert _search_bodies()[0]["tags"] == ["amenity=cafe"]
 
 
 def test_parse_place_ref():

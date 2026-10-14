@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from ._http import normalize_tags
+
 RouteTravelMode = Literal["WALK", "BICYCLE"]
 _TRAVEL_MODES = frozenset({"WALK", "BICYCLE"})
 
@@ -69,9 +71,7 @@ def places_search_body(
     bbox: str | None = None,
     location: dict[str, float] | None = None,
     radius: float | None = None,
-    type: str | None = None,  # noqa: A002
-    tags: list[str] | None = None,
-    or_tags: list[str] | None = None,
+    tags: list[str] | str | None = None,
     limit: int | None = None,
     open_now: bool = False,
     as_of: str | None = None,
@@ -83,12 +83,9 @@ def places_search_body(
         body["location"] = latlng(location)
     if radius is not None:
         body["radius"] = radius
-    if type is not None:
-        body["type"] = type
-    if tags:
-        body["tags"] = list(tags)
-    if or_tags:
-        body["orTags"] = list(or_tags)
+    normalized = normalize_tags(tags)
+    if normalized:
+        body["tags"] = normalized
     if limit is not None:
         body["limit"] = limit
     if open_now:
@@ -102,9 +99,7 @@ def places_nearby_body(
     *,
     location: dict[str, float],
     radius: float | None = None,
-    type: str | None = None,  # noqa: A002
-    tags: list[str] | None = None,
-    or_tags: list[str] | None = None,
+    tags: list[str] | str | None = None,
     limit: int | None = None,
     open_now: bool = False,
     as_of: str | None = None,
@@ -112,12 +107,9 @@ def places_nearby_body(
     body: dict[str, Any] = {"location": latlng(location)}
     if radius is not None:
         body["radius"] = radius
-    if type is not None:
-        body["type"] = type
-    if tags:
-        body["tags"] = list(tags)
-    if or_tags:
-        body["orTags"] = list(or_tags)
+    normalized = normalize_tags(tags)
+    if normalized:
+        body["tags"] = normalized
     if limit is not None:
         body["limit"] = limit
     if open_now:

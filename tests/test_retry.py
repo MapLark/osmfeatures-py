@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 import responses as rsps
 
-from osmfeatures import OSMFeaturesRateLimitError, OSMFeaturesAuthError, OSMFeaturesAPIError
+from osmfeatures import OSMFeaturesForbiddenError, OSMFeaturesRateLimitError, OSMFeaturesAuthError, OSMFeaturesAPIError
 from tests.conftest import FEATURES_V3_URL, STATS_URL, make_test_feature, make_feature_collection
 
 
@@ -40,33 +40,17 @@ def test_retries_exhausted_raises_rate_limit_error(client_with_retries):
 
 
 @rsps.activate
-def test_monthly_limit_not_retried(client_with_retries):
-    """rate_limit_monthly subtype (hard cap) should not be retried."""
+def test_monthly_quota_403_is_forbidden_not_retried(client_with_retries):
+    """Monthly quota is HTTP 403 quota_exceeded: ForbiddenError on the first attempt."""
     rsps.add(
         rsps.GET, FEATURES_V3_URL,
-        status=429,
-        json={"error": "too_many_requests", "subtype": "rate_limit_monthly", "detail": "Need 50 credits; 1 remaining this month.", "units": 50},
-    )
-    rsps.add(
-        rsps.GET, FEATURES_V3_URL,
-        status=429,
-        json={"error": "too_many_requests", "subtype": "rate_limit_monthly", "detail": "Need 50 credits; 1 remaining this month.", "units": 50},
-    )
-    rsps.add(
-        rsps.GET, FEATURES_V3_URL,
-        status=429,
-        json={"error": "too_many_requests", "subtype": "rate_limit_monthly", "detail": "Need 50 credits; 1 remaining this month.", "units": 50},
-    )
-    rsps.add(
-        rsps.GET, FEATURES_V3_URL,
-        status=429,
-        json={"error": "too_many_requests", "subtype": "rate_limit_monthly", "detail": "Need 50 credits; 1 remaining this month.", "units": 50},
+        status=403,
+        json={"error": "quota_exceeded", "detail": "Monthly credit budget exhausted."},
     )
 
-    with pytest.raises(OSMFeaturesRateLimitError) as exc_info:
+    with pytest.raises(OSMFeaturesForbiddenError, match="quota_exceeded"):
         client_with_retries.query(bbox="18.06,59.32,18.09,59.34")
 
-    assert exc_info.value.units == 50
     assert len(rsps.calls) == 1
 
 
@@ -90,6 +74,73 @@ def test_500_is_retried(client_with_retries):
 
     result = client_with_retries.query(bbox="18.06,59.32,18.09,59.34")
     assert len(rsps.calls) == 2
+
+
+@rsps.activate
+def test_places_post_500_is_not_retried(client_with_retries):
+    """Places/routes POSTs may already be billed; do not retry 5xx."""
+    from tests.conftest import BASE_URL
+
+    url = f"{BASE_URL}/v1/places/search"
+    rsps.add(rsps.POST, url, status=500, body="Internal Server Error")
+    rsps.add(
+        rsps.POST,
+        url,
+        json={"type": "FeatureCollection", "features": []},
+    )
+
+    with pytest.raises(OSMFeaturesAPIError) as exc_info:
+        client_with_retries.places_search(
+            bbox="18.05,59.31,18.10,59.33",
+            tags=["amenity=cafe"],
+        )
+
+    assert exc_info.value.status_code == 500
+    assert len(rsps.calls) == 1
+
+
+@rsps.activate
+def test_places_post_429_second_is_retried(client_with_retries):
+    """Transient per-second 429 on POST is still safe to retry."""
+    from tests.conftest import BASE_URL
+
+    url = f"{BASE_URL}/v1/places/search"
+    rsps.add(
+        rsps.POST,
+        url,
+        status=429,
+        json={
+            "error": "too_many_requests",
+            "subtype": "rate_limit_second",
+            "detail": "too fast",
+        },
+    )
+    rsps.add(
+        rsps.POST,
+        url,
+        json={"type": "FeatureCollection", "features": []},
+    )
+
+    out = client_with_retries.places_search(
+        bbox="18.05,59.31,18.10,59.33",
+        tags=["amenity=cafe"],
+    )
+    assert out["type"] == "FeatureCollection"
+    assert len(rsps.calls) == 2
+
+
+def test_for_non_idempotent_keeps_backoff_only_retries_429():
+    from osmfeatures import RetryConfig
+    from osmfeatures.retry import NON_IDEMPOTENT_RETRY_ON_STATUS
+
+    base = RetryConfig(max_retries=5, backoff_base=2.0, jitter=False)
+    post = base.for_non_idempotent()
+    assert post.max_retries == 5
+    assert post.backoff_base == 2.0
+    assert post.jitter is False
+    assert post.retry_on_status == NON_IDEMPOTENT_RETRY_ON_STATUS
+    assert 500 not in post.retry_on_status
+    assert base.retry_on_status != post.retry_on_status
 
 
 @rsps.activate

@@ -68,9 +68,7 @@ _SPATIAL_OPTIONS = [
     click.option("--radius", default=None, type=float, help="Search radius in metres (requires --location)"),
     click.option("--osm-ids", "osm_ids", default=None, help="Comma-separated OSM IDs (direct lookup)"),
     click.option("--within", default=None, help="Polygon spatial anchor: way/<id> or relation/<id>"),
-    click.option("--tags", multiple=True, help="Tag filter key=value, key, or key>n (AND, repeatable)"),
-    click.option("--or-tags", "or_tags", multiple=True, help="Tag filter OR group (repeatable)"),
-    click.option("--not-tags", "not_tags", multiple=True, help="Exclusion tag filter (repeatable)"),
+    click.option("--tags", default=None, help="Tag filter. Comma ANDs clauses, | is OR, (a,b)|c groups, !key negates"),
     click.option("--type", "element_type", default=None, help="Comma-separated element types: node,way,relation"),
     click.option("--way-shape", "way_shape", default=None, type=click.Choice(["line", "polygon", "all"]), help="Geometry class for ways/relations"),
     click.option("--shape", default=None, type=click.Choice(["line", "polygon", "all"]), help="Deprecated alias for --way-shape"),
@@ -128,9 +126,7 @@ def query_cmd(
     radius: float | None,
     osm_ids: str | None,
     within: str | None,
-    tags: tuple[str, ...],
-    or_tags: tuple[str, ...],
-    not_tags: tuple[str, ...],
+    tags: str | None,
     element_type: str | None,
     way_shape: str | None,
     shape: str | None,
@@ -165,11 +161,7 @@ def query_cmd(
     if within:
         params["within"] = within
     if tags:
-        params["tags"] = list(tags)
-    if or_tags:
-        params["or_tags"] = list(or_tags)
-    if not_tags:
-        params["not_tags"] = list(not_tags)
+        params["tags"] = tags
     if element_type:
         params["type"] = [t.strip() for t in element_type.split(",")]
     resolved_shape = way_shape or shape
@@ -242,9 +234,7 @@ def count_cmd(
     radius: float | None,
     osm_ids: str | None,
     within: str | None,
-    tags: tuple[str, ...],
-    or_tags: tuple[str, ...],
-    not_tags: tuple[str, ...],
+    tags: str | None,
     element_type: str | None,
     way_shape: str | None,
     shape: str | None,
@@ -283,11 +273,7 @@ def count_cmd(
     if within:
         params["within"] = within
     if tags:
-        params["tags"] = list(tags)
-    if or_tags:
-        params["or_tags"] = list(or_tags)
-    if not_tags:
-        params["not_tags"] = list(not_tags)
+        params["tags"] = tags
     if element_type:
         params["type"] = [t.strip() for t in element_type.split(",")]
     resolved_shape = way_shape or shape
@@ -345,9 +331,7 @@ def density_cmd(
     radius: float | None,
     osm_ids: str | None,
     within: str | None,
-    tags: tuple[str, ...],
-    or_tags: tuple[str, ...],
-    not_tags: tuple[str, ...],
+    tags: str | None,
     element_type: str | None,
     way_shape: str | None,
     shape: str | None,
@@ -386,11 +370,7 @@ def density_cmd(
     if within:
         params["within"] = within
     if tags:
-        params["tags"] = list(tags)
-    if or_tags:
-        params["or_tags"] = list(or_tags)
-    if not_tags:
-        params["not_tags"] = list(not_tags)
+        params["tags"] = tags
     if element_type:
         params["type"] = [t.strip() for t in element_type.split(",")]
     resolved_shape = way_shape or shape

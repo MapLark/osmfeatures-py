@@ -8,7 +8,7 @@ client = OSMFeaturesClient(
 cafes = client.places_search(
     location={"lat": 59.316, "lng": 18.075},
     radius=800,
-    or_tags=["amenity=cafe"],
+    tags=["amenity=cafe"],
     open_now=True,
 )
 print(cafes)

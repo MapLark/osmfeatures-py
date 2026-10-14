@@ -53,14 +53,23 @@ def test_query_sends_auth_header(client):
 
 
 @rsps.activate
-def test_query_repeatable_tags(client):
+def test_query_list_tags_sent_as_one_comma_joined_param(client):
     rsps.add(rsps.GET, FEATURES_V3_URL, json=make_feature_collection([]))
 
     client.query(bbox="18.06,59.32,18.09,59.34", tags=["building", "name=City Hall"])
 
-    qs = rsps.calls[0].request.url
-    assert "tags=building" in qs
-    assert "tags=name" in qs
+    parsed = parse_qs(urlsplit(rsps.calls[0].request.url).query)
+    assert parsed["tags"] == ["building,name=City Hall"]
+
+
+@rsps.activate
+def test_query_string_tags_sent_as_one_param(client):
+    rsps.add(rsps.GET, FEATURES_V3_URL, json=make_feature_collection([]))
+
+    client.query(bbox="18.06,59.32,18.09,59.34", tags="amenity=cafe")
+
+    parsed = parse_qs(urlsplit(rsps.calls[0].request.url).query)
+    assert parsed["tags"] == ["amenity=cafe"]
 
 
 @rsps.activate

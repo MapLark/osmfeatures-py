@@ -26,8 +26,6 @@ def _q(
     location: str | None = None,
     radius: float | None = None,
     tags: list[str] | None = None,
-    or_tags: list[str] | None = None,
-    not_tags: list[str] | None = None,
     type: list[str] | None = None,
     way_shape: str | None = None,
     osm_ids: str | None = None,
@@ -42,10 +40,6 @@ def _q(
         params["radius"] = radius
     if tags:
         params["tags"] = tags
-    if or_tags:
-        params["or_tags"] = or_tags
-    if not_tags:
-        params["not_tags"] = not_tags
     if type:
         params["type"] = type
     if way_shape:
@@ -168,12 +162,7 @@ def get_public_transport_stops(
         client,
         bbox=bbox,
         type=["node"],
-        or_tags=[
-            "public_transport=stop_position",
-            "railway=stop",
-            "highway=bus_stop",
-            "railway=tram_stop",
-        ],
+        tags=["public_transport=stop_position|railway=stop|highway=bus_stop|railway=tram_stop"],
         **kwargs,
     )
 
@@ -255,12 +244,7 @@ def get_healthcare(
     return _q(
         client,
         bbox=bbox,
-        or_tags=[
-            "amenity=hospital",
-            "amenity=clinic",
-            "amenity=pharmacy",
-            "healthcare",
-        ],
+        tags=["amenity=hospital|amenity=clinic|amenity=pharmacy|healthcare"],
         **kwargs,
     )
 
@@ -274,12 +258,7 @@ def get_schools(
     return _q(
         client,
         bbox=bbox,
-        or_tags=[
-            "amenity=school",
-            "amenity=university",
-            "amenity=college",
-            "amenity=kindergarten",
-        ],
+        tags=["amenity=school|amenity=university|amenity=college|amenity=kindergarten"],
         **kwargs,
     )
 
@@ -298,12 +277,7 @@ def get_parks(
     return _q(
         client,
         bbox=bbox,
-        or_tags=[
-            "leisure=park",
-            "leisure=garden",
-            "leisure=playground",
-            "leisure=nature_reserve",
-        ],
+        tags=["leisure=park|leisure=garden|leisure=playground|leisure=nature_reserve"],
         **kwargs,
     )
 
@@ -317,13 +291,7 @@ def get_green_spaces(
     return _q(
         client,
         bbox=bbox,
-        or_tags=[
-            "landuse=grass",
-            "landuse=forest",
-            "landuse=meadow",
-            "natural=wood",
-            "natural=scrub",
-        ],
+        tags=["landuse=grass|landuse=forest|landuse=meadow|natural=wood|natural=scrub"],
         **kwargs,
     )
 
@@ -337,13 +305,7 @@ def get_water(
     return _q(
         client,
         bbox=bbox,
-        or_tags=[
-            "natural=water",
-            "waterway=river",
-            "waterway=stream",
-            "waterway=canal",
-            "landuse=reservoir",
-        ],
+        tags=["natural=water|waterway=river|waterway=stream|waterway=canal|landuse=reservoir"],
         **kwargs,
     )
 

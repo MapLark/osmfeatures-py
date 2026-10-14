@@ -12,6 +12,7 @@ from osmfeatures import (
     BinaryQueryResult,
     OSMFeaturesAuthError,
     OSMFeaturesAPIError,
+    OSMFeaturesForbiddenError,
     OSMFeaturesRateLimitError,
     OSMFeaturesTooDenseError,
     OSMFeaturesTooManyTilesError,
@@ -123,6 +124,27 @@ async def test_async_query_returns_feature_collection():
     assert result.features[0].id == "way/1"
     assert result.features[0].osm_type == "way"
     assert result.features[0].osm_id == 1
+
+
+async def test_async_query_forwards_response_headers():
+    features = [make_test_feature("way/1")]
+    transport = _MockTransport(
+        [
+            (
+                200,
+                make_feature_collection(features),
+                {"X-Usage-Units-Charged": "9", "X-Returned": "1", "X-Has-More": "false"},
+            )
+        ]
+    )
+    client = _make_client(transport)
+
+    async with client:
+        result = await client.query_async(bbox="18.06,59.32,18.09,59.34")
+
+    # httpx lowercases response header names.
+    headers = {k.lower(): v for k, v in result["response_headers"].items()}
+    assert headers["x-usage-units-charged"] == "9"
 
 
 async def test_async_query_sends_auth_header():
@@ -269,7 +291,7 @@ async def test_async_query_rejects_cursor():
     transport = _MockTransport([(200, make_feature_collection([]))])
     client = _make_client(transport)
     async with client:
-        with pytest.raises(ValueError, match="cursor"):
+        with pytest.raises(TypeError, match="cursor"):
             await client.query_async(bbox="18.06,59.32,18.09,59.34", cursor="abc")
     assert transport.call_count == 0
 
@@ -493,31 +515,24 @@ async def test_async_retries_exhausted_raises_rate_limit_error():
     assert transport.call_count == 4
 
 
-async def test_async_monthly_limit_not_retried():
-    """rate_limit_monthly subtype (hard cap) must surface on the first attempt without retrying."""
-    monthly = {
-        "error": "too_many_requests",
-        "subtype": "rate_limit_monthly",
-        "detail": "Need 50 credits; 1 remaining this month.",
-        "units": 50,
-        "tier": "free",
-    }
+async def test_async_monthly_quota_403_not_retried():
+    """Monthly quota is 403 quota_exceeded: ForbiddenError on the first attempt, no retry."""
+    quota = {"error": "quota_exceeded", "detail": "Monthly credit budget exhausted."}
     transport = _MockTransport(
         [
-            (429, monthly),
+            (403, quota),
             # Extra entries that must never be reached:
-            (429, monthly),
-            (429, monthly),
-            (429, monthly),
+            (403, quota),
+            (403, quota),
+            (403, quota),
         ]
     )
     client = _make_client(transport, max_retries=3)
 
     async with client:
-        with pytest.raises(OSMFeaturesRateLimitError) as exc_info:
+        with pytest.raises(OSMFeaturesForbiddenError, match="quota_exceeded"):
             await client.query_async(bbox="18.06,59.32,18.09,59.34")
 
-    assert exc_info.value.units == 50
     assert transport.call_count == 1
 
 
@@ -536,6 +551,54 @@ async def test_async_401_not_retried():
             await client.query_async(bbox="18.06,59.32,18.09,59.34")
 
     assert transport.call_count == 1
+
+
+async def test_async_places_post_500_is_not_retried():
+    """Places POSTs may already be billed; do not retry 5xx."""
+    transport = _MockTransport(
+        [
+            (500, {"error": "internal"}),
+            (200, {"type": "FeatureCollection", "features": []}),
+        ]
+    )
+    client = _make_client(transport, max_retries=3)
+
+    async with client:
+        with pytest.raises(OSMFeaturesAPIError) as exc_info:
+            await client.places_search_async(
+                bbox="18.05,59.31,18.10,59.33",
+                tags=["amenity=cafe"],
+            )
+
+    assert exc_info.value.status_code == 500
+    assert transport.call_count == 1
+
+
+async def test_async_places_post_429_second_is_retried():
+    """Transient per-second 429 on POST is still safe to retry."""
+    transport = _MockTransport(
+        [
+            (
+                429,
+                {
+                    "error": "too_many_requests",
+                    "subtype": "rate_limit_second",
+                    "detail": "too fast",
+                },
+            ),
+            (200, {"type": "FeatureCollection", "features": []}),
+        ]
+    )
+    client = _make_client(transport, max_retries=3)
+
+    async with client:
+        out = await client.places_search_async(
+            bbox="18.05,59.31,18.10,59.33",
+            tags=["amenity=cafe"],
+        )
+
+    assert out["type"] == "FeatureCollection"
+    assert transport.call_count == 2
 
 
 async def test_async_usage():
@@ -647,7 +710,7 @@ async def test_async_places_search_bbox_tiles_splits_upfront():
     client = _make_client(transport)
     async with client:
         result = await client.places_search_async(
-            bbox=bbox, or_tags=["amenity=cafe"], bbox_tiles=2
+            bbox=bbox, tags=["amenity=cafe"], bbox_tiles=2
         )
     assert [f["id"] for f in result["features"]] == ["node/1", "node/2"]
     assert _places_post_bboxes(transport) == tiles
@@ -661,7 +724,7 @@ async def test_async_places_search_bbox_tiles_requires_bbox():
             await client.places_search_async(
                 location={"lat": 59.3, "lng": 18.0},
                 radius=500,
-                or_tags=["amenity=cafe"],
+                tags=["amenity=cafe"],
                 bbox_tiles=2,
             )
 
@@ -681,7 +744,7 @@ async def test_async_places_search_auto_split_counts_then_quarters_area_overflow
     client = _make_client(transport)
     async with client:
         result = await client.places_search_async(
-            bbox=bbox, or_tags=["amenity=cafe"], auto_split=True
+            bbox=bbox, tags=["amenity=cafe"], auto_split=True
         )
     assert {f["id"] for f in result["features"]} == {
         "node/0", "node/1", "node/2", "node/3",
@@ -705,14 +768,14 @@ async def test_async_count_scalar_places_set():
     async with client:
         out = await client.count_async(
             bbox="18.05,59.31,18.10,59.33",
-            or_tags=["amenity=cafe"],
+            tags=["amenity=cafe"],
             way_shape="polygon",
         )
     assert out["total"] == 12
     assert out["groups"] == []
     assert transport.requests[0].url.path.endswith("/v2/osm_features/count")
     parsed = parse_qs(urlsplit(str(transport.requests[0].url)).query)
-    assert parsed["or_tags"] == ["amenity=cafe"]
+    assert parsed["tags"] == ["amenity=cafe"]
     assert parsed["way_shape"] == ["polygon"]
     assert "group_by" not in parsed
 
@@ -725,7 +788,7 @@ async def test_async_places_search_auto_split_hours_skips_account_tier():
     async with client:
         result = await client.places_search_async(
             bbox="0,0,1,1",
-            or_tags=["amenity=cafe"],
+            tags=["amenity=cafe"],
             as_of="2026-08-10T18:00:00+02:00",
             auto_split=True,
         )
@@ -752,7 +815,7 @@ async def test_async_places_search_auto_split_open_now_splits_on_scan_cap():
     async with client:
         result = await client.places_search_async(
             bbox=bbox,
-            or_tags=["amenity=cafe"],
+            tags=["amenity=cafe"],
             open_now=True,
             auto_split=True,
         )
@@ -761,3 +824,38 @@ async def test_async_places_search_auto_split_open_now_splits_on_scan_cap():
     assert all(
         not req.url.path.endswith("/v1/account/tier") for req in transport.requests
     )
+
+
+async def test_async_places_search_auto_split_string_tags_not_character_split():
+    from urllib.parse import parse_qs, urlsplit
+
+    transport = _MockTransport(
+        [_account_tier(), _stats_total(1), (200, _place_fc("node/1"))]
+    )
+    client = _make_client(transport)
+    async with client:
+        result = await client.places_search_async(
+            bbox="0,0,1,1", tags="amenity=cafe", auto_split=True
+        )
+    assert [f["id"] for f in result["features"]] == ["node/1"]
+    count_req = next(
+        req for req in transport.requests if req.url.path.endswith("/v2/osm_features/count")
+    )
+    parsed = parse_qs(urlsplit(str(count_req.url)).query)
+    assert parsed["tags"] == ["amenity=cafe"]
+    search_req = next(
+        req for req in transport.requests if req.url.path.endswith("/v1/places/search")
+    )
+    assert json.loads(search_req.content)["tags"] == ["amenity=cafe"]
+
+
+async def test_async_places_nearby_string_tags_same_as_one_list_item():
+    transport = _MockTransport([(200, {"status": "ok", "items": []})])
+    client = _make_client(transport)
+    async with client:
+        await client.places_nearby_async(
+            location={"lat": 59.3, "lng": 18.0}, tags="amenity=cafe"
+        )
+    body = json.loads(transport.requests[0].content)
+    assert body["tags"] == ["amenity=cafe"]
+    assert "type" not in body

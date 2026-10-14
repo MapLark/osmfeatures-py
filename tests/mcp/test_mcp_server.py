@@ -194,6 +194,9 @@ async def test_build_server_wires_instructions_and_tools():
     assert "{lon, lat}" in mcp.instructions
     assert "{SUMMARY_ITEM_CAP}" not in mcp.instructions
     assert "call geocode" in mcp.instructions
+    assert 'said "me"' in mcp.instructions
+    assert "stop and ask" in mcp.instructions
+    assert 'Do not geocode "me"' in mcp.instructions
     assert "count, not query" in mcp.instructions
     assert "Choose a tool:" in mcp.instructions
     assert "n(n-1)/2" in mcp.instructions
@@ -201,7 +204,9 @@ async def test_build_server_wires_instructions_and_tools():
     assert "Heatmap, density map" in mcp.instructions
     assert "draws the heatmap" in mcp.instructions
     assert 'tags=["amenity"]' in mcp.instructions
-    assert 'or_tags=["amenity"]' in mcp.instructions
+    assert 'tags=["amenity=cafe|amenity=bar"]' in mcp.instructions
+    assert 'tags=["a|b", "c"]' in mcp.instructions
+    assert "Unquoted & is not an operator" in mcp.instructions
     assert "amenity=*" in mcp.instructions
     assert "Europe place=*" not in mcp.instructions
     assert f"over {MAX_COMPARISONS} comparisons" in mcp.instructions
@@ -216,19 +221,22 @@ async def test_build_server_wires_instructions_and_tools():
     assert "auto_split" in query.inputSchema["properties"]
     count = next(t for t in tools if t.name == "count")
     assert "scalar total" in (count.description or "")
-    assert "key-only" in (count.description or "").lower()
+    assert "tags amenity" in (count.description or "").lower()
     assert "group_by" not in count.inputSchema.get("required", [])
     assert "group_by" in count.inputSchema["properties"]
     assert "bbox" in count.inputSchema["properties"]
     density = next(t for t in tools if t.name == "density")
     assert "preview_map" in (density.description or "")
     assert "heatmap" in (density.description or "")
-    assert "prefer tags" in (density.description or "").lower()
+    assert "positive tags filter" in (density.description or "").lower()
+    cell_deg_schema = density.inputSchema["properties"]["cell_deg"]
+    assert "0.0008" in (cell_deg_schema.get("description") or "")
+    assert "0.0012" in (cell_deg_schema.get("description") or "")
+    assert "do not keep 0.1" in (cell_deg_schema.get("description") or "")
+    assert "Stockholm" not in mcp.instructions
     tags_schema = density.inputSchema["properties"]["tags"]
-    or_schema = density.inputSchema["properties"]["or_tags"]
     assert "Key only" in (tags_schema.get("description") or "")
-    assert "Key only" in (or_schema.get("description") or "")
-    assert "bicycle" in (or_schema.get("description") or "")
+    assert "or_tags" not in density.inputSchema["properties"]
     assert "cell_deg" in density.inputSchema["properties"]
     assert "cell_deg" not in density.inputSchema.get("required", [])
     assert "result_too_large" in mcp.instructions
@@ -257,6 +265,7 @@ async def test_build_server_wires_instructions_and_tools():
     search = next(t for t in tools if t.name == "places_search")
     assert "save_as" in search.inputSchema["properties"]
     assert "auto_split" in search.inputSchema["properties"]
+    assert "type" not in search.inputSchema["properties"]
     assert "City-scale bbox" in (search.description or "")
     assert "bbox only" in (search.description or "")
     assert "does not apply to lat/lng/radius" in (search.description or "")
@@ -264,6 +273,7 @@ async def test_build_server_wires_instructions_and_tools():
     assert "closed places still return" in (search.description or "")
     assert "open_now=true keeps only open" in (search.description or "")
     nearby = next(t for t in tools if t.name == "places_nearby")
+    assert "type" not in nearby.inputSchema["properties"]
     assert "as_of stamps openNow" in (nearby.description or "")
     assert "open_now=true keeps only open" in (nearby.description or "")
     assert "places_search with auto_split" in mcp.instructions
@@ -339,7 +349,7 @@ async def test_call_tool_places_search_bbox_and_location(stack):
         mcp,
         "places_search",
         bbox="18.05,59.31,18.10,59.33",
-        or_tags=["amenity=cafe"],
+        tags=["amenity=cafe"],
         as_of="2026-08-10T18:00:00",
     )
     assert by_bbox["collection_id"] == "fc_1"
@@ -360,7 +370,7 @@ async def test_call_tool_places_search_bbox_and_location(stack):
         lat=59.316,
         lng=18.075,
         radius=800,
-        or_tags=["amenity=cafe"],
+        tags=["amenity=cafe"],
     )
     assert client.calls[-1][1]["location"] == {"lat": 59.316, "lng": 18.075}
     assert client.calls[-1][1]["radius"] == 800
@@ -388,7 +398,7 @@ async def test_call_tool_places_search_bbox_and_point_errors(stack):
             },
         )
     with pytest.raises(ToolError, match="requires bbox"):
-        await mcp.call_tool("places_search", {"or_tags": ["amenity=cafe"]})
+        await mcp.call_tool("places_search", {"tags": ["amenity=cafe"]})
 
 
 @pytest.mark.asyncio
@@ -410,7 +420,7 @@ async def test_call_tool_places_nearby_details_and_filter_open(stack):
         "places_nearby",
         lat=59.316,
         lng=18.075,
-        or_tags=["amenity=cafe"],
+        tags=["amenity=cafe"],
         limit=5,
         save_as="cafes",
     )
@@ -456,7 +466,7 @@ async def test_call_tool_points_in_polygon_keeps_nearby_distance(stack):
         ]
     }
     client.isochrone = {"status": "ok", "geometry": SQUARE, "distance_m": 1000.0, "duration_s": 714.0}
-    nearby = await _call(mcp, "places_nearby", lat=59.316, lng=18.075, or_tags=["amenity=cafe"])
+    nearby = await _call(mcp, "places_nearby", lat=59.316, lng=18.075, tags=["amenity=cafe"])
     iso = await _call(mcp, "routes_isochrone", lon=18.075, lat=59.316, max_distance_m=1000)
     inside = await _call(
         mcp, "points_in_polygon", points_id=nearby["collection_id"], polygon_id=iso["collection_id"]
@@ -471,11 +481,11 @@ async def test_call_tool_nearest_within_chain(stack):
     client, mcp = stack
     client.search = _fc(_feat("node/r1", 18.0702, 59.316, name="Pelikan"))
     restaurants = await _call(
-        mcp, "places_search", bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=restaurant"]
+        mcp, "places_search", bbox="18.05,59.31,18.10,59.33", tags=["amenity=restaurant"]
     )
     client.search = _fc(_feat("node/s1", 18.07, 59.316, name="Medborgarplatsen"))
     stations = await _call(
-        mcp, "places_search", bbox="18.05,59.31,18.10,59.33", or_tags=["railway=station"]
+        mcp, "places_search", bbox="18.05,59.31,18.10,59.33", tags=["railway=station"]
     )
     pairs = await _call(
         mcp,
@@ -496,11 +506,11 @@ async def test_call_tool_nearest_within_keeps_every_primary(stack):
     client, mcp = stack
     client.search = _fc(*[_feat(f"node/r{i}", 18.0702, 59.316, name=f"R{i}") for i in range(25)])
     restaurants = await _call(
-        mcp, "places_search", bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=restaurant"]
+        mcp, "places_search", bbox="18.05,59.31,18.10,59.33", tags=["amenity=restaurant"]
     )
     client.search = _fc(_feat("node/s1", 18.07, 59.316, name="Medborgarplatsen"))
     stations = await _call(
-        mcp, "places_search", bbox="18.05,59.31,18.10,59.33", or_tags=["railway=station"]
+        mcp, "places_search", bbox="18.05,59.31,18.10,59.33", tags=["railway=station"]
     )
     pairs = await _call(
         mcp,
@@ -519,11 +529,11 @@ async def test_call_tool_nearest_within_flags_truncated_items(stack):
     client, mcp = stack
     client.search = _fc(*[_feat(f"node/r{i}", 18.0702, 59.316, name=f"R{i}") for i in range(45)])
     restaurants = await _call(
-        mcp, "places_search", bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=restaurant"]
+        mcp, "places_search", bbox="18.05,59.31,18.10,59.33", tags=["amenity=restaurant"]
     )
     client.search = _fc(_feat("node/s1", 18.07, 59.316, name="Medborgarplatsen"))
     stations = await _call(
-        mcp, "places_search", bbox="18.05,59.31,18.10,59.33", or_tags=["railway=station"]
+        mcp, "places_search", bbox="18.05,59.31,18.10,59.33", tags=["railway=station"]
     )
     pairs = await _call(
         mcp,
@@ -543,11 +553,11 @@ async def test_call_tool_nearest_within_rejects_over_comparison_cap(stack, monke
     client, mcp = stack
     client.search = _fc(*[_feat(f"node/r{i}", 18.0702, 59.316, name=f"R{i}") for i in range(5)])
     restaurants = await _call(
-        mcp, "places_search", bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=restaurant"]
+        mcp, "places_search", bbox="18.05,59.31,18.10,59.33", tags=["amenity=restaurant"]
     )
     client.search = _fc(*[_feat(f"node/s{i}", 18.07, 59.316, name=f"S{i}") for i in range(5)])
     stations = await _call(
-        mcp, "places_search", bbox="18.05,59.31,18.10,59.33", or_tags=["railway=station"]
+        mcp, "places_search", bbox="18.05,59.31,18.10,59.33", tags=["railway=station"]
     )
     with pytest.raises(ToolError, match=r"5×5 comparisons"):
         await mcp.call_tool(
@@ -565,11 +575,11 @@ async def test_call_tool_pairs_within_chain(stack):
     client, mcp = stack
     client.search = _fc(_feat("node/r1", 18.0702, 59.316, name="Pelikan"))
     restaurants = await _call(
-        mcp, "places_search", bbox="18.05,59.31,18.10,59.33", or_tags=["amenity=restaurant"]
+        mcp, "places_search", bbox="18.05,59.31,18.10,59.33", tags=["amenity=restaurant"]
     )
     client.search = _fc(_feat("node/s1", 18.07, 59.316, name="Medborgarplatsen"))
     stations = await _call(
-        mcp, "places_search", bbox="18.05,59.31,18.10,59.33", or_tags=["railway=station"]
+        mcp, "places_search", bbox="18.05,59.31,18.10,59.33", tags=["railway=station"]
     )
     pairs = await _call(
         mcp,
@@ -621,7 +631,7 @@ async def test_call_tool_routes_containment_and_preview(stack):
     far = await _call(mcp, "point_in_polygon", collection_id=iso["collection_id"], lon=18.05, lat=59.35)
     assert near["inside"] is True
     assert far["inside"] is False
-    cafes = await _call(mcp, "places_search", lat=59.316, lng=18.075, radius=1500, or_tags=["amenity=cafe"])
+    cafes = await _call(mcp, "places_search", lat=59.316, lng=18.075, radius=1500, tags=["amenity=cafe"])
     inside = await _call(
         mcp, "points_in_polygon", points_id=cafes["collection_id"], polygon_id=iso["collection_id"]
     )

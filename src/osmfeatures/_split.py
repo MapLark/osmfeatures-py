@@ -57,8 +57,6 @@ _COUNT_FILTER_KEYS = (
     "type",
     "within",
     "tags",
-    "or_tags",
-    "not_tags",
     "min_length_m",
     "max_length_m",
     "min_area_m2",

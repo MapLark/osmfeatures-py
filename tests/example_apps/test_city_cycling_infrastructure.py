@@ -16,7 +16,7 @@ positive infrastructure values are matched; ``cycleway=no`` and
 
 API calls:
   - ``type=way&way_shape=line&tags=highway=cycleway``
-  - ``type=way&way_shape=line&or_tags=[cycleway=lane, cycleway:left=lane, ...]``
+  - ``type=way&way_shape=line&tags=cycleway=lane|cycleway:left=lane|...``
 """
 
 from haversine import Unit, haversine
@@ -53,7 +53,7 @@ def test_city_cycling_infrastructure(client: OSMFeaturesClient):
         bbox=SODERMALM_BBOX,
         type="way",
         way_shape="line",
-        or_tags=[f"{key}={val}" for key in _lane_keys for val in _lane_values],
+        tags=["|".join(f"{key}={val}" for key in _lane_keys for val in _lane_values)],
         limit=100,
     )
 

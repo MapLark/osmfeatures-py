@@ -6,7 +6,7 @@ OSM tags used:
   - ``highway=path`` + ``bicycle=yes`` or ``bicycle=designated``
   - ``highway=track`` + ``bicycle=yes`` or ``bicycle=designated``
 
-API calls use ``or_tags`` to match either bicycle permission value.
+API calls use one ``tags`` value with ``|`` for either bicycle permission.
 """
 
 from osmfeatures import OSMFeature, OSMFeatureCollection, OSMFeaturesClient
@@ -20,8 +20,7 @@ def test_cycling_trails(client: OSMFeaturesClient):
         bbox=DJURGARDEN_BBOX,
         type="way",
         way_shape="line",
-        tags="highway=path",
-        or_tags=["bicycle=yes", "bicycle=designated"],
+        tags=["highway=path", "bicycle=yes|bicycle=designated"],
         limit=50,
     )
     # Dedicated cycling tracks (unpaved forestry-style)
@@ -29,8 +28,7 @@ def test_cycling_trails(client: OSMFeaturesClient):
         bbox=DJURGARDEN_BBOX,
         type="way",
         way_shape="line",
-        tags="highway=track",
-        or_tags=["bicycle=yes", "bicycle=designated"],
+        tags=["highway=track", "bicycle=yes|bicycle=designated"],
         limit=50,
     )
 

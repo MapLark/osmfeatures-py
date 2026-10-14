@@ -58,24 +58,71 @@ def response_headers_dict(headers: Any) -> dict[str, str]:
     return {str(k): str(v) for k, v in items}
 
 
+_USAGE_UNITS_HEADER = "X-Usage-Units-Charged"
+
+
+def merge_response_headers(blobs: list[dict[str, str]]) -> dict[str, str] | None:
+    """Merge tiled ``response_headers``. Sum billed units; keep first tile otherwise.
+
+    Returns ``None`` when no tile carried headers.
+    """
+    if not blobs:
+        return None
+    out = dict(blobs[0])
+    total = 0
+    seen = False
+    for blob in blobs:
+        for key, value in blob.items():
+            if key.lower() != "x-usage-units-charged":
+                continue
+            try:
+                total += int(value)
+            except (TypeError, ValueError):
+                continue
+            seen = True
+    if seen:
+        for key in list(out):
+            if key.lower() == "x-usage-units-charged":
+                del out[key]
+        out[_USAGE_UNITS_HEADER] = str(total)
+    return out
+
+
+def normalize_tags(tags: Any) -> list[str] | None:
+    """Non-empty tag filter strings, in order. A bare string is one item."""
+    if tags is None:
+        return None
+    items = [tags] if isinstance(tags, str) else tags
+    return [s for t in items if (s := str(t).strip())] or None
+
+
+def join_tags(tags: Any) -> str | None:
+    """One ``tags`` query value. A list is joined with ``,`` (AND); ``|`` inside an item is OR.
+
+    Items join as-is: the server splits on top-level ``,`` first, so ``a|(b,c)``
+    and ``a|b`` keep their meaning when another item is appended after them.
+    """
+    items = normalize_tags(tags)
+    return ",".join(items) if items else None
+
+
 def build_params(kwargs: dict[str, Any]) -> list[tuple[str, Any]]:
     """Convert SDK kwargs to a list of (key, value) pairs for requests.
 
-    Handles repeatable parameters (tags, or_tags, not_tags) - if a
-    list/tuple is provided it becomes multiple query-string values.
-    The ``type`` parameter is encoded as a single comma-separated value
-    because the backend expects ``type=node,way`` instead of repeated keys.
+    ``tags`` is always one query-string value (see :func:`join_tags`). The
+    ``type`` parameter is encoded as a single comma-separated value because
+    the backend expects ``type=node,way`` instead of repeated keys.
     """
     kwargs = fold_way_shape(kwargs)
-    repeatable = {"tags", "or_tags", "not_tags"}
     params: list[tuple[str, Any]] = []
     for key, value in kwargs.items():
         wire_key = "clipGeometry" if key == "clip_geometry" else key
-        if key == "type" and isinstance(value, (list, tuple)):
+        if key == "tags":
+            joined = join_tags(value)
+            if joined:
+                params.append((wire_key, joined))
+        elif key == "type" and isinstance(value, (list, tuple)):
             params.append((wire_key, ",".join(str(v) for v in value)))
-        elif key in repeatable and isinstance(value, (list, tuple)):
-            for v in value:
-                params.append((wire_key, v))
         elif isinstance(value, bool):
             params.append((wire_key, "true" if value else "false"))
         else:
@@ -160,33 +207,12 @@ def raise_for_response(resp: Any) -> None:
 
 
 def is_429_retryable(resp: Any) -> bool:
-    """Return True if the 429 should be retried (transient per-second limit).
+    """Return True: every 429 is a per-second limit and safe to retry.
 
-    The backend emits ``error == "too_many_requests"`` for all 429s and
-    distinguishes the two cases via a ``subtype`` field:
-    - ``"rate_limit_second"`` — transient, safe to retry with back-off.
-    - ``"rate_limit_monthly"`` — hard monthly cap, do not retry.
-
-    If ``subtype`` is absent (e.g. unknown proxy / future backend version),
-    fall back to retrying so the SDK does not silently swallow genuine
-    transient limits.
+    The monthly quota is HTTP 403 ``quota_exceeded`` (``OSMFeaturesForbiddenError``),
+    never a 429, so there is no monthly 429 to exclude here.
     """
-    try:
-        body = resp.json()
-        subtype = body.get("subtype", "")
-        if subtype == "rate_limit_monthly":
-            return False
-        if subtype == "rate_limit_second":
-            return True
-        # Legacy codes emitted by older backend versions — kept for
-        # compatibility during a rolling deploy.
-        error = body.get("error", "")
-        if error == "rate_limit_monthly":
-            return False
-        # Default: retry unknown 429s (fail open for transient limits).
-        return True
-    except Exception:
-        return True
+    return True
 
 
 def build_rate_limit_error(resp: Any) -> OSMFeaturesRateLimitError:
