@@ -199,7 +199,7 @@ class OSMFeaturesClient:
         disable_budget_warning: bool = False,
         bbox_tiles: int = 1,
         auto_split: bool = False,
-            auto_split_skip_count: bool = True,
+        auto_split_skip_count: bool = True,
         timeout: float | None = DEFAULT_QUERY_ALL_TIMEOUT_S,
     ) -> OSMFeatureCollection | BinaryQueryResult:
         return execute_query_sync(
@@ -515,7 +515,7 @@ class OSMFeaturesClient:
         as_of: str | None = None,
         bbox_tiles: int = 1,
         auto_split: bool = False,
-            auto_split_skip_count: bool = True,
+        auto_split_skip_count: bool = True,
         timeout: float | None = DEFAULT_QUERY_ALL_TIMEOUT_S,
     ) -> dict[str, Any]:
         """Search for places within a bbox or a circle.

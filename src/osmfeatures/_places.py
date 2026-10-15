@@ -7,12 +7,15 @@ search. location+radius is a circle (same as ``query`` radius) and cannot
 split; convert with :func:`around_to_bbox` and search that bbox if
 you need tiles.
 
-``auto_split`` uses the same count-first walk as :func:`execute_query`.
-Counts are ``GET /v2/osm_features/count`` with ``way_shape=polygon``.
-``asOf`` / ``openNow`` AND ``opening_hours``. An ``asOf`` page ``limit``
-truncates; density-split vs the 10k parse cap only when ``limit`` is
-raised above 10k. ``openNow`` always density-splits vs that 10k scan cap
-(the drain returns 200 at 10k hours-tagged rows).
+``auto_split`` uses the same walk as :func:`execute_query`. By default
+(``auto_split_skip_count=True``) tiles are fetched directly and a
+``result_too_large`` 400 is halved. With ``auto_split_skip_count=False``
+each tile is counted first via ``GET /v2/osm_features/count`` with
+``way_shape=polygon``, then fetched. ``asOf`` / ``openNow`` AND
+``opening_hours``. An ``asOf`` page ``limit`` truncates; density-split vs
+the 10k parse cap only when ``limit`` is raised above 10k (count-first).
+``openNow`` density-splits vs that 10k scan cap under count-first (the
+drain returns 200 at 10k hours-tagged rows, so skip-count cannot see it).
 """
 
 from __future__ import annotations

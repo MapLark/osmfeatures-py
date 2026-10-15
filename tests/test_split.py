@@ -113,20 +113,19 @@ def test_tiles_for_match_count_is_power_of_two():
     assert tiles_for_match_count(3_000_000, 50_000) == 64
 
 
-async def test_area_400_on_unsplittable_tile_raises_too_dense():
+async def test_area_400_on_unsplittable_tile_reraises_api_error():
     from osmfeatures._split import iter_split_tiles
-    from osmfeatures.models import OSMFeaturesTooDenseError
 
     async def fetch_tile(tile: str) -> str:
         # The 0.01 deg² tile is already under the 0.04 limit, so the API's
-        # area 400 cannot be resolved by splitting.
+        # area 400 cannot be resolved by splitting; surface the original 400.
         raise OSMFeaturesAPIError(
             "API error (HTTP 400): bbox area 0.010000 exceeds the tagged tier "
             "limit 0.040000",
             400,
         )
 
-    with pytest.raises(OSMFeaturesTooDenseError):
+    with pytest.raises(OSMFeaturesAPIError, match="bbox area"):
         async for _ in iter_split_tiles(
             "0,0,0.1,0.1",
             auto_split=True,

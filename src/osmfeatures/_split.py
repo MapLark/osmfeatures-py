@@ -402,9 +402,9 @@ async def iter_split_tiles(
         limit = parse_bbox_area_limit(exc)
         if limit is not None:
             area_limit = limit
-            if not _enqueue_area(tile, depth, limit):
-                _raise_too_dense()
-            return True
+            # Unsplittable (tile already under the named limit): re-raise the
+            # original 400 so the caller sees the API message.
+            return _enqueue_area(tile, depth, limit)
         if is_hours_parse_limit(exc):
             _jump_density(tile, depth, max(last_total or 0, tile_cap) + 1)
             return True
