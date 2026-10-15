@@ -27,19 +27,33 @@ def make_account_tier(
     *,
     max_limit: int = FREE_TIER_MAX_LIMIT,
     tier_id: str = "free",
+    max_bbox_area_tagged: float | None = None,
+    max_bbox_area_tag_free: float | None = None,
 ) -> dict[str, Any]:
-    return {"id": tier_id, "label": tier_id.title(), "max_limit": max_limit}
+    out: dict[str, Any] = {"id": tier_id, "label": tier_id.title(), "max_limit": max_limit}
+    if max_bbox_area_tagged is not None:
+        out["max_bbox_area_tagged"] = max_bbox_area_tagged
+    if max_bbox_area_tag_free is not None:
+        out["max_bbox_area_tag_free"] = max_bbox_area_tag_free
+    return out
 
 
 def add_account_tier_response(
     *,
     max_limit: int = FREE_TIER_MAX_LIMIT,
     tier_id: str = "free",
+    max_bbox_area_tagged: float | None = None,
+    max_bbox_area_tag_free: float | None = None,
 ) -> None:
     rsps.add(
         rsps.GET,
         ACCOUNT_TIER_URL,
-        json=make_account_tier(max_limit=max_limit, tier_id=tier_id),
+        json=make_account_tier(
+            max_limit=max_limit,
+            tier_id=tier_id,
+            max_bbox_area_tagged=max_bbox_area_tagged,
+            max_bbox_area_tag_free=max_bbox_area_tag_free,
+        ),
     )
 
 

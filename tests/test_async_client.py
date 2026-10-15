@@ -314,7 +314,7 @@ async def test_async_query_binary_rejects_auto_split():
             await client.query_async(
                 bbox="18.06,59.32,18.09,59.34",
                 accept="application/flatgeobuf",
-                auto_split=True,
+                auto_split=True, auto_split_skip_count=False,
             )
     assert transport.call_count == 0
 
@@ -373,7 +373,7 @@ async def test_async_query_counts_before_feature_then_jumps_density():
     client = _make_client(transport)
     async with client:
         result = await client.query_async(
-            bbox=bbox, bbox_tiles=4, tags=["building"], auto_split=True,
+            bbox=bbox, bbox_tiles=4, tags=["building"], auto_split=True, auto_split_skip_count=False,
         )
 
     assert {f.id for f in result.features} == {
@@ -385,7 +385,7 @@ async def test_async_query_counts_before_feature_then_jumps_density():
     assert _bboxes(transport, "/v2/osm_features/count") == [*tiles, *leaves]
 
 
-async def test_async_query_auto_split_aborts_when_match_count_exceeds_32_tiles():
+async def test_async_query_auto_split_aborts_when_match_count_exceeds_16_tiles():
     transport = _MockTransport([_account_tier(), _stats_total(3_000_000)])
     client = _make_client(transport)
     async with client:
@@ -393,7 +393,7 @@ async def test_async_query_auto_split_aborts_when_match_count_exceeds_32_tiles()
             await client.query_async(
                 bbox="0,0,20,20",
                 tags=["building"],
-                auto_split=True,
+                auto_split=True, auto_split_skip_count=False,
             )
     assert transport.call_count == 2
     assert transport.requests[0].url.path.endswith("/v1/account/tier")
@@ -412,14 +412,14 @@ async def test_async_query_auto_split_uses_paid_tier_max_limit():
     client = _make_client(transport)
     async with client:
         result = await client.query_async(
-            bbox=bbox, tags=["building"], auto_split=True,
+            bbox=bbox, tags=["building"], auto_split=True, auto_split_skip_count=False,
         )
     assert [f.id for f in result.features] == ["way/0", "way/1", "way/2", "way/3"]
     assert _bboxes(transport, "/v3/osm_features") == leaves
     assert transport.requests[0].url.path.endswith("/v1/account/tier")
 
 
-async def test_async_query_auto_split_aborts_when_area_jump_exceeds_32_tiles():
+async def test_async_query_auto_split_aborts_when_area_jump_exceeds_16_tiles():
     transport = _MockTransport(
         [
             _account_tier(),
@@ -442,7 +442,7 @@ async def test_async_query_auto_split_aborts_when_area_jump_exceeds_32_tiles():
             await client.query_async(
                 bbox="0,0,20,20",
                 tags=["building"],
-                auto_split=True,
+                auto_split=True, auto_split_skip_count=False,
             )
     assert transport.call_count == 2
     assert transport.requests[0].url.path.endswith("/v1/account/tier")
@@ -744,7 +744,7 @@ async def test_async_places_search_auto_split_counts_then_quarters_area_overflow
     client = _make_client(transport)
     async with client:
         result = await client.places_search_async(
-            bbox=bbox, tags=["amenity=cafe"], auto_split=True
+            bbox=bbox, tags=["amenity=cafe"], auto_split=True, auto_split_skip_count=False
         )
     assert {f["id"] for f in result["features"]} == {
         "node/0", "node/1", "node/2", "node/3",
@@ -780,9 +780,9 @@ async def test_async_count_scalar_places_set():
     assert "group_by" not in parsed
 
 
-async def test_async_places_search_auto_split_hours_skips_account_tier():
+async def test_async_places_search_auto_split_hours_reads_account_tier():
     transport = _MockTransport(
-        [_stats_total(100), (200, _place_fc("node/1"))]
+        [_account_tier(), _stats_total(100), (200, _place_fc("node/1"))]
     )
     client = _make_client(transport)
     async with client:
@@ -790,13 +790,11 @@ async def test_async_places_search_auto_split_hours_skips_account_tier():
             bbox="0,0,1,1",
             tags=["amenity=cafe"],
             as_of="2026-08-10T18:00:00+02:00",
-            auto_split=True,
+            auto_split=True, auto_split_skip_count=False,
         )
     assert [f["id"] for f in result["features"]] == ["node/1"]
-    assert transport.requests[0].url.path.endswith("/v2/osm_features/count")
-    assert all(
-        not req.url.path.endswith("/v1/account/tier") for req in transport.requests
-    )
+    assert transport.requests[0].url.path.endswith("/v1/account/tier")
+    assert transport.requests[1].url.path.endswith("/v2/osm_features/count")
 
 
 async def test_async_places_search_auto_split_open_now_splits_on_scan_cap():
@@ -804,6 +802,7 @@ async def test_async_places_search_auto_split_open_now_splits_on_scan_cap():
     tiles = split_bbox_tiles(bbox, 2)
     transport = _MockTransport(
         [
+            _account_tier(),
             _stats_total(15_000),
             _stats_total(100),
             (200, _place_fc("node/0")),
@@ -817,13 +816,10 @@ async def test_async_places_search_auto_split_open_now_splits_on_scan_cap():
             bbox=bbox,
             tags=["amenity=cafe"],
             open_now=True,
-            auto_split=True,
+            auto_split=True, auto_split_skip_count=False,
         )
     assert {f["id"] for f in result["features"]} == {"node/0", "node/1"}
     assert _places_post_bboxes(transport) == tiles
-    assert all(
-        not req.url.path.endswith("/v1/account/tier") for req in transport.requests
-    )
 
 
 async def test_async_places_search_auto_split_string_tags_not_character_split():
@@ -835,7 +831,7 @@ async def test_async_places_search_auto_split_string_tags_not_character_split():
     client = _make_client(transport)
     async with client:
         result = await client.places_search_async(
-            bbox="0,0,1,1", tags="amenity=cafe", auto_split=True
+            bbox="0,0,1,1", tags="amenity=cafe", auto_split=True, auto_split_skip_count=False
         )
     assert [f["id"] for f in result["features"]] == ["node/1"]
     count_req = next(

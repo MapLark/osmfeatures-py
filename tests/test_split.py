@@ -8,7 +8,6 @@ from osmfeatures._split import (
     MAX_DENSITY_JUMP_DEPTH,
     MAX_SPLIT_TILES,
     PLACES_MAX_LIMIT,
-    fold_auto_split,
     hours_parse_split_cap,
     is_hours_parse_limit,
     match_split_cap,
@@ -84,24 +83,8 @@ def test_parse_bbox_area_limit():
     )
 
 
-def test_fold_auto_split_default():
-    assert fold_auto_split() is False
-    assert fold_auto_split(True) is True
-
-
-def test_fold_auto_split_deprecated_alias():
-    with pytest.warns(DeprecationWarning, match="use auto_split"):
-        assert fold_auto_split(split_until_fit=True) is True
-
-
-def test_fold_auto_split_disagree():
-    with pytest.warns(DeprecationWarning, match="use auto_split"):
-        with pytest.raises(ValueError, match="disagree"):
-            fold_auto_split(True, False)
-
-
-def test_max_split_tiles_is_five_bisections():
-    assert MAX_SPLIT_TILES == 32
+def test_max_split_tiles_is_four_bisections():
+    assert MAX_SPLIT_TILES == 16
     assert MAX_DENSITY_JUMP_DEPTH == 1
 
 
@@ -115,7 +98,7 @@ def test_too_many_tiles_message_includes_match_total():
 
 def test_too_dense_message():
     text = too_dense_message(total=3_000_000)
-    assert "max 32 tiles" in text
+    assert "max 16 tiles" in text
     assert "too dense" in text
     assert "power-of-2 jump" in text
     assert "3000000 matches" in text
@@ -128,3 +111,26 @@ def test_tiles_for_match_count_is_power_of_two():
     assert tiles_for_match_count(100_001, 50_000) == 4
     assert tiles_for_match_count(200_000, 50_000) == 4
     assert tiles_for_match_count(3_000_000, 50_000) == 64
+
+
+async def test_area_400_on_unsplittable_tile_raises_too_dense():
+    from osmfeatures._split import iter_split_tiles
+    from osmfeatures.models import OSMFeaturesTooDenseError
+
+    async def fetch_tile(tile: str) -> str:
+        # The 0.01 deg² tile is already under the 0.04 limit, so the API's
+        # area 400 cannot be resolved by splitting.
+        raise OSMFeaturesAPIError(
+            "API error (HTTP 400): bbox area 0.010000 exceeds the tagged tier "
+            "limit 0.040000",
+            400,
+        )
+
+    with pytest.raises(OSMFeaturesTooDenseError):
+        async for _ in iter_split_tiles(
+            "0,0,0.1,0.1",
+            auto_split=True,
+            tile_cap=1_000,
+            fetch_tile=fetch_tile,
+        ):
+            pass

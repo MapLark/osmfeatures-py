@@ -151,7 +151,7 @@ def test_query_bbox_tiles_requires_bbox(client):
 
 def test_query_auto_split_requires_bbox(client):
     with pytest.raises(ValueError, match="auto_split requires bbox"):
-        client.query(location="0,0", radius=100, auto_split=True)
+        client.query(location="0,0", radius=100, auto_split=True, auto_split_skip_count=False)
     assert len(rsps.calls) == 0
 
 
@@ -213,7 +213,7 @@ def test_query_v3_counts_before_feature_then_jumps_density(client):
         add_features_response([make_test_feature(fid)], url=FEATURES_V3_URL)
 
     result = client.query(
-        bbox=bbox, bbox_tiles=4, tags=["building"], auto_split=True,
+        bbox=bbox, bbox_tiles=4, tags=["building"], auto_split=True, auto_split_skip_count=False,
     )
 
     assert {f.id for f in result.features} == {
@@ -235,7 +235,7 @@ def test_query_auto_split_density_jumps_to_two_tiles(client):
     _add_stats_total(1)
     add_features_response([make_test_feature("way/0")], url=FEATURES_V3_URL)
     add_features_response([make_test_feature("way/1")], url=FEATURES_V3_URL)
-    result = client.query(bbox=bbox, tags=["building"], auto_split=True)
+    result = client.query(bbox=bbox, tags=["building"], auto_split=True, auto_split_skip_count=False)
     assert [f.id for f in result.features] == ["way/0", "way/1"]
     assert _bboxes("/v3/osm_features") == leaves
     assert _bboxes("/v2/osm_features/count") == [bbox, *leaves]
@@ -255,7 +255,7 @@ def test_query_auto_split_one_extra_jump_on_dense_leaf(client):
     add_features_response([make_test_feature("way/sparse")], url=FEATURES_V3_URL)
     add_features_response([make_test_feature("way/g0")], url=FEATURES_V3_URL)
     add_features_response([make_test_feature("way/g1")], url=FEATURES_V3_URL)
-    result = client.query(bbox=bbox, tags=["building"], auto_split=True)
+    result = client.query(bbox=bbox, tags=["building"], auto_split=True, auto_split_skip_count=False)
     assert [f.id for f in result.features] == ["way/sparse", "way/g0", "way/g1"]
     assert _bboxes("/v3/osm_features") == [leaves[1], *grand]
     assert _bboxes("/v2/osm_features/count") == [bbox, leaves[0], leaves[1], *grand]
@@ -272,7 +272,7 @@ def test_query_auto_split_third_density_jump_is_too_dense(client):
     _add_stats_total(0)
     _add_stats_total(80_001)
     with pytest.raises(OSMFeaturesTooDenseError, match="too dense") as exc:
-        client.query(bbox=bbox, tags=["building"], auto_split=True)
+        client.query(bbox=bbox, tags=["building"], auto_split=True, auto_split_skip_count=False)
     assert exc.value.total == 80_001
     assert _bboxes("/v2/osm_features/count") == [
         bbox, leaves[0], leaves[1], grand[0],
@@ -285,7 +285,7 @@ def test_query_auto_split_result_too_large_after_fit_count_is_too_dense(client):
     _add_stats_total(1)
     _add_too_large()
     with pytest.raises(OSMFeaturesTooDenseError, match="too dense"):
-        client.query(bbox="0,0,1,1", tags=["building"], auto_split=True)
+        client.query(bbox="0,0,1,1", tags=["building"], auto_split=True, auto_split_skip_count=False)
     assert [urlsplit(c.request.url).path for c in rsps.calls] == [
         "/v1/account/tier",
         "/v2/osm_features/count",
@@ -303,7 +303,7 @@ def test_query_auto_split_does_not_split_for_page_limit(client):
         bbox="0,0,1,1",
         tags=["building"],
         limit=10,
-        auto_split=True,
+        auto_split=True, auto_split_skip_count=False,
     )
     assert [f.id for f in result.features] == ["way/1"]
     assert result.meta.has_more is True
@@ -316,7 +316,7 @@ def test_query_auto_split_counts_tags(client):
     add_account_tier_response()
     _add_stats_total(1)
     add_features_response([make_test_feature("way/1")], url=FEATURES_V3_URL)
-    client.query(bbox="0,0,1,1", tags=["amenity=cafe"], auto_split=True)
+    client.query(bbox="0,0,1,1", tags=["amenity=cafe"], auto_split=True, auto_split_skip_count=False)
     count_call = next(
         c for c in rsps.calls
         if urlsplit(c.request.url).path == "/v2/osm_features/count"
@@ -333,7 +333,7 @@ def test_query_auto_split_count_gets_the_same_joined_tags(client):
     _add_stats_total(1)
     add_features_response([make_test_feature("way/1")], url=FEATURES_V3_URL)
     client.query(
-        bbox="0,0,1,1", tags=["amenity=cafe|amenity=bar", "!access=private"], auto_split=True,
+        bbox="0,0,1,1", tags=["amenity=cafe|amenity=bar", "!access=private"], auto_split=True, auto_split_skip_count=False,
     )
     count_call = next(
         c for c in rsps.calls
@@ -348,7 +348,7 @@ def test_query_auto_split_counts_without_tags(client):
     add_account_tier_response()
     _add_stats_total(1)
     add_features_response([make_test_feature("way/1")], url=FEATURES_V3_URL)
-    client.query(bbox="0,0,1,1", auto_split=True)
+    client.query(bbox="0,0,1,1", auto_split=True, auto_split_skip_count=False)
     count_call = next(
         c for c in rsps.calls
         if urlsplit(c.request.url).path == "/v2/osm_features/count"
@@ -360,14 +360,14 @@ def test_query_auto_split_counts_without_tags(client):
 
 
 @rsps.activate
-def test_query_auto_split_aborts_when_match_count_exceeds_32_tiles(client):
+def test_query_auto_split_aborts_when_match_count_exceeds_16_tiles(client):
     add_account_tier_response()
     _add_stats_total(3_000_000)
     with pytest.raises(OSMFeaturesTooDenseError, match="too dense") as exc:
         client.query(
             bbox="0,0,20,20",
             tags=["building"],
-            auto_split=True,
+            auto_split=True, auto_split_skip_count=False,
         )
     assert exc.value.total == 3_000_000
     assert exc.value.tiles == 64
@@ -379,7 +379,7 @@ def test_query_auto_split_aborts_when_match_count_exceeds_32_tiles(client):
 
 @rsps.activate
 def test_query_auto_split_leftover_area_jump_is_too_many_tiles(client):
-    """Area children plus remaining queue over 32 is too-many-tiles, not too-dense."""
+    """Area children plus remaining queue over 16 is too-many-tiles, not too-dense."""
     bbox = "0,0,16,1"
     add_account_tier_response()
     _add_stats_total(1)
@@ -401,15 +401,15 @@ def test_query_auto_split_leftover_area_jump_is_too_many_tiles(client):
             bbox=bbox,
             tags=["building"],
             bbox_tiles=16,
-            auto_split=True,
+            auto_split=True, auto_split_skip_count=False,
         )
-    assert exc.value.tiles > 32
-    assert exc.value.max_tiles == 32
+    assert exc.value.tiles > 16
+    assert exc.value.max_tiles == 16
     assert "too dense" not in str(exc.value).lower()
 
 
 @rsps.activate
-def test_query_auto_split_aborts_when_area_jump_exceeds_32_tiles(client):
+def test_query_auto_split_aborts_when_area_jump_exceeds_16_tiles(client):
     add_account_tier_response()
     rsps.add(
         rsps.GET,
@@ -428,9 +428,9 @@ def test_query_auto_split_aborts_when_area_jump_exceeds_32_tiles(client):
         client.query(
             bbox="0,0,20,20",
             tags=["building"],
-            auto_split=True,
+            auto_split=True, auto_split_skip_count=False,
         )
-    assert exc.value.tiles > 32
+    assert exc.value.tiles > 16
     assert exc.value.total is None
     assert [urlsplit(c.request.url).path for c in rsps.calls] == [
         "/v1/account/tier",
@@ -459,21 +459,21 @@ def test_query_auto_split_area_jump_includes_parent_match_total(client):
         client.query(
             bbox="17.24,58.49,20.01,60.30",
             tags=["amenity=cafe"],
-            auto_split=True,
+            auto_split=True, auto_split_skip_count=False,
         )
     assert exc.value.total == 59
     assert exc.value.tiles == 128
 
 
 @rsps.activate
-def test_query_auto_split_rejects_bbox_tiles_over_32(client):
+def test_query_auto_split_rejects_bbox_tiles_over_16(client):
     add_account_tier_response()
     with pytest.raises(OSMFeaturesTooManyTilesError, match="too large") as exc:
         client.query(
             bbox="0,0,1,1",
             tags=["building"],
             bbox_tiles=64,
-            auto_split=True,
+            auto_split=True, auto_split_skip_count=False,
         )
     assert exc.value.tiles == 64
 
@@ -489,7 +489,7 @@ def test_query_auto_split_uses_paid_tier_max_limit(client):
         _add_stats_total(1)
         add_features_response([make_test_feature(fid)], url=FEATURES_V3_URL)
 
-    result = client.query(bbox=bbox, tags=["building"], auto_split=True)
+    result = client.query(bbox=bbox, tags=["building"], auto_split=True, auto_split_skip_count=False)
 
     assert [f.id for f in result.features] == ["way/0", "way/1", "way/2", "way/3"]
     assert _bboxes("/v3/osm_features") == leaves
@@ -504,8 +504,8 @@ def test_query_auto_split_caches_account_tier(client):
     _add_stats_total(1)
     add_features_response([make_test_feature("way/2")], url=FEATURES_V3_URL)
 
-    client.query(bbox="0,0,1,1", tags=["building"], auto_split=True)
-    client.query(bbox="0,0,1,1", tags=["building"], auto_split=True)
+    client.query(bbox="0,0,1,1", tags=["building"], auto_split=True, auto_split_skip_count=False)
+    client.query(bbox="0,0,1,1", tags=["building"], auto_split=True, auto_split_skip_count=False)
 
     tier_calls = [
         c for c in rsps.calls if urlsplit(c.request.url).path == "/v1/account/tier"
@@ -551,20 +551,87 @@ def test_query_v3_overflow_is_the_api_error(client):
 
 
 @rsps.activate
-def test_query_split_until_fit_alias_warns(client):
-    add_account_tier_response()
-    _add_stats_total(1)
-    add_features_response([make_test_feature("way/1")], url=FEATURES_V3_URL)
-    with pytest.warns(DeprecationWarning, match="use auto_split"):
-        result = client.query(
-            bbox="0,0,1,1", tags=["building"], split_until_fit=True,
-        )
-    assert [f.id for f in result.features] == ["way/1"]
-
-
-@rsps.activate
 def test_query_v3_within_overflow_raises(client):
     _add_too_large()
     with pytest.raises(OSMFeaturesAPIError, match="result_too_large"):
         client.query(within="relation/155790", type="node", tags=["amenity"])
     assert len(rsps.calls) == 1
+
+
+@rsps.activate
+def test_query_auto_split_oversized_bbox_skips_count_and_fetch(client):
+    """Tier area cap is known up front: no count or fetch on the big bbox."""
+    add_account_tier_response(max_bbox_area_tagged=0.5)
+    _add_stats_total(1)
+    rsps.add(rsps.GET, FEATURES_V3_URL, json={"type": "FeatureCollection", "features": []})
+    # 1 deg² over a 0.5 cap: two tiles, each counted then fetched.
+    client.query(bbox="0,0,1,1", tags=["building"], auto_split=True, auto_split_skip_count=False)
+    paths = [urlsplit(c.request.url).path for c in rsps.calls]
+    assert paths[0] == "/v1/account/tier"
+    assert paths[1:] == ["/v2/osm_features/count", "/v3/osm_features"] * 2
+    assert "bbox=0%2C0%2C1%2C1" not in rsps.calls[1].request.url
+
+
+@rsps.activate
+def test_query_auto_split_fitting_bbox_still_counts(client):
+    add_account_tier_response(max_bbox_area_tagged=0.5)
+    _add_stats_total(1)
+    rsps.add(rsps.GET, FEATURES_V3_URL, json={"type": "FeatureCollection", "features": []})
+    client.query(bbox="0,0,0.5,0.5", tags=["building"], auto_split=True, auto_split_skip_count=False)
+    paths = [urlsplit(c.request.url).path for c in rsps.calls]
+    assert paths == ["/v1/account/tier", "/v2/osm_features/count", "/v3/osm_features"]
+
+
+@rsps.activate
+def test_query_auto_split_tag_free_uses_tag_free_cap(client):
+    add_account_tier_response(max_bbox_area_tagged=10.0, max_bbox_area_tag_free=0.5)
+    _add_stats_total(1)
+    rsps.add(rsps.GET, FEATURES_V3_URL, json={"type": "FeatureCollection", "features": []})
+    client.query(bbox="0,0,1,1", auto_split=True, auto_split_skip_count=False)
+    paths = [urlsplit(c.request.url).path for c in rsps.calls]
+    assert paths[1] == "/v2/osm_features/count"
+    assert paths.count("/v3/osm_features") == 2
+
+
+@rsps.activate
+def test_query_auto_split_skip_count_never_counts_and_halves_on_too_large(client):
+    add_account_tier_response()
+    too_large = {
+        "error": "bad_request",
+        "detail": "result_too_large. The match set is larger than 75000.",
+        "status_code": 400,
+    }
+    ok = {"type": "FeatureCollection", "features": []}
+    rsps.add(rsps.GET, FEATURES_V3_URL, json=too_large, status=400)
+    rsps.add(rsps.GET, FEATURES_V3_URL, json=ok)
+    rsps.add(rsps.GET, FEATURES_V3_URL, json=ok)
+    client.query(bbox="0,0,0.02,0.02", tags=["building"], auto_split=True, auto_split_skip_count=True)
+    paths = [urlsplit(c.request.url).path for c in rsps.calls]
+    assert paths == ["/v1/account/tier"] + ["/v3/osm_features"] * 3
+
+
+@rsps.activate
+def test_query_auto_split_skip_count_too_dense_after_five_halvings(client):
+    add_account_tier_response()
+    rsps.add(
+        rsps.GET,
+        FEATURES_V3_URL,
+        json={"error": "bad_request", "detail": "result_too_large. The match set is larger than 75000.", "status_code": 400},
+        status=400,
+    )
+    with pytest.raises(OSMFeaturesTooDenseError):
+        client.query(bbox="0,0,0.02,0.02", tags=["building"], auto_split=True, auto_split_skip_count=True)
+    paths = [urlsplit(c.request.url).path for c in rsps.calls]
+    assert "/v2/osm_features/count" not in paths
+    # Worst case: every tile fails. 1+2+4+8 halvings, then the first
+    # depth-4 failure raises. Bounded at 16 billed fetches.
+    assert paths.count("/v3/osm_features") == 16
+
+
+@rsps.activate
+def test_query_auto_split_skips_count_by_default(client):
+    add_account_tier_response()
+    rsps.add(rsps.GET, FEATURES_V3_URL, json={"type": "FeatureCollection", "features": []})
+    client.query(bbox="0,0,0.02,0.02", tags=["building"], auto_split=True)
+    paths = [urlsplit(c.request.url).path for c in rsps.calls]
+    assert paths == ["/v1/account/tier", "/v3/osm_features"]

@@ -319,7 +319,7 @@ def test_places_search_auto_split_requires_bbox(client: OSMFeaturesClient):
             location={"lat": 59.3, "lng": 18.0},
             radius=500,
             tags=["amenity=cafe"],
-            auto_split=True,
+            auto_split=True, auto_split_skip_count=False,
         )
 
 
@@ -367,7 +367,7 @@ def test_places_search_auto_split_counts_then_quarters_area_overflow(
             },
         )
     out = client.places_search(
-        bbox=bbox, tags=["amenity=cafe"], auto_split=True
+        bbox=bbox, tags=["amenity=cafe"], auto_split=True, auto_split_skip_count=False
     )
     assert {f["id"] for f in out["features"]} == {"node/0", "node/1", "node/2", "node/3"}
     assert _places_search_bboxes() == [bbox, *quarters]
@@ -396,7 +396,7 @@ def test_places_search_auto_split_does_not_jump_on_count_window(
     )
     with pytest.raises(OSMFeaturesAPIError, match="count bbox area") as exc:
         client.places_search(
-            bbox="0,0,30,20", tags=["amenity=cafe"], auto_split=True
+            bbox="0,0,30,20", tags=["amenity=cafe"], auto_split=True, auto_split_skip_count=False
         )
     assert "auto_split" not in str(exc.value)
     assert _places_search_bboxes() == []
@@ -426,7 +426,7 @@ def test_places_search_auto_split_keeps_page_limit(
         bbox="0,0,1,1",
         tags=["amenity=cafe"],
         limit=40,
-        auto_split=True,
+        auto_split=True, auto_split_skip_count=False,
     )
     assert [f["id"] for f in out["features"]] == ["node/1"]
     assert _places_search_bboxes() == ["0,0,1,1"]
@@ -480,7 +480,7 @@ def test_places_search_auto_split_jumps_area_without_probe_tree(
         content_type="application/json",
     )
     out = client.places_search(
-        bbox=bbox, tags=["amenity=cafe"], auto_split=True
+        bbox=bbox, tags=["amenity=cafe"], auto_split=True, auto_split_skip_count=False
     )
     assert post_400s["n"] == 1
     assert _places_search_bboxes() == [bbox, *leaves]
@@ -589,7 +589,7 @@ def test_count_scalar_places_set(client: OSMFeaturesClient):
 def test_places_search_auto_split_hours_ands_opening_hours(
     client: OSMFeaturesClient,
 ):
-    _features_count_always(100, account_tier=False)
+    _features_count_always(100)
     rsps.add(
         rsps.POST,
         f"{BASE_URL}/v1/places/search",
@@ -609,11 +609,10 @@ def test_places_search_auto_split_hours_ands_opening_hours(
         bbox="0,0,1,1",
         tags=["amenity=cafe"],
         as_of="2026-08-10T18:00:00+02:00",
-        auto_split=True,
+        auto_split=True, auto_split_skip_count=False,
     )
     assert [f["id"] for f in out["features"]] == ["node/1"]
     assert _places_search_bboxes() == ["0,0,1,1"]
-    assert all("/v1/account/tier" not in c.request.url for c in rsps.calls)
     assert _search_bodies()[0]["asOf"] == "2026-08-10T18:00:00+02:00"
     count_url = _features_count_urls()[0]
     parsed = parse_qs(urlsplit(count_url).query)
@@ -627,6 +626,7 @@ def test_places_search_auto_split_hours_page_limit_does_not_split(
 ):
     """Omit limit (API default 100): 15k hours-tagged rows truncate, no 400."""
     bbox = "0,0,1,1"
+    add_account_tier_response()
     rsps.add(rsps.GET, STATS_URL, body=_count_payload(15_000))
     rsps.add(
         rsps.POST,
@@ -647,11 +647,10 @@ def test_places_search_auto_split_hours_page_limit_does_not_split(
         bbox=bbox,
         tags=["amenity=cafe"],
         as_of="2026-08-10T18:00:00+02:00",
-        auto_split=True,
+        auto_split=True, auto_split_skip_count=False,
     )
     assert [f["id"] for f in out["features"]] == ["node/1"]
     assert _places_search_bboxes() == [bbox]
-    assert all(c.request.url != ACCOUNT_TIER_URL for c in rsps.calls)
 
 
 @rsps.activate
@@ -660,6 +659,7 @@ def test_places_search_auto_split_hours_keeps_parse_cap_when_limit_raised(
 ):
     """Paid limit must not lift the 10k hours-parse split cap."""
     bbox = "0,0,1,1"
+    add_account_tier_response()
     tiles = split_bbox_tiles(bbox, 2)
 
     def _count(request):
@@ -693,12 +693,11 @@ def test_places_search_auto_split_hours_keeps_parse_cap_when_limit_raised(
         tags=["amenity=cafe"],
         as_of="2026-08-10T18:00:00+02:00",
         limit=20_000,
-        auto_split=True,
+        auto_split=True, auto_split_skip_count=False,
     )
     assert {f["id"] for f in out["features"]} == {"node/0", "node/1"}
     assert _places_search_bboxes() == tiles
     assert _search_bodies()[0]["limit"] == 20_000
-    assert all(c.request.url != ACCOUNT_TIER_URL for c in rsps.calls)
 
 
 @rsps.activate
@@ -707,7 +706,7 @@ def test_places_search_auto_split_jumps_on_hours_parse_limit_fetch(
 ):
     bbox = "0,0,1,1"
     tiles = split_bbox_tiles(bbox, 2)
-    _features_count_always(100, account_tier=False)
+    _features_count_always(100)
     rsps.add(
         rsps.POST,
         f"{BASE_URL}/v1/places/search",
@@ -742,7 +741,7 @@ def test_places_search_auto_split_jumps_on_hours_parse_limit_fetch(
         bbox=bbox,
         tags=["amenity=cafe"],
         as_of="2026-08-10T18:00:00+02:00",
-        auto_split=True,
+        auto_split=True, auto_split_skip_count=False,
     )
     assert {f["id"] for f in out["features"]} == {"node/0", "node/1"}
     assert _places_search_bboxes() == [bbox, *tiles]
@@ -754,6 +753,7 @@ def test_places_search_auto_split_open_now_splits_on_scan_cap(
 ):
     """openNow drains 10k hours-tagged rows with no 400; density-split on count."""
     bbox = "0,0,1,1"
+    add_account_tier_response()
     tiles = split_bbox_tiles(bbox, 2)
 
     def _count(request):
@@ -786,13 +786,12 @@ def test_places_search_auto_split_open_now_splits_on_scan_cap(
         bbox=bbox,
         tags=["amenity=cafe"],
         open_now=True,
-        auto_split=True,
+        auto_split=True, auto_split_skip_count=False,
     )
     assert {f["id"] for f in out["features"]} == {"node/0", "node/1"}
     assert _places_search_bboxes() == tiles
     assert _search_bodies()[0]["openNow"] is True
     assert "limit" not in _search_bodies()[0]
-    assert all(c.request.url != ACCOUNT_TIER_URL for c in rsps.calls)
     count_url = _features_count_urls()[0]
     parsed = parse_qs(urlsplit(count_url).query)
     assert parsed["tags"] == ["amenity=cafe,opening_hours"]
@@ -837,7 +836,7 @@ def test_places_search_auto_split_jumps_when_total_exceeds_tier(
             },
         )
     out = client.places_search(
-        bbox=bbox, tags=["amenity=cafe"], auto_split=True
+        bbox=bbox, tags=["amenity=cafe"], auto_split=True, auto_split_skip_count=False
     )
     assert {f["id"] for f in out["features"]} == {"node/0", "node/1"}
     assert _places_search_bboxes() == tiles
@@ -865,7 +864,7 @@ def test_places_search_auto_split_string_tags_not_character_split(
         },
     )
     out = client.places_search(
-        bbox="0,0,1,1", tags="amenity=cafe", auto_split=True
+        bbox="0,0,1,1", tags="amenity=cafe", auto_split=True, auto_split_skip_count=False
     )
     assert [f["id"] for f in out["features"]] == ["node/1"]
     parsed = parse_qs(urlsplit(_features_count_urls()[0]).query)

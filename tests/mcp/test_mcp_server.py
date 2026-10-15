@@ -180,6 +180,8 @@ async def test_build_server_wires_instructions_and_tools():
     assert f"at most {SUMMARY_ITEM_CAP}" in mcp.instructions
     assert "items_truncated" in mcp.instructions
     assert "OSM tags" in mcp.instructions
+    assert "Include an OSM id column" in mcp.instructions
+    assert "https://www.openstreetmap.org/" in mcp.instructions
     assert "tags.cuisine" in mcp.instructions
     assert "travel_mode is WALK" in mcp.instructions
     assert 'numeric "lat,lng"' in mcp.instructions
@@ -245,7 +247,7 @@ async def test_build_server_wires_instructions_and_tools():
     assert "auto_split" in mcp.instructions
     assert "Known-small windows" in mcp.instructions
     assert "count, not query" in mcp.instructions
-    assert "32 tiles" in mcp.instructions
+    assert "16 tiles" in mcp.instructions
     assert "too many bbox tiles" in mcp.instructions
     assert "too dense" in mcp.instructions
     nearest = next(t for t in tools if t.name == "nearest_within")

@@ -1,15 +1,22 @@
-"""Shared bbox ``auto_split``: count first, then fetch.
+"""Shared bbox ``auto_split``: fetch each tile, splitting on 400s.
 
-``query()`` and ``places_search()`` use the same walk so a county-sized
-window does not probe every quarter with 400s. Count skips empty tiles and
-jumps to a power-of-2 grid when the match set cannot fit one fetch, and
-may jump one leftover dense leaf the same way. Count uses the large
-count window; a ``count bbox area`` 400 is not split (still too big to
-count). A fetch ``bbox area`` 400 is parsed for the search/query tile
-size; later tiles jump to that size instead of thrashing. The walk stops at :data:`MAX_SPLIT_TILES` (32). More
-tiles to cover the bbox is :class:`OSMFeaturesTooManyTilesError`; a tile
-still overflowing after that jump is :class:`OSMFeaturesTooDenseError`. A
-wall-clock miss is still :class:`OSMFeaturesTimeoutError`.
+``query()`` and ``places_search()`` use the same walk. By default
+(``auto_split_skip_count=True``) each tile is fetched directly: a
+``result_too_large`` 400 bisects the tile, and a hours-parse 400 jumps to a
+power-of-2 grid sized from the tier cap.
+
+With ``auto_split_skip_count=False`` each tile is counted before fetching.
+Count skips empty tiles and jumps to a power-of-2 grid when the match set
+cannot fit one fetch, and may jump one leftover dense leaf the same way.
+Count uses the large count window; a ``count bbox area`` 400 is not split
+(still too big to count).
+
+In both modes a fetch ``bbox area`` 400 is parsed for the search/query tile
+size; later tiles jump to that size instead of thrashing. The walk stops at
+:data:`MAX_SPLIT_TILES` (16). More tiles to cover the bbox is
+:class:`OSMFeaturesTooManyTilesError`; a tile still overflowing after that
+jump is :class:`OSMFeaturesTooDenseError`. A wall-clock miss is still
+:class:`OSMFeaturesTimeoutError`.
 """
 
 from __future__ import annotations
@@ -20,7 +27,6 @@ import inspect
 import math
 import re
 import time
-import warnings
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, TypeVar
@@ -45,12 +51,15 @@ R = TypeVar("R")
 # Hours-parse cap when places_search sends asOf/openNow (OPEN_NOW_SCAN_MAX).
 # No-hours auto_split uses GET /v1/account/tier max_limit instead.
 PLACES_MAX_LIMIT = 10_000
-# Max tiles ``auto_split`` will walk. 32 is five longest-side bisections
-# (2^5). Density jumps the parent window to a power-of-2 grid, then at
+# Max tiles ``auto_split`` will walk. 16 is four longest-side bisections
+# (2^4). Density jumps the parent window to a power-of-2 grid, then at
 # most one leftover dense leaf. No deeper tree.
-MAX_SPLIT_TILES = 32
+MAX_SPLIT_TILES = 16
 # Jumps allowed at depth 0 (parent) and 1 (dense leaf). Depth 2+ errors.
 MAX_DENSITY_JUMP_DEPTH = 1
+# ``auto_split_skip_count`` has no count to size a jump, so a ``result_too_large``
+# tile is halved. Four halvings reach the 16-tile cap.
+MAX_BISECT_DEPTH = MAX_SPLIT_TILES.bit_length() - 1
 _COUNT_FILTER_KEYS = (
     "location",
     "radius",
@@ -65,7 +74,7 @@ _COUNT_FILTER_KEYS = (
 # Search/query fetch 400s. Do not match "count bbox area" (count window
 # is ~400 deg²; jumping to that size does not produce fetchable tiles).
 _AREA_LIMIT_RE = re.compile(
-    r"(?<!count )bbox area [0-9.]+\s+exceeds the (?:tagged )?tier limit ([0-9.]+)",
+    r"(?<!count )bbox area [0-9.]+\s+exceeds the (?:tagged |tag-free )?tier limit ([0-9.]+)",
     re.IGNORECASE,
 )
 
@@ -88,6 +97,30 @@ def max_limit_from_tier(tier: Any) -> int:
     if value < 1:
         raise ValueError("tier max_limit must be >= 1")
     return value
+
+
+def max_bbox_area_from_tier(tier: Any, *, tags: Any = None) -> float | None:
+    """Fetch bbox area cap (deg²) from ``GET /v1/account/tier``, or None.
+
+    Tag-free fetches use ``max_bbox_area_tag_free``; any tag filter uses
+    ``max_bbox_area_tagged``. A tags value that is only negations can still
+    be tag-free on the server and have a smaller cap, so the tagged cap is
+    an upper bound here and a fetch 400 still teaches the real one.
+    None (missing key or unlimited tier) means no pre-split.
+    """
+    if not isinstance(tier, dict):
+        return None
+    items = [tags] if isinstance(tags, str) else list(tags or [])
+    key = (
+        "max_bbox_area_tagged"
+        if any(isinstance(t, str) and t.strip() for t in items)
+        else "max_bbox_area_tag_free"
+    )
+    try:
+        value = float(tier[key])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return value if value > 0 else None
 
 
 def match_split_cap(limit: int | None, omitted: int) -> int:
@@ -185,28 +218,6 @@ def is_split_error(exc: BaseException) -> bool:
     )
 
 
-def fold_auto_split(
-    auto_split: bool = False,
-    split_until_fit: bool | None = None,
-    *,
-    stacklevel: int = 3,
-) -> bool:
-    """Canonical ``auto_split``. ``split_until_fit`` is the deprecated alias."""
-    if split_until_fit is None:
-        return bool(auto_split)
-    warnings.warn(
-        "split_until_fit is deprecated; use auto_split",
-        DeprecationWarning,
-        stacklevel=stacklevel,
-    )
-    alias = bool(split_until_fit)
-    if auto_split and auto_split != alias:
-        raise ValueError(
-            "auto_split and deprecated split_until_fit disagree. Pass only auto_split."
-        )
-    return alias or auto_split
-
-
 async def await_maybe(value: Any) -> Any:
     if inspect.isawaitable(value):
         return await value
@@ -259,23 +270,62 @@ async def iter_split_tiles(
     auto_split: bool = False,
     timeout: float | None = None,
     tile_cap: int,
+    area_limit: float | None = None,
+    auto_split_skip_count: bool = True,
     match_count: Callable[[str], Awaitable[int | None]] | None = None,
     fetch_tile: Callable[[str], Awaitable[T]],
     should_stop: Callable[[], bool] | None = None,
     overflow_name: str = "query",
 ) -> AsyncIterator[T]:
-    """Walk *bbox* tiles: count first when splitting, then fetch.
+    """Fetch *bbox* as tiles, splitting any tile the API cannot return whole.
 
-    ``match_count`` is called for every tile under ``auto_split`` when
-    provided. Empty tiles are skipped. A total above *tile_cap* (the API
-    ``max_limit``, not a smaller page ``limit``) jumps to a power-of-2
-    grid. A leftover leaf that is still too dense may jump once more;
-    deeper overflow is too dense, not another tree. Fetch 400s
-    that name a bbox-area cap jump to that tile size. ``result_too_large``
-    after a count that already fit is too dense, not another split.
-    ``auto_split`` walks at most :data:`MAX_SPLIT_TILES` tiles.
+    Yields the result of ``fetch_tile`` for each tile, in walk order. Empty
+    tiles are skipped.
+
+    Parameters
+    ----------
+    bbox:
+        ``"min_lon,min_lat,max_lon,max_lat"`` to cover.
+    bbox_tiles:
+        Split *bbox* into this many tiles up front (power of 2).
+    auto_split:
+        Split tiles as needed. When False, a single fetch per tile is made
+        and any error is raised.
+    timeout:
+        Wall-clock seconds for the whole walk. ``None`` for no cap.
+    tile_cap:
+        The tier's per-request feature cap (``max_limit``). A tile whose
+        match count exceeds it is re-tiled into a power-of-2 grid.
+    area_limit:
+        The tier's bbox area cap in square degrees, if already known. Tiles
+        larger than it are split without a request.
+    auto_split_skip_count:
+        If True (default), no counts are made: each tile is fetched directly
+        and a ``result_too_large`` tile is bisected, up to
+        :data:`MAX_BISECT_DEPTH` levels. If False, each tile is counted with
+        *match_count* before fetching. This is more expensive, but avoids
+        billed failed fetches in dense areas.
+    match_count:
+        Returns the match count for a tile, or None if unknown. Used only
+        when *auto_split_skip_count* is False.
+    fetch_tile:
+        Fetches one tile and returns its result.
+    should_stop:
+        Checked before each tile. Returning True ends the walk early.
+    overflow_name:
+        Operation name used in the timeout message.
+
+    Raises
+    ------
+    OSMFeaturesTooManyTilesError:
+        More than :data:`MAX_SPLIT_TILES` tiles are needed to cover *bbox*.
+    OSMFeaturesTooDenseError:
+        A tile still overflows at the maximum split depth.
+    OSMFeaturesTimeoutError:
+        *timeout* elapsed before the walk finished.
     """
     deadline = query_all_deadline(timeout)
+    count_first = auto_split and not auto_split_skip_count
     tiles: deque[tuple[str, int]] = deque(
         (t, 0)
         for t in ([bbox] if bbox_tiles == 1 else split_bbox_tiles(bbox, bbox_tiles))
@@ -286,7 +336,6 @@ async def iter_split_tiles(
             tiles=len(tiles),
             max_tiles=MAX_SPLIT_TILES,
         )
-    area_limit: float | None = None
     last_total: int | None = None
     started = False
 
@@ -334,6 +383,11 @@ async def iter_split_tiles(
             _raise_too_dense(tiles_needed=n)
         _enqueue(split_bbox_tiles(tile, n), depth, overflow=_raise_too_dense)
 
+    def _bisect(tile: str, depth: int) -> None:
+        if depth >= MAX_BISECT_DEPTH:
+            _raise_too_dense()
+        _enqueue(split_bbox_tiles(tile, 2), depth, overflow=_raise_too_dense)
+
     def _enqueue_area(tile: str, depth: int, limit: float) -> bool:
         n = tile_count_for_max_area(tile, limit)
         if n <= 1:
@@ -348,11 +402,16 @@ async def iter_split_tiles(
         limit = parse_bbox_area_limit(exc)
         if limit is not None:
             area_limit = limit
-            return _enqueue_area(tile, depth, limit)
+            if not _enqueue_area(tile, depth, limit):
+                _raise_too_dense()
+            return True
         if is_hours_parse_limit(exc):
             _jump_density(tile, depth, max(last_total or 0, tile_cap) + 1)
             return True
         if is_result_too_large(exc):
+            if auto_split_skip_count:
+                _bisect(tile, depth)
+                return True
             _raise_too_dense()
         return False
 
@@ -369,7 +428,7 @@ async def iter_split_tiles(
                 if not _enqueue_area(tile, depth, area_limit):
                     _raise_too_dense()
                 continue
-        if auto_split and match_count is not None:
+        if count_first and match_count is not None:
             try:
                 total = await match_count(tile)
             except OSMFeaturesAPIError as exc:

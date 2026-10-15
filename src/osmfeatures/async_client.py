@@ -200,7 +200,7 @@ class AsyncOSMFeaturesClient:
         disable_budget_warning: bool = False,
         bbox_tiles: int = 1,
         auto_split: bool = False,
-        split_until_fit: bool | None = None,
+            auto_split_skip_count: bool = True,
         timeout: float | None = DEFAULT_QUERY_ALL_TIMEOUT_S,
     ) -> OSMFeatureCollection | BinaryQueryResult:
         return await execute_query(
@@ -230,14 +230,14 @@ class AsyncOSMFeaturesClient:
             disable_budget_warning=disable_budget_warning,
             bbox_tiles=bbox_tiles,
             auto_split=auto_split,
-            split_until_fit=split_until_fit,
+            auto_split_skip_count=auto_split_skip_count,
             timeout=timeout,
         )
 
     query_async.__doc__ = QUERY_DOC
 
     async def query_all_async(self, **kwargs: Any) -> OSMFeatureCollection | BinaryQueryResult:
-        """Same as :meth:`query_async`."""
+        """Alias for :meth:`query_async`."""
         return await self.query_async(**kwargs)
 
     async def count_async(
@@ -258,9 +258,36 @@ class AsyncOSMFeaturesClient:
         max_area_m2: float | None = None,
         disable_budget_warning: bool = False,
     ) -> dict[str, Any]:
-        """``GET /v2/osm_features/count``: scalar total, or histogram with ``group_by``.
+        """Count matching OSM features, optionally grouped by a tag.
 
-        Same as :meth:`OSMFeaturesClient.count`. Example::
+        Without ``group_by`` the result is a scalar total. With ``group_by``
+        it is a histogram of tag values. Same as :meth:`OSMFeaturesClient.count`.
+
+        Parameters
+        ----------
+        group_by:
+            Tag key to bucket results by, e.g. ``"amenity"``.
+        bbox, location, radius, type, way_shape, within:
+            Spatial filters, as in :meth:`query_async`.
+        tags:
+            Tag filter: a string, or a list ANDed together. Example:
+            ``["amenity", "!amenity=bench"]``. See :meth:`query_async`.
+        limit:
+            Maximum histogram buckets (API default 100, max 10000).
+        min_length_m, max_length_m, min_area_m2, max_area_m2:
+            Geometry size filters.
+        disable_budget_warning:
+            Suppress the unit-budget warning for large requests.
+
+        Returns
+        -------
+        dict
+            ``{"groups": [...], "total": int, "truncated": bool}``, plus
+            ``response_headers``.
+
+        Example
+        -------
+        ::
 
             await client.count_async(
                 group_by="amenity",
@@ -341,7 +368,33 @@ class AsyncOSMFeaturesClient:
         max_area_m2: float | None = None,
         disable_budget_warning: bool = False,
     ) -> DensityFeatureCollection:
-        """``GET /v2/osm_features/density``. Same as :meth:`OSMFeaturesClient.density`."""
+        """Count features per grid cell, returned as occupied cells (points).
+
+        Useful for heatmaps. ``tags`` is required and must be a positive
+        filter. Same as :meth:`OSMFeaturesClient.density`.
+
+        Parameters
+        ----------
+        cell_deg:
+            Grid cell size in degrees (API default 0.1).
+        bbox, location, radius, type, way_shape, within:
+            Spatial filters, as in :meth:`query_async`. ``type`` defaults to nodes.
+        tags:
+            Required tag filter, as in :meth:`query_async`.
+        limit:
+            Maximum occupied cells returned (defaults to the key's ``max_limit``).
+        min_length_m, max_length_m, min_area_m2, max_area_m2:
+            Geometry size filters.
+        disable_budget_warning:
+            Set True for large areas, such as a continent, that would
+            otherwise fail the per-request unit cap.
+
+        Returns
+        -------
+        DensityFeatureCollection
+            One point per occupied cell, with ``properties.count``. Also
+            exposes ``total`` and ``truncated``.
+        """
         params: dict[str, Any] = {}
         if cell_deg is not None:
             params["cell_deg"] = cell_deg
@@ -398,7 +451,7 @@ class AsyncOSMFeaturesClient:
     async def account_tier_async(self) -> dict[str, Any]:
         """Return this API key's plan limits (``GET /v1/account/tier``).
 
-        Cached on the client. Same payload as
+        The result is cached on the client. Same payload as
         :meth:`OSMFeaturesClient.account_tier`.
         """
         if self._account_tier is None:
@@ -421,24 +474,48 @@ class AsyncOSMFeaturesClient:
         as_of: str | None = None,
         bbox_tiles: int = 1,
         auto_split: bool = False,
-        split_until_fit: bool | None = None,
+            auto_split_skip_count: bool = True,
         timeout: float | None = DEFAULT_QUERY_ALL_TIMEOUT_S,
     ) -> dict[str, Any]:
-        """Find places via ``POST /v1/places/search``.
+        """Search for places within a bbox or a circle.
 
-        ``bbox_tiles`` and ``auto_split`` are client-side, like
-        :meth:`query_async`, and **only apply to bbox search**.
-        ``auto_split`` counts first via :meth:`count_async` with
-        ``way_shape="polygon"``, then fetches. No hours: split on
-        ``total`` vs the key's ``max_limit``. ``asOf`` / ``openNow`` AND
-        ``opening_hours``. An ``asOf`` page ``limit`` (default 100) truncates;
-        split on the 10k parse cap only when ``limit`` is raised above 10k.
-        ``openNow`` splits on that 10k scan cap even with a small fill limit.
-        location+radius is a circle and cannot split;
-        :func:`around_to_bbox` turns a radius into a covering bbox if you
-        need tiles (square around the circle; corners can fall outside the
-        original radius).
-        ``split_until_fit`` is a deprecated alias for ``auto_split``.
+        Calls ``POST /v1/places/search``. Pass either ``bbox`` or
+        ``location`` + ``radius``, not both. Polygon places are returned
+        as centroid points.
+
+        Parameters
+        ----------
+        bbox:
+            ``"min_lon,min_lat,max_lon,max_lat"``.
+        location:
+            Circle centre as ``{"lat": ..., "lng": ...}``. Use with ``radius``.
+        radius:
+            Circle radius in metres.
+        tags:
+            Tag filter, as in :meth:`query_async`.
+        limit:
+            Maximum places returned.
+        open_now:
+            Keep only places open now. Adds an ``opening_hours`` tag filter.
+        as_of:
+            ISO timestamp for the opening-hours check, used with ``open_now``.
+        bbox_tiles:
+            Split ``bbox`` into this many tiles (power of 2) and merge the results.
+        auto_split:
+            Split a bbox that is too large for your tier into smaller tiles
+            and merge the results. Bbox only.
+        auto_split_skip_count:
+            With ``auto_split``, fetch tiles directly and halve any that are
+            too large (default). Set False in dense cities, where each tile
+            is counted first to avoid billed failures.
+        timeout:
+            Wall-clock seconds allowed for a tiled search. ``None`` for no cap.
+            Raises ``OSMFeaturesTimeoutError`` when exceeded.
+
+        Returns
+        -------
+        dict
+            A GeoJSON FeatureCollection.
         """
         return await execute_places_search(
             post=lambda body: self._post_json(PLACES_SEARCH_PATH, body),
@@ -453,7 +530,7 @@ class AsyncOSMFeaturesClient:
             as_of=as_of,
             bbox_tiles=bbox_tiles,
             auto_split=auto_split,
-            split_until_fit=split_until_fit,
+            auto_split_skip_count=auto_split_skip_count,
             timeout=timeout,
         )
 
@@ -467,7 +544,30 @@ class AsyncOSMFeaturesClient:
         open_now: bool = False,
         as_of: str | None = None,
     ) -> dict[str, Any]:
-        """Nearest places ranked by straight-line distance."""
+        """Find the places nearest to a point, ranked by straight-line distance.
+
+        Calls ``POST /v1/places/nearby``.
+
+        Parameters
+        ----------
+        location:
+            Centre point as ``{"lat": ..., "lng": ...}``.
+        radius:
+            Maximum distance in metres.
+        tags:
+            Tag filter, as in :meth:`query_async`.
+        limit:
+            Maximum places returned.
+        open_now:
+            Keep only places open now.
+        as_of:
+            ISO timestamp for the opening-hours check, used with ``open_now``.
+
+        Returns
+        -------
+        dict
+            A GeoJSON FeatureCollection, nearest first.
+        """
         return await self._post_json(
             PLACES_NEARBY_PATH,
             places_nearby_body(
@@ -485,10 +585,16 @@ class AsyncOSMFeaturesClient:
         osm_type: str,
         osm_id: int | str | None = None,
     ) -> dict[str, Any]:
-        """One place via ``GET /v1/places/{osm_type}/{osm_id}``.
+        """Fetch one place by OSM type and id (``GET /v1/places/{osm_type}/{osm_id}``).
 
-        *osm_type* may be a search/nearby feature id (``node/123``) when
-        *osm_id* is omitted.
+        Parameters
+        ----------
+        osm_type:
+            ``"node"``, ``"way"`` or ``"relation"``. May also be a combined
+            id such as ``"node/123"``, as returned by search, if ``osm_id``
+            is omitted.
+        osm_id:
+            OSM element id. Omit when ``osm_type`` is a combined id.
         """
         return await self._get_json(places_details_path(osm_type, osm_id))
 
@@ -501,7 +607,24 @@ class AsyncOSMFeaturesClient:
         search_buffer_m: float | None = None,
         travel_mode: RouteTravelMode | None = None,
     ) -> dict[str, Any]:
-        """Reach polygon along the walk/bike network."""
+        """Compute the area reachable from an origin on the walk/bike network.
+
+        Calls ``POST /v1/routes/isochrone``. Set either ``max_distance_m`` or
+        ``duration_s``.
+
+        Parameters
+        ----------
+        origin:
+            Starting point as ``{"lat": ..., "lng": ...}``.
+        max_distance_m:
+            Maximum travel distance in metres.
+        duration_s:
+            Maximum travel time in seconds.
+        search_buffer_m:
+            Search buffer in metres around the route, sent to the API as is.
+        travel_mode:
+            ``"WALK"`` or ``"BICYCLE"``.
+        """
         return await self._post_json(
             ROUTES_ISOCHRONE_PATH,
             routes_isochrone_body(
@@ -520,7 +643,17 @@ class AsyncOSMFeaturesClient:
         search_buffer_m: float | None = None,
         travel_mode: RouteTravelMode | None = None,
     ) -> dict[str, Any]:
-        """Given-order walk/bike path."""
+        """Route through stops in the given order (``POST /v1/routes/path``).
+
+        Parameters
+        ----------
+        stops:
+            Ordered points, each as ``{"lat": ..., "lng": ...}``.
+        search_buffer_m:
+            Search buffer in metres around the route, sent to the API as is.
+        travel_mode:
+            ``"WALK"`` or ``"BICYCLE"``.
+        """
         return await self._post_json(
             ROUTES_PATH_PATH,
             routes_path_body(
@@ -539,7 +672,23 @@ class AsyncOSMFeaturesClient:
         loop: bool | None = None,
         travel_mode: RouteTravelMode | None = None,
     ) -> dict[str, Any]:
-        """TSP walk/bike tour from ``start``. ``loop`` returns to start."""
+        """Visit all stops in the shortest order, starting from ``start``.
+
+        Calls ``POST /v1/routes/optimized_path``.
+
+        Parameters
+        ----------
+        start:
+            Starting point as ``{"lat": ..., "lng": ...}``.
+        stops:
+            Points to visit, each as ``{"lat": ..., "lng": ...}``.
+        search_buffer_m:
+            Search buffer in metres around the route, sent to the API as is.
+        loop:
+            If True, the route returns to ``start``.
+        travel_mode:
+            ``"WALK"`` or ``"BICYCLE"``.
+        """
         return await self._post_json(
             ROUTES_OPTIMIZED_PATH_PATH,
             routes_optimized_path_body(

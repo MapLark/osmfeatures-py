@@ -199,7 +199,7 @@ class OSMFeaturesClient:
         disable_budget_warning: bool = False,
         bbox_tiles: int = 1,
         auto_split: bool = False,
-        split_until_fit: bool | None = None,
+            auto_split_skip_count: bool = True,
         timeout: float | None = DEFAULT_QUERY_ALL_TIMEOUT_S,
     ) -> OSMFeatureCollection | BinaryQueryResult:
         return execute_query_sync(
@@ -229,22 +229,21 @@ class OSMFeaturesClient:
             disable_budget_warning=disable_budget_warning,
             bbox_tiles=bbox_tiles,
             auto_split=auto_split,
-            split_until_fit=split_until_fit,
+            auto_split_skip_count=auto_split_skip_count,
             timeout=timeout,
         )
 
     query.__doc__ = QUERY_DOC
 
     def query_all(self, **kwargs: Any) -> OSMFeatureCollection | BinaryQueryResult:
-        """Same as :meth:`query`."""
+        """Alias for :meth:`query`."""
         return self.query(**kwargs)
 
     def account_tier(self) -> dict[str, Any]:
         """Return this API key's plan limits (``GET /v1/account/tier``).
 
-        Cached on the client. Includes ``max_limit`` (``/v3/osm_features``
-        row cap), bbox area caps, and rate limits. ``query(auto_split=True)``
-        uses ``max_limit`` as the density-split threshold.
+        The result is cached on the client. Includes ``max_limit`` (the
+        per-request feature cap), bbox area caps, and rate limits.
         """
         if self._account_tier is None:
             self._account_tier = self._get_json(ACCOUNT_TIER_PATH)
@@ -297,21 +296,36 @@ class OSMFeaturesClient:
         max_area_m2: float | None = None,
         disable_budget_warning: bool = False,
     ) -> dict[str, Any]:
-        """``GET /v2/osm_features/count``: scalar total, or histogram with ``group_by``.
+        """Count matching OSM features, optionally grouped by a tag.
 
-        Omit ``group_by`` for ``{groups: [], total, truncated: false}``.
-        Places search is that total with ``way_shape="polygon"``.
-        Same tag filters as :meth:`query` except ``osm_ids``. Spatial windows are larger
-        than :meth:`query` when tags or ``group_by`` are set (country-scale on every
-        tier) and billed count-only.
-        ``tags`` is a string or list of strings, sent as one ``tags`` value. A list is
-        ANDed with ``,``. ``|`` inside one item is OR, and ``a|(b,c)`` is ``a OR (b AND c)``.
-        ``!`` prefixes one clause (``!key``, ``!key=value``); ``key!=value`` and
-        ``key!~regex`` also negate. Clause forms: ``key``, ``key=value``, ``key>n`` /
-        ``>=`` / ``<`` / ``<=``, ``key~regex``. Quote a value that contains ``|`` or ``&``
-        (``'name="Ben & Jerry\'s"'``). Unquoted ``&`` is not an operator
-        (HTTP 400). Regex cannot use an index, so AND it with an indexed tag.
-        ``limit`` is max histogram buckets (API default 100, max 10000). Example::
+        Without ``group_by`` the result is a scalar total. With ``group_by``
+        it is a histogram of tag values.
+
+        Parameters
+        ----------
+        group_by:
+            Tag key to bucket results by, e.g. ``"amenity"``.
+        bbox, location, radius, type, way_shape, within:
+            Spatial filters, as in :meth:`query`.
+        tags:
+            Tag filter: a string, or a list ANDed together. Example:
+            ``["amenity", "!amenity=bench"]``. See :meth:`query`.
+        limit:
+            Maximum histogram buckets (API default 100, max 10000).
+        min_length_m, max_length_m, min_area_m2, max_area_m2:
+            Geometry size filters.
+        disable_budget_warning:
+            Suppress the unit-budget warning for large requests.
+
+        Returns
+        -------
+        dict
+            ``{"groups": [...], "total": int, "truncated": bool}``, plus
+            ``response_headers``.
+
+        Example
+        -------
+        ::
 
             client.count(
                 group_by="amenity",
@@ -319,9 +333,7 @@ class OSMFeaturesClient:
                 type="node",
                 tags=["amenity", "!amenity=bench"],
             )
-            # {"groups": [{"value": "restaurant", "count": 184},
-            #             {"value": "cafe", "count": 91},
-            #             {"value": "bar", "count": 47}],
+            # {"groups": [{"value": "restaurant", "count": 184}, ...],
             #  "total": 412, "truncated": False}
         """
         params: dict[str, Any] = {}
@@ -396,21 +408,36 @@ class OSMFeaturesClient:
         max_area_m2: float | None = None,
         disable_budget_warning: bool = False,
     ) -> DensityFeatureCollection:
-        """``GET /v2/osm_features/density``: occupied grid bins as points.
+        """Count features per grid cell, returned as occupied cells (points).
 
-        Omit ``cell_deg`` for the API default (0.1). ``type`` omitted is nodes.
-        Requires a positive ``tags`` filter (``tags="place"`` or ``tags="a|b"``).
-        ``tags`` is a string or list of strings, sent as one ``tags`` value. A list is
-        ANDed with ``,``. ``|`` inside one item is OR, and ``a|(b,c)`` is ``a OR (b AND c)``.
-        ``!`` prefixes one clause (``!key``, ``!key=value``); ``key!=value`` and
-        ``key!~regex`` also negate. Clause forms: ``key``, ``key=value``, ``key>n`` /
-        ``>=`` / ``<`` / ``<=``, ``key~regex``. Quote a value that contains ``|`` or ``&``
-        (``'name="Ben & Jerry\'s"'``). Unquoted ``&`` is not an operator
-        (HTTP 400). Regex cannot use an index, so AND it with an indexed tag.
-        ``limit`` is max occupied cells (the key's ``max_limit`` when omitted). Returns a density FeatureCollection
-        (``properties.count``, ``total``, ``truncated``), not OSM features.
-        A continent box can 400 on the per-request unit cap; pass
-        ``disable_budget_warning=True`` to run it. Example::
+        Useful for heatmaps. ``tags`` is required and must be a positive
+        filter, e.g. ``"place"`` or ``"shop|amenity"``.
+
+        Parameters
+        ----------
+        cell_deg:
+            Grid cell size in degrees (API default 0.1).
+        bbox, location, radius, type, way_shape, within:
+            Spatial filters, as in :meth:`query`. ``type`` defaults to nodes.
+        tags:
+            Required tag filter, as in :meth:`query`.
+        limit:
+            Maximum occupied cells returned (defaults to the key's ``max_limit``).
+        min_length_m, max_length_m, min_area_m2, max_area_m2:
+            Geometry size filters.
+        disable_budget_warning:
+            Set True for large areas, such as a continent, that would
+            otherwise fail the per-request unit cap.
+
+        Returns
+        -------
+        DensityFeatureCollection
+            One point per occupied cell, with ``properties.count``. Also
+            exposes ``total`` and ``truncated``.
+
+        Example
+        -------
+        ::
 
             client.density(
                 bbox="-26,33,52,72",
@@ -488,33 +515,48 @@ class OSMFeaturesClient:
         as_of: str | None = None,
         bbox_tiles: int = 1,
         auto_split: bool = False,
-        split_until_fit: bool | None = None,
+            auto_split_skip_count: bool = True,
         timeout: float | None = DEFAULT_QUERY_ALL_TIMEOUT_S,
     ) -> dict[str, Any]:
-        """Find places via ``POST /v1/places/search`` (GeoJSON FeatureCollection).
+        """Search for places within a bbox or a circle.
 
-        ``tags`` is a string or list of strings, sent as a JSON array that is ANDed.
-        ``|`` inside one item is OR, and ``a|(b,c)`` is ``a OR (b AND c)``. ``!`` prefixes
-        one clause (``!key``, ``!key=value``); ``key!=value`` and ``key!~regex`` also
-        negate. Quote a value that contains ``|`` or ``&``
-        (``'name="Ben & Jerry\'s"'``). Unquoted ``&`` is not an operator
-        (HTTP 400). Regex cannot use an index, so AND it with an indexed tag.
+        Calls ``POST /v1/places/search``. Pass either ``bbox`` or
+        ``location`` + ``radius``, not both. Polygon places are returned
+        as centroid points.
 
-        ``bbox_tiles`` and ``auto_split`` are client-side, like :meth:`query`,
-        and **only apply to bbox search**. ``bbox_tiles`` splits the bbox up
-        front (power of 2). ``auto_split`` counts first via :meth:`count`
-        with ``way_shape="polygon"``, then fetches. No hours: split on
-        ``total`` vs the key's ``max_limit``. ``asOf`` / ``openNow`` AND
-        ``opening_hours``. An ``asOf`` page ``limit`` (default 100) truncates;
-        split on the 10k parse cap only when ``limit`` is raised above 10k.
-        ``openNow`` splits on that 10k scan cap even with a small fill limit.
-        A leftover dense leaf may jump once more. A bbox-area 400 jumps to
-        the tier limit in the error instead of probing every quarter, up
-        to 32 tiles.
-        location+radius is a circle and cannot split; :func:`around_to_bbox`
-        turns a radius into a covering bbox if you need tiles (square around
-        the circle; corners can fall outside the original radius).
-        ``split_until_fit`` is a deprecated alias for ``auto_split``.
+        Parameters
+        ----------
+        bbox:
+            ``"min_lon,min_lat,max_lon,max_lat"``.
+        location:
+            Circle centre as ``{"lat": ..., "lng": ...}``. Use with ``radius``.
+        radius:
+            Circle radius in metres.
+        tags:
+            Tag filter, as in :meth:`query`.
+        limit:
+            Maximum places returned.
+        open_now:
+            Keep only places open now. Adds an ``opening_hours`` tag filter.
+        as_of:
+            ISO timestamp for the opening-hours check, used with ``open_now``.
+        bbox_tiles:
+            Split ``bbox`` into this many tiles (power of 2) and merge the results.
+        auto_split:
+            Split a bbox that is too large for your tier into smaller tiles
+            and merge the results. Bbox only.
+        auto_split_skip_count:
+            With ``auto_split``, fetch tiles directly and halve any that are
+            too large (default). Set False in dense cities, where each tile
+            is counted first to avoid billed failures.
+        timeout:
+            Wall-clock seconds allowed for a tiled search. ``None`` for no cap.
+            Raises ``OSMFeaturesTimeoutError`` when exceeded.
+
+        Returns
+        -------
+        dict
+            A GeoJSON FeatureCollection.
         """
         return execute_places_search_sync(
             post=lambda body: self._post_json(PLACES_SEARCH_PATH, body),
@@ -529,7 +571,7 @@ class OSMFeaturesClient:
             as_of=as_of,
             bbox_tiles=bbox_tiles,
             auto_split=auto_split,
-            split_until_fit=split_until_fit,
+            auto_split_skip_count=auto_split_skip_count,
             timeout=timeout,
         )
 
@@ -543,14 +585,29 @@ class OSMFeaturesClient:
         open_now: bool = False,
         as_of: str | None = None,
     ) -> dict[str, Any]:
-        """Nearest places ranked by straight-line distance (``POST /v1/places/nearby``).
+        """Find the places nearest to a point, ranked by straight-line distance.
 
-        ``tags`` is a string or list of strings, sent as a JSON array that is ANDed.
-        ``|`` inside one item is OR, and ``a|(b,c)`` is ``a OR (b AND c)``. ``!`` prefixes
-        one clause (``!key``, ``!key=value``); ``key!=value`` and ``key!~regex`` also
-        negate. Quote a value that contains ``|`` or ``&``
-        (``'name="Ben & Jerry\'s"'``). Unquoted ``&`` is not an operator
-        (HTTP 400). Regex cannot use an index, so AND it with an indexed tag.
+        Calls ``POST /v1/places/nearby``.
+
+        Parameters
+        ----------
+        location:
+            Centre point as ``{"lat": ..., "lng": ...}``.
+        radius:
+            Maximum distance in metres.
+        tags:
+            Tag filter, as in :meth:`query`.
+        limit:
+            Maximum places returned.
+        open_now:
+            Keep only places open now.
+        as_of:
+            ISO timestamp for the opening-hours check, used with ``open_now``.
+
+        Returns
+        -------
+        dict
+            A GeoJSON FeatureCollection, nearest first.
         """
         return self._post_json(
             PLACES_NEARBY_PATH,
@@ -569,10 +626,16 @@ class OSMFeaturesClient:
         osm_type: str,
         osm_id: int | str | None = None,
     ) -> dict[str, Any]:
-        """One place via ``GET /v1/places/{osm_type}/{osm_id}``.
+        """Fetch one place by OSM type and id (``GET /v1/places/{osm_type}/{osm_id}``).
 
-        *osm_type* may be a search/nearby feature id (``node/123``) when
-        *osm_id* is omitted.
+        Parameters
+        ----------
+        osm_type:
+            ``"node"``, ``"way"`` or ``"relation"``. May also be a combined
+            id such as ``"node/123"``, as returned by search, if ``osm_id``
+            is omitted.
+        osm_id:
+            OSM element id. Omit when ``osm_type`` is a combined id.
         """
         return self._get_json(places_details_path(osm_type, osm_id))
 
@@ -585,7 +648,24 @@ class OSMFeaturesClient:
         search_buffer_m: float | None = None,
         travel_mode: RouteTravelMode | None = None,
     ) -> dict[str, Any]:
-        """Reach polygon along the walk/bike network (``POST /v1/routes/isochrone``)."""
+        """Compute the area reachable from an origin on the walk/bike network.
+
+        Calls ``POST /v1/routes/isochrone``. Set either ``max_distance_m`` or
+        ``duration_s``.
+
+        Parameters
+        ----------
+        origin:
+            Starting point as ``{"lat": ..., "lng": ...}``.
+        max_distance_m:
+            Maximum travel distance in metres.
+        duration_s:
+            Maximum travel time in seconds.
+        search_buffer_m:
+            Search buffer in metres around the route, sent to the API as is.
+        travel_mode:
+            ``"WALK"`` or ``"BICYCLE"``.
+        """
         return self._post_json(
             ROUTES_ISOCHRONE_PATH,
             routes_isochrone_body(
@@ -604,7 +684,17 @@ class OSMFeaturesClient:
         search_buffer_m: float | None = None,
         travel_mode: RouteTravelMode | None = None,
     ) -> dict[str, Any]:
-        """Given-order walk/bike path (``POST /v1/routes/path``)."""
+        """Route through stops in the given order (``POST /v1/routes/path``).
+
+        Parameters
+        ----------
+        stops:
+            Ordered points, each as ``{"lat": ..., "lng": ...}``.
+        search_buffer_m:
+            Search buffer in metres around the route, sent to the API as is.
+        travel_mode:
+            ``"WALK"`` or ``"BICYCLE"``.
+        """
         return self._post_json(
             ROUTES_PATH_PATH,
             routes_path_body(
@@ -623,7 +713,23 @@ class OSMFeaturesClient:
         loop: bool | None = None,
         travel_mode: RouteTravelMode | None = None,
     ) -> dict[str, Any]:
-        """TSP walk/bike tour from ``start`` (``POST /v1/routes/optimized_path``). ``loop`` returns to start."""
+        """Visit all stops in the shortest order, starting from ``start``.
+
+        Calls ``POST /v1/routes/optimized_path``.
+
+        Parameters
+        ----------
+        start:
+            Starting point as ``{"lat": ..., "lng": ...}``.
+        stops:
+            Points to visit, each as ``{"lat": ..., "lng": ...}``.
+        search_buffer_m:
+            Search buffer in metres around the route, sent to the API as is.
+        loop:
+            If True, the route returns to ``start``.
+        travel_mode:
+            ``"WALK"`` or ``"BICYCLE"``.
+        """
         return self._post_json(
             ROUTES_OPTIMIZED_PATH_PATH,
             routes_optimized_path_body(

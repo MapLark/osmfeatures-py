@@ -25,83 +25,73 @@ from ._pagination import DEFAULT_QUERY_ALL_TIMEOUT_S
 from ._split import (
     await_maybe as _await_maybe,
     count_tile_total,
-    fold_auto_split,
     iter_split_tiles,
     match_split_cap,
+    max_bbox_area_from_tier,
     max_limit_from_tier,
     run_sync,
 )
 
 _V3_PATH = "/v3/osm_features"
 
-QUERY_DOC = """One ``/v3/osm_features`` call for a tile that fits in ``limit`` features.
+QUERY_DOC = """Fetch OSM features matching the filters (``GET /v3/osm_features``).
 
-Omit ``limit`` for the key's ``max_limit``. A lower ``limit`` truncates
-(``meta.has_more``). A match set larger than the caller's ``max_limit``
-is HTTP 400 ``result_too_large``. ``auto_split=True`` reads ``max_limit`` from ``GET /v1/account/tier``,
-counts first, and jumps to a power-of-2 tile grid when that match set
-exceeds the key's ``max_limit``. A leftover dense leaf may jump once
-more. A lower ``limit`` truncates. That adds latency.
-``auto_split`` requires ``bbox``: ``within``, radius, and ``osm_ids``
-raise ``ValueError`` instead of sending one unsplit request.
+Pass a ``bbox``, a ``location`` + ``radius`` circle, or ``osm_ids``. With
+``auto_split=True`` a large ``bbox`` is split into tiles, fetched, and merged.
 
 Parameters
 ----------
+bbox:
+    ``"min_lon,min_lat,max_lon,max_lat"``.
+location:
+    Circle centre, as ``"lat,lng"``. Use with ``radius``.
+radius:
+    Circle radius in metres.
+type:
+    Element type(s) to match: ``"node"``, ``"way"``, ``"relation"``, or a list.
+tags:
+    Tag filter: a string, or a list ANDed together. ``|`` is OR, ``!``
+    negates a clause, and ``key=value``, ``key>n`` and ``key~regex`` are
+    supported. Example: ``["amenity=cafe", "!wheelchair"]``. Quote values
+    containing ``|`` or ``&``. Regex cannot use an index, so pair it with
+    an indexed tag.
+limit:
+    Maximum features returned. Defaults to the key's ``max_limit``. A lower
+    value truncates the response (see ``meta.has_more``).
 bbox_tiles:
-    Split the requested bbox into this many tiles (power of 2).
-    Default 1 sends the bbox as one request. Use 2, 4, 8, ... to stay
-    under a tier area cap.
+    Split ``bbox`` into this many tiles (power of 2) and merge the results.
 auto_split:
-    Count matches first via a scalar ``GET /v2/osm_features/count``
-    (no ``group_by``), then fetch. Same walk as ``places_search``.
-    Reads the key's ``max_limit`` from ``GET /v1/account/tier``
-    (cached on the client). If the match set exceeds that cap, jump
-    to a power-of-2 tile grid; one leftover dense leaf may jump once
-    more (do not walk a deeper tree). A lower ``limit`` is a page
-    size and does not split. A bbox-area 400 jumps to the tier
-    limit in the error instead of probing every quarter, up to 32
-    tiles. Default False. Slower: a count per tile.
-    ``split_until_fit`` is a deprecated alias.
+    Split a ``bbox`` that is too large for your tier into tiles that fit
+    the area cap, then merge. Requires ``bbox``. Default False.
+auto_split_skip_count:
+    With ``auto_split``, fetch each tile directly and halve any tile that
+    is too large (default True). Set False in dense cities, where each tile
+    is counted first with a scalar ``GET /v2/osm_features/count``
+    (no ``group_by``) to avoid billed failures.
 timeout:
-    Wall-clock seconds for tiled walks (``auto_split`` / ``bbox_tiles``).
-    Defaults to :data:`osmfeatures.DEFAULT_QUERY_ALL_TIMEOUT_S`.
-    A single HTTP request uses the client :data:`~osmfeatures.DEFAULT_TIMEOUT`.
-    ``None`` is no cap.
-    A genuine deadline miss is :class:`OSMFeaturesTimeoutError`.
-    ``auto_split`` walks at most 32 tiles (five longest-side bisections).
-    Covering the bbox would need more tiles:
-    :class:`OSMFeaturesTooManyTilesError` (area too large). A tile still
-    overflows at that cap: :class:`OSMFeaturesTooDenseError`.
-bbox, location, radius, type, way_shape, shape, osm_ids, within, tags,
-zoom, min_length_m, max_length_m, min_area_m2, max_area_m2, centroid,
-clip_geometry, geometry, accept, limit, disable_budget_warning:
-    Filters for ``GET /v3/osm_features``. No ``cursor``.
-    ``disable_budget_warning`` is count-only (``auto_split``).
+    Wall-clock seconds for a tiled request (``auto_split`` or ``bbox_tiles``).
+    ``None`` for no cap. Raises ``OSMFeaturesTimeoutError`` when exceeded.
+    A single HTTP request uses the client's ``timeout``.
+accept:
+    Response format. Default is GeoJSON. Other formats (CSV, TSV,
+    FlatGeobuf, GeoParquet) return a :class:`BinaryQueryResult` and are
+    not tiled.
+disable_budget_warning:
+    Skip the unit-budget warning for large requests.
+bbox_tiles, auto_split, auto_split_skip_count, timeout:
+    See above.
+osm_ids, within, way_shape, shape, zoom, min_length_m, max_length_m,
+min_area_m2, max_area_m2, centroid, clip_geometry, geometry:
+    Additional filters and output options, passed through to the API.
 
-    ``tags`` is a string or list of strings, sent as one ``tags`` query value.
-    A list is ANDed with ``,``. ``|`` inside one item is OR. Parentheses
-    group one operator: ``a|(b,c)`` is ``a OR (b AND c)``, ``(a|b),c`` is
-    ``(a OR b) AND c``. ``!`` prefixes one clause (``!key``, ``!key=value``);
-    ``key!=value`` and ``key!~regex`` also negate. Clause forms: ``key``,
-    ``key=value``, ``key>n`` / ``>=`` / ``<`` / ``<=``, ``key~regex``. Quote a
-    value that contains ``|`` or ``&`` (``'name="Ben & Jerry\'s"'``). Unquoted
-    ``&`` is not an operator (HTTP 400). Regex cannot use an index, so AND it
-    with an indexed tag.
-    ``auto_split`` counts with a scalar ``GET /v2/osm_features/count``
-    (no ``group_by``).
-
-    ``limit`` is the maximum features in the response (omit for the
-    key's ``max_limit``). A lower limit truncates. A match
-    set larger than the caller's ``max_limit`` is HTTP 400
-    ``result_too_large``. ``auto_split`` reads ``max_limit`` from
-    ``GET /v1/account/tier``, counts first, and jumps to a power-of-2
-    grid when that match set exceeds the key's cap (a lower ``limit``
-    truncates and does not split).
-    A leftover dense leaf may jump once more.
-
-    ``accept`` selects the encoding (default GeoJSON). Non-GeoJSON
-    (CSV, TSV, FlatGeobuf, GeoParquet) is one request and returns
-    :class:`BinaryQueryResult`. Those encodings cannot tile.
+Raises
+------
+OSMFeaturesTooManyTilesError:
+    ``auto_split`` would need more than 16 tiles to cover the bbox.
+OSMFeaturesTooDenseError:
+    A tile is still too dense at the maximum split.
+OSMFeaturesTimeoutError:
+    The tiled request exceeded ``timeout``.
 """
 
 
@@ -212,11 +202,10 @@ async def execute_query(
     disable_budget_warning: bool = False,
     bbox_tiles: int = 1,
     auto_split: bool = False,
-    split_until_fit: bool | None = None,
+    auto_split_skip_count: bool = True,
     timeout: float | None = DEFAULT_QUERY_ALL_TIMEOUT_S,
 ) -> OSMFeatureCollection | BinaryQueryResult:
     """Run a v3 query via *raw_query* / *request* / *count* (sync or async)."""
-    auto_split = fold_auto_split(auto_split, split_until_fit)
     limit = _resolve_query_limit(limit)
     params = _query_filters(
         bbox=bbox,
@@ -299,10 +288,13 @@ async def execute_query(
 
     feature_lists: list[list[dict[str, Any]]] = []
     omitted_cap = 1
+    area_limit: float | None = None
     if auto_split:
         if account_tier is None:
             raise TypeError("auto_split requires account_tier")
-        omitted_cap = max_limit_from_tier(await _await_maybe(account_tier()))
+        tier = await _await_maybe(account_tier())
+        omitted_cap = max_limit_from_tier(tier)
+        area_limit = max_bbox_area_from_tier(tier, tags=tags)
     tile_cap = match_split_cap(limit, omitted_cap)
 
     async for page in iter_split_tiles(
@@ -311,6 +303,8 @@ async def execute_query(
         auto_split=auto_split,
         timeout=timeout,
         tile_cap=tile_cap,
+        area_limit=area_limit,
+        auto_split_skip_count=auto_split_skip_count,
         match_count=_match_count if auto_split else None,
         fetch_tile=_fetch_tile,
         overflow_name="query",

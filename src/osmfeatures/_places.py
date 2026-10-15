@@ -25,10 +25,10 @@ from ._http import normalize_tags
 from ._pagination import DEFAULT_QUERY_ALL_TIMEOUT_S
 from ._split import (
     await_maybe,
-    fold_auto_split,
     hours_parse_split_cap,
     iter_split_tiles,
     match_split_cap,
+    max_bbox_area_from_tier,
     max_limit_from_tier,
     run_sync,
 )
@@ -105,11 +105,10 @@ async def execute_places_search(
     as_of: str | None = None,
     bbox_tiles: int = 1,
     auto_split: bool = False,
-    split_until_fit: bool | None = None,
+    auto_split_skip_count: bool = True,
     timeout: float | None = DEFAULT_QUERY_ALL_TIMEOUT_S,
 ) -> dict[str, Any]:
     """POST places/search, optionally tiling *bbox* like :func:`execute_query`."""
-    auto_split = fold_auto_split(auto_split, split_until_fit)
     if bbox_tiles != 1 and not isinstance(bbox, str):
         raise ValueError(BBOX_TILES_REQUIRES_BBOX)
     if auto_split and not isinstance(bbox, str):
@@ -139,10 +138,14 @@ async def execute_places_search(
     if hours_on:
         count_kwargs["tags"] = [*count_kwargs.get("tags", []), "opening_hours"]
     omitted_cap = 1
-    if auto_split and not hours_on:
+    area_limit: float | None = None
+    if auto_split:
         if account_tier is None:
             raise TypeError("auto_split requires account_tier")
-        omitted_cap = max_limit_from_tier(await await_maybe(account_tier()))
+        tier = await await_maybe(account_tier())
+        if not hours_on:
+            omitted_cap = max_limit_from_tier(tier)
+        area_limit = max_bbox_area_from_tier(tier, tags=count_kwargs.get("tags"))
     tile_cap = (
         hours_parse_split_cap(limit, open_now=open_now)
         if hours_on
@@ -163,6 +166,8 @@ async def execute_places_search(
         auto_split=auto_split,
         timeout=timeout,
         tile_cap=tile_cap,
+        area_limit=area_limit,
+        auto_split_skip_count=auto_split_skip_count,
         match_count=_match_count if auto_split else None,
         fetch_tile=_fetch_tile,
         overflow_name="places_search",

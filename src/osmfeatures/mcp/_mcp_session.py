@@ -657,6 +657,7 @@ class GeoAgentSession:
         open_now: bool = False,
         as_of: str | None = None,
         auto_split: bool = False,
+        auto_split_skip_count: bool = True,
         save_as: str | None = None,
     ) -> dict[str, Any]:
         require_places_search_spatial(bbox, location)
@@ -672,6 +673,7 @@ class GeoAgentSession:
                 open_now=open_now,
                 as_of=as_of,
                 auto_split=auto_split,
+                auto_split_skip_count=auto_split_skip_count,
             ),
             location,
         )
@@ -812,6 +814,7 @@ class GeoAgentSession:
         zoom: float | None = None,
         limit: int | None = None,
         auto_split: bool = False,
+        auto_split_skip_count: bool = True,
         save_as: str | None = None,
     ) -> dict[str, Any]:
         payload = await invoke_client(
@@ -828,6 +831,7 @@ class GeoAgentSession:
             centroid=True,
             limit=limit,
             auto_split=auto_split,
+            auto_split_skip_count=auto_split_skip_count,
         )
         cid = self._put(payload, save_as=save_as)
         return self._summarize_query(cid, payload)

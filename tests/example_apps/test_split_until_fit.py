@@ -116,7 +116,16 @@ def test_auto_split_huge_bbox_cafes(client: OSMFeaturesClient):
                 f"leaf {p['bbox']} area {area} still exceeds cap {limit}"
             )
     else:
-        assert len(posts) == 1 and posts[0]["status"] == 200
+        # The tier's area cap is read up front: the oversized bbox is split
+        # with no failed probe, and every leaf already fits.
+        cap = client.account_tier()["max_bbox_area_tagged"]
+        assert all(p["status"] == 200 for p in posts)
+        if cap is None or bbox_area_deg2(GREATER_STOCKHOLM_BBOX) <= cap:
+            assert len(posts) == 1
+        else:
+            assert len(posts) == tile_count_for_max_area(GREATER_STOCKHOLM_BBOX, cap)
+            for p in posts:
+                assert bbox_area_deg2(p["bbox"]) <= cap + 1e-9
 
     assert data["type"] == "FeatureCollection"
     features = data["features"]
@@ -185,6 +194,7 @@ def test_auto_split_dense_buildings(client: OSMFeaturesClient):
             way_shape="polygon",
             centroid=True,
             auto_split=True,
+            auto_split_skip_count=False,  # dense inner city: count first
             timeout=120,
             # Page size so the example does not download every polygon.
             limit=3_000,
