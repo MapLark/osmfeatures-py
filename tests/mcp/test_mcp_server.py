@@ -179,7 +179,10 @@ async def test_build_server_wires_instructions_and_tools():
     assert "download URL" in mcp.instructions
     assert f"at most {SUMMARY_ITEM_CAP}" in mcp.instructions
     assert "items_truncated" in mcp.instructions
-    assert "OSM tags" in mcp.instructions
+    assert "API properties" in mcp.instructions
+    assert "area_m2" in mcp.instructions
+    assert "length_m" in mcp.instructions
+    assert "Do not turn a geocode bbox into an area" in mcp.instructions
     assert "Include an OSM id column" in mcp.instructions
     assert "https://www.openstreetmap.org/" in mcp.instructions
     assert "tags.cuisine" in mcp.instructions

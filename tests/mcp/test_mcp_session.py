@@ -9,6 +9,7 @@ import pytest
 from osmfeatures.mcp._mcp_session import (
     GeoAgentSession,
     SUMMARY_ITEM_CAP,
+    _place_item,
     assert_no_coordinate_arrays,
     with_search_origin,
 )
@@ -81,11 +82,17 @@ def _poly_feat(
     *,
     name: str | None = None,
     centroid: tuple[float, float] | None = None,
+    area_m2: float | None = None,
+    length_m: float | None = None,
 ) -> dict:
     tags = {"name": name} if name else {}
     props: dict = {"tags": tags}
     if centroid is not None:
         props["centroid"] = {"type": "Point", "coordinates": [centroid[0], centroid[1]]}
+    if area_m2 is not None:
+        props["area_m2"] = area_m2
+    if length_m is not None:
+        props["length_m"] = length_m
     return {"type": "Feature", "id": fid, "geometry": geom, "properties": props}
 
 
@@ -786,6 +793,42 @@ async def test_query_and_details_summaries():
     assert exported["features"][0]["geometry"]["coordinates"] == [18.075, 59.316]
 
 
+async def test_query_summaries_forward_api_properties_without_coordinates():
+    client = FakeClient()
+    park = _poly_feat(
+        "way/10",
+        SQUARE,
+        name="Park",
+        centroid=(18.08, 59.32),
+        area_m2=7687.2368003257,
+    )
+    park["properties"]["osm_id"] = "way/10"
+    park["properties"]["extra_metric"] = 42
+    path = _poly_feat(
+        "way/11",
+        {
+            "type": "LineString",
+            "coordinates": [[18.07, 59.31], [18.09, 59.33]],
+        },
+        name="Path",
+        length_m=5021.5,
+    )
+    client.query_result = _fc(park, path, _feat("node/12", 18.08, 59.32, name="Bench"))
+    session = GeoAgentSession(client)
+    out = await session.query(bbox="18.05,59.31,18.10,59.33", tags=["leisure=park"])
+    assert_no_coordinate_arrays(out)
+    by_id = {item["id"]: item for item in out["items"]}
+    assert by_id["way/10"]["area_m2"] == pytest.approx(7687.2368003257)
+    assert by_id["way/10"]["osm_id"] == "way/10"
+    assert by_id["way/10"]["extra_metric"] == 42
+    assert "centroid" not in by_id["way/10"]
+    assert "length_m" not in by_id["way/10"]
+    assert by_id["way/11"]["length_m"] == pytest.approx(5021.5)
+    assert "area_m2" not in by_id["way/11"]
+    assert "area_m2" not in by_id["node/12"]
+    assert "length_m" not in by_id["node/12"]
+
+
 async def test_query_summaries_include_has_more():
     client = FakeClient()
     truncated = OSMFeatureCollection(
@@ -1213,3 +1256,22 @@ async def test_export_geojson_file_defaults_to_latest(tmp_path):
     assert out["collection_id"] == second["collection_id"] == "cafes"
     named = session.export_geojson_file(first["collection_id"], directory=tmp_path)
     assert named["collection_id"] == first["collection_id"]
+
+
+def test_place_item_drops_bare_coordinates_property() -> None:
+    feat = {
+        "type": "Feature",
+        "id": "node/9",
+        "geometry": {"type": "Point", "coordinates": [18.075, 59.316]},
+        "properties": {
+            "name": "Drop Coffee",
+            "coordinates": [18.075, 59.316],
+            "centroid": {"type": "Point", "coordinates": [18.075, 59.316]},
+        },
+    }
+    item = _place_item(feat)
+    assert "coordinates" not in item
+    assert "centroid" not in item
+    assert item["name"] == "Drop Coffee"
+    assert (item["lon"], item["lat"]) == (18.075, 59.316)
+    assert_no_coordinate_arrays(item)

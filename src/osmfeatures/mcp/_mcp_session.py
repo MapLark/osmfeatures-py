@@ -418,15 +418,30 @@ def _ordered_stop_point_features(
     return out
 
 
+_COORDINATE_PROPERTY_KEYS = frozenset({"centroid", "coordinates"})
+
+
 def _place_item(feat: dict[str, Any], *, distance_m: float | None = None) -> dict[str, Any]:
+    """Planner summary of one feature: API properties minus coordinate fields.
+
+    Copies ``properties`` except ``centroid`` and ``coordinates`` (so
+    ``area_m2``, ``length_m``, ``openNow``, ``osm_id``, ``tags``, … pass
+    through). Adds ``id``, ``name`` (from tags when missing), ``lon``/``lat``
+    from geometry or centroid, and optional join ``distance_m``.
+    """
+    props = feat.get("properties")
     item: dict[str, Any] = {
-        "id": feat.get("id"),
-        "name": feature_name(feat),
-        "tags": feature_tags(feat),
+        key: value
+        for key, value in (props.items() if isinstance(props, dict) else [])
+        if key not in _COORDINATE_PROPERTY_KEYS
     }
-    open_now = (feat.get("properties") or {}).get("openNow")
-    if isinstance(open_now, bool):
-        item["openNow"] = open_now
+    item["id"] = feat.get("id")
+    tags = item.get("tags")
+    item["tags"] = dict(tags) if isinstance(tags, dict) else feature_tags(feat)
+    if item.get("name") is None:
+        item["name"] = feature_name(feat)
+    elif item["name"] is not None:
+        item["name"] = str(item["name"])
     pt = _lon_lat(feat)
     if pt is not None:
         item["lon"], item["lat"] = pt
