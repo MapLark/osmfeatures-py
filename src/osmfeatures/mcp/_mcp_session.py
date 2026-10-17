@@ -217,18 +217,20 @@ def _polygon_geoms(payload: Any) -> list[dict[str, Any]]:
     return out
 
 
-def _lon_lat(feat: dict[str, Any]) -> tuple[float, float] | None:
-    geom = feat.get("geometry") or {}
+def _point_lon_lat(geom: Any) -> tuple[float, float] | None:
     if isinstance(geom, dict) and geom.get("type") == "Point":
         coords = geom.get("coordinates") or []
         if len(coords) >= 2:
             return float(coords[0]), float(coords[1])
-    centroid = ((feat.get("properties") or {}).get("centroid") or {})
-    if isinstance(centroid, dict) and centroid.get("type") == "Point":
-        coords = centroid.get("coordinates") or []
-        if len(coords) >= 2:
-            return float(coords[0]), float(coords[1])
     return None
+
+
+def _lon_lat(feat: dict[str, Any]) -> tuple[float, float] | None:
+    pt = _point_lon_lat(feat.get("geometry") or {})
+    if pt is None:
+        centroid = (feat.get("properties") or {}).get("centroid") or {}
+        pt = _point_lon_lat(centroid)
+    return pt
 
 
 def _summarize_density(collection_id: str, payload: Any) -> dict[str, Any]:
@@ -334,11 +336,9 @@ def _stop_item(stop: Any, index: int) -> dict[str, Any]:
         item["id"] = stop["id"]
     if stop.get("name") is not None:
         item["name"] = stop["name"]
-    lon = stop.get("lon", stop.get("lng"))
-    lat = stop.get("lat")
-    if lon is not None and lat is not None:
-        item["lon"] = float(lon)
-        item["lat"] = float(lat)
+    pt = _stop_lon_lat(stop)
+    if pt is not None:
+        item["lon"], item["lat"] = pt
     if not item:
         item["index"] = index
     return item
@@ -448,6 +448,11 @@ def _place_item(feat: dict[str, Any], *, distance_m: float | None = None) -> dic
     if distance_m is not None:
         item["distance_m"] = distance_m
     return item
+
+
+def _place_items(feats: list[Any]) -> list[dict[str, Any]]:
+    """Planner summaries for the first ``SUMMARY_ITEM_CAP`` features."""
+    return [_place_item(f) for f in feats[:SUMMARY_ITEM_CAP]]
 
 
 def _feature_seq(payload: Any) -> list[Any]:
@@ -612,7 +617,7 @@ class GeoAgentSession:
         else:
             feats = _feature_seq(payload)
             count = len(feats)
-            items = [_place_item(f) for f in feats[:SUMMARY_ITEM_CAP]]
+            items = _place_items(feats)
         summary = _summary_items(collection_id, count, items)
         summary.update(_context_fields(payload))
         return summary
@@ -920,7 +925,7 @@ class GeoAgentSession:
         out = _summary_items(
             collection_id,
             len(feats),
-            [_place_item(f) for f in feats[:SUMMARY_ITEM_CAP]],
+            _place_items(feats),
         )
         meta = getattr(payload, "meta", None)
         if meta is not None:
@@ -976,18 +981,14 @@ class GeoAgentSession:
         for pair in pairs:
             feat = pair["feature"]
             near = pair["nearest"]
-            item: dict[str, Any] = {
-                "id": feat.get("id"),
-                "name": feature_name(feat),
-                "tags": feature_tags(feat),
-                "distance_m": pair["distance_m"],
-                "nearest_id": near.get("id"),
-                "nearest_name": feature_name(near),
-                "nearest_tags": feature_tags(near),
-            }
-            pt = _lon_lat(feat)
-            if pt is not None:
-                item["lon"], item["lat"] = pt
+            item = _place_item(feat, distance_m=pair["distance_m"])
+            item.update(
+                {
+                    "nearest_id": near.get("id"),
+                    "nearest_name": feature_name(near),
+                    "nearest_tags": feature_tags(near),
+                }
+            )
             npt = _lon_lat(near)
             if npt is not None:
                 item["nearest_lon"], item["nearest_lat"] = npt
