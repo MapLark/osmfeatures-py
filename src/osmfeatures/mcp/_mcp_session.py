@@ -421,13 +421,23 @@ def _ordered_stop_point_features(
 _COORDINATE_PROPERTY_KEYS = frozenset({"centroid", "coordinates"})
 
 
+def _slim_tags(tags: dict[str, Any], *, name: Any, drop_hours: bool) -> dict[str, Any]:
+    """Tags minus a ``name`` that repeats item ``name`` and, with ``openNow``, ``opening_hours``."""
+    drop = {"opening_hours"} if drop_hours else set()
+    if name and str(tags.get("name")) == str(name):
+        drop.add("name")
+    return {k: v for k, v in tags.items() if k not in drop}
+
+
 def _place_item(feat: dict[str, Any], *, distance_m: float | None = None) -> dict[str, Any]:
     """Planner summary of one feature: API properties minus coordinate fields.
 
     Copies ``properties`` except ``centroid`` and ``coordinates`` (so
-    ``area_m2``, ``length_m``, ``openNow``, ``osm_id``, ``tags``, … pass
-    through). Adds ``id``, ``name`` (from tags when missing), ``lon``/``lat``
-    from geometry or centroid, and optional join ``distance_m``.
+    ``area_m2``, ``length_m``, ``openNow``, ``tags``, … pass through).
+    ``osm_id`` is dropped when it repeats ``id``; ``tags`` omits ``name``
+    when it equals ``name`` and ``opening_hours`` when ``openNow`` is present.
+    Adds ``id``, ``name`` (from tags when missing), ``lon``/``lat`` from
+    geometry or centroid, and optional join ``distance_m``.
     """
     props = feat.get("properties")
     item: dict[str, Any] = {
@@ -436,12 +446,16 @@ def _place_item(feat: dict[str, Any], *, distance_m: float | None = None) -> dic
         if key not in _COORDINATE_PROPERTY_KEYS
     }
     item["id"] = feat.get("id")
+    osm_id = item.get("osm_id")
+    if osm_id is not None and str(item["id"]).rsplit("/", 1)[-1] == str(osm_id).rsplit("/", 1)[-1]:
+        del item["osm_id"]
     tags = item.get("tags")
-    item["tags"] = dict(tags) if isinstance(tags, dict) else feature_tags(feat)
-    if item.get("name") is None:
-        item["name"] = feature_name(feat)
-    elif item["name"] is not None:
-        item["name"] = str(item["name"])
+    tags = dict(tags) if isinstance(tags, dict) else feature_tags(feat)
+    name = item.get("name")
+    if name is None or name == "":
+        name = str(tags["name"]) if tags.get("name") else None
+    item["name"] = str(name) if name is not None else None
+    item["tags"] = _slim_tags(tags, name=item["name"], drop_hours=item.get("openNow") is not None)
     pt = _lon_lat(feat)
     if pt is not None:
         item["lon"], item["lat"] = pt
@@ -986,7 +1000,10 @@ class GeoAgentSession:
                 {
                     "nearest_id": near.get("id"),
                     "nearest_name": feature_name(near),
-                    "nearest_tags": feature_tags(near),
+                    # No nearest_openNow is emitted, so keep opening_hours here.
+                    "nearest_tags": _slim_tags(
+                        feature_tags(near), name=feature_name(near), drop_hours=False
+                    ),
                 }
             )
             npt = _lon_lat(near)

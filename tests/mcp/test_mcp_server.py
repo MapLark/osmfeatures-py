@@ -360,7 +360,6 @@ async def test_call_tool_places_search_bbox_and_location(stack):
     assert by_bbox["collection_id"] == "fc_1"
     assert by_bbox["items"][0]["name"] == "Drop Coffee"
     assert by_bbox["items"][0]["tags"] == {
-        "name": "Drop Coffee",
         "amenity": "cafe",
         "cuisine": "coffee_shop",
     }

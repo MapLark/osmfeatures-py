@@ -14,6 +14,7 @@ from osmfeatures.mcp._mcp_session import (
     with_search_origin,
 )
 from osmfeatures.geometry import point_in_geometry
+from osmfeatures.mcp._preview import geojson_for_map
 from osmfeatures.models import (
     DensityFeatureCollection,
     OSMFeature,
@@ -204,7 +205,7 @@ async def test_cafes_near_me_place_list():
     assert out["evaluated_at"] == "2026-08-10T16:00:00Z"
     assert out["units"] == 2
     assert out["items"][0]["name"] == "Drop Coffee"
-    assert out["items"][0]["tags"] == {"name": "Drop Coffee"}
+    assert out["items"][0]["tags"] == {}
     assert out["items"][0]["distance_m"] == 84.0
     assert out["items"][0]["lon"] == 18.075
     assert "items_truncated" not in out
@@ -242,7 +243,6 @@ async def test_summaries_include_osm_tags():
     out = await session.places_search(bbox="18.05,59.31,18.10,59.33", tags=["amenity=restaurant"])
     assert_no_coordinate_arrays(out)
     assert out["items"][0]["tags"] == {
-        "name": "Pelikan",
         "amenity": "restaurant",
         "cuisine": "swedish",
     }
@@ -295,13 +295,11 @@ async def test_restaurants_near_stations_pairs():
     assert pairs["count"] == 1
     assert pairs["items"][0]["name"] == "Pelikan"
     assert pairs["items"][0]["tags"] == {
-        "name": "Pelikan",
         "amenity": "restaurant",
         "cuisine": "swedish",
     }
     assert pairs["items"][0]["nearest_name"] == "Medborgarplatsen"
     assert pairs["items"][0]["nearest_tags"] == {
-        "name": "Medborgarplatsen",
         "railway": "station",
     }
     assert pairs["items"][0]["distance_m"] < 150
@@ -784,7 +782,7 @@ async def test_query_and_details_summaries():
     detail = await session.places_details("node", 1)
     assert_no_coordinate_arrays(detail)
     assert detail["item"]["name"] == "Drop Coffee"
-    assert detail["item"]["tags"] == {"name": "Drop Coffee"}
+    assert detail["item"]["tags"] == {}
     assert detail["evaluated_at"] == "2026-08-10T16:00:00Z"
     assert detail["timezone"] == "Europe/Stockholm"
     assert detail["units"] == 1
@@ -819,7 +817,7 @@ async def test_query_summaries_forward_api_properties_without_coordinates():
     assert_no_coordinate_arrays(out)
     by_id = {item["id"]: item for item in out["items"]}
     assert by_id["way/10"]["area_m2"] == pytest.approx(7687.2368003257)
-    assert by_id["way/10"]["osm_id"] == "way/10"
+    assert "osm_id" not in by_id["way/10"]
     assert by_id["way/10"]["extra_metric"] == 42
     assert "centroid" not in by_id["way/10"]
     assert "length_m" not in by_id["way/10"]
@@ -1275,3 +1273,88 @@ def test_place_item_drops_bare_coordinates_property() -> None:
     assert item["name"] == "Drop Coffee"
     assert (item["lon"], item["lat"]) == (18.075, 59.316)
     assert_no_coordinate_arrays(item)
+
+
+def test_place_item_drops_duplicate_fields() -> None:
+    feat = {
+        "type": "Feature",
+        "id": "node/9",
+        "geometry": {"type": "Point", "coordinates": [18.075, 59.316]},
+        "properties": {
+            "osm_id": "node/9",
+            "openNow": True,
+            "tags": {
+                "name": "Drop Coffee",
+                "cuisine": "coffee_shop",
+                "website": "https://drop.example",
+                "opening_hours": "Mo-Su 08:00-18:00",
+            },
+        },
+    }
+    item = _place_item(feat)
+    assert item["id"] == "node/9"
+    assert item["name"] == "Drop Coffee"
+    assert item["openNow"] is True
+    assert "osm_id" not in item
+    assert item["tags"] == {"cuisine": "coffee_shop", "website": "https://drop.example"}
+    assert feat["properties"]["tags"]["name"] == "Drop Coffee"  # source untouched
+
+
+def test_place_item_keeps_hours_without_open_now_and_distinct_osm_id() -> None:
+    feat = {
+        "type": "Feature",
+        "id": "node/9",
+        "geometry": {"type": "Point", "coordinates": [18.075, 59.316]},
+        "properties": {"osm_id": 123, "tags": {"opening_hours": "24/7"}},
+    }
+    item = _place_item(feat)
+    assert item["osm_id"] == 123
+    assert item["tags"] == {"opening_hours": "24/7"}
+
+
+@pytest.mark.asyncio
+async def test_export_keeps_full_tags_after_item_slimming():
+    client = FakeClient()
+    feat = _feat("node/1", 18.07, 59.32, name="Drop Coffee", amenity="cafe", opening_hours="24/7")
+    feat["properties"]["openNow"] = True
+    client.search = _fc(feat)
+    session = GeoAgentSession(client)
+    out = await session.places_search(bbox="18.05,59.31,18.10,59.33", tags=["amenity=cafe"])
+    assert "name" not in out["items"][0]["tags"]
+    exported = session.export_geojson(out["collection_id"])
+    tags = exported["features"][0]["properties"]["tags"]
+    assert tags["name"] == "Drop Coffee"
+    assert tags["opening_hours"] == "24/7"
+    mapped = geojson_for_map(exported)
+    props = mapped["features"][0]["properties"]
+    assert props["name"] == "Drop Coffee"
+    assert props["osm_id"] == "node/1"
+
+
+def test_place_item_keeps_tags_name_when_property_name_empty_or_different() -> None:
+    def feat(prop_name):
+        return {
+            "type": "Feature",
+            "id": "node/9",
+            "geometry": {"type": "Point", "coordinates": [18.075, 59.316]},
+            "properties": {"name": prop_name, "tags": {"name": "Drop Coffee"}},
+        }
+
+    empty = _place_item(feat(""))
+    assert empty["name"] == "Drop Coffee"
+    assert "name" not in empty["tags"]
+    differs = _place_item(feat("Other"))
+    assert differs["name"] == "Other"
+    assert differs["tags"]["name"] == "Drop Coffee"
+
+
+def test_place_item_drops_numeric_osm_id_matching_id_suffix() -> None:
+    feat = {
+        "type": "Feature",
+        "id": "node/9",
+        "geometry": {"type": "Point", "coordinates": [18.075, 59.316]},
+        "properties": {"osm_id": 9},
+    }
+    assert "osm_id" not in _place_item(feat)
+    feat["properties"]["osm_id"] = 10
+    assert _place_item(feat)["osm_id"] == 10

@@ -28,8 +28,10 @@ not a transit station; raise search_buffer_m only when reason says the corridor
 was too small.
 
 Tool results are summaries of each feature's API properties (tags, openNow,
-area_m2, length_m, osm_id, and any other scalars the API returns) plus id,
-name, lon/lat, and distance_m when relevant. GeoJSON coordinate arrays
+area_m2, length_m, and any other scalars the API returns) plus id (node/123,
+the only OSM identity), name (tags omits a name that repeats it and, when openNow is present,
+opening_hours), lon/lat, and distance_m when relevant. Join pairs also carry
+nearest_id, nearest_name, nearest_tags, nearest_lon, nearest_lat. GeoJSON coordinate arrays
 (geometry, centroid) are omitted. count is the full hit total; items lists at most {SUMMARY_ITEM_CAP}
 (items_truncated is true when more were stored). Do not treat len(items) as
 the total. When presenting a table, show only tag keys that answer the
